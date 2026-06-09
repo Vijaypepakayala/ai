@@ -15,6 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
+telnyx-hermes-sms = "telnyx_hermes_sms.installer:main"
 telnyx-hermes-sms-install = "telnyx_hermes_sms.installer:main"
 
 [project.optional-dependencies]

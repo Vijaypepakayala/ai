@@ -69,3 +69,9 @@ def test_env_example_includes_live_test_guard():
     env_example = (ROOT / '.env.example').read_text()
     assert 'TELNYX_SMS_LIVE_TEST=0' in env_example
     assert 'TELNYX_SMS_TEST_TO=' in env_example
+
+
+def test_pyproject_declares_repo_named_installer_entrypoint():
+    pyproject = (ROOT / 'pyproject.toml').read_text()
+    assert 'telnyx-hermes-sms = "telnyx_hermes_sms.installer:main"' in pyproject
+    assert 'telnyx-hermes-sms-install = "telnyx_hermes_sms.installer:main"' in pyproject

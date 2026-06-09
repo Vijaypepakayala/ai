@@ -1,4 +1,6 @@
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -50,3 +52,23 @@ def test_main_installs_plugin_and_prints_next_steps(tmp_path, capsys):
     assert f"Installed Telnyx Hermes SMS plugin to {tmp_path}" in captured.out
     assert "hermes plugins enable telnyx-sms-platform" in captured.out
     assert "gateway.platforms.telnyx_sms.enabled: true" in captured.out
+
+
+def test_python_m_entrypoint_installs_plugin(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "telnyx_hermes_sms",
+            "--target-dir",
+            str(tmp_path),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "__init__.py").exists()
+    assert "Installed Telnyx Hermes SMS plugin" in result.stdout

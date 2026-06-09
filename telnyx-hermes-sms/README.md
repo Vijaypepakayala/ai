@@ -8,6 +8,11 @@ It is a **plugin-first platform adapter**. Hermes already has a built-in
 keeps Twilio untouched and adds Telnyx as `telnyx_sms` so the integration is
 safe, reversible, and consistent with Hermes' platform-plugin architecture.
 
+Canonical install path:
+
+- Today: install from the GitHub repository with `uv tool install --python 3.12 "git+https://github.com/team-telnyx/telnyx-hermes-sms.git"`.
+- Stable target: once GitHub Releases are published for `team-telnyx/telnyx-hermes-sms`, prefer the tagged release install command as the default copy-paste path.
+
 ## What's inside
 
 | File | Purpose |
@@ -54,10 +59,21 @@ python -m pytest tests/test_telnyx_sms_static.py tests/test_telnyx_sms_runtime.p
 The repository now ships an installer CLI, so you can install the plugin from a
 tagged Git ref instead of manually copying files.
 
-Validated quickstart:
+Fastest one-command install:
+
+```bash
+uvx --from "git+https://github.com/team-telnyx/telnyx-hermes-sms.git" telnyx-hermes-sms
+```
+
+This pulls the repo, runs the repo-named installer entrypoint, and writes the
+plugin into `~/.hermes/plugins/telnyx_sms/` without a separate tool-install
+step.
+
+Validated persistent-tool quickstart:
 
 ```bash
 uv tool install --python 3.12 "git+https://github.com/team-telnyx/telnyx-hermes-sms.git"
+telnyx-hermes-sms
 telnyx-hermes-sms-install
 ```
 
@@ -68,8 +84,7 @@ your system `python3` is too old for this package.
 Recommended stable path once a Git tag/release exists:
 
 ```bash
-uv tool install --python 3.12 "git+https://github.com/team-telnyx/telnyx-hermes-sms.git@v0.2.0"
-telnyx-hermes-sms-install
+uvx --from "git+https://github.com/team-telnyx/telnyx-hermes-sms.git@v0.2.0" telnyx-hermes-sms
 ```
 
 If you prefer `pipx`, use it only when you already have a compatible Python
@@ -77,6 +92,7 @@ If you prefer `pipx`, use it only when you already have a compatible Python
 
 ```bash
 pipx install --python /path/to/python3.12 "git+https://github.com/team-telnyx/telnyx-hermes-sms.git"
+telnyx-hermes-sms
 telnyx-hermes-sms-install
 ```
 
@@ -91,6 +107,7 @@ Local checkout / pre-release validation path:
 git clone https://github.com/team-telnyx/telnyx-hermes-sms.git
 cd telnyx-hermes-sms
 uv tool install --python 3.12 .
+telnyx-hermes-sms
 telnyx-hermes-sms-install
 ```
 
@@ -139,6 +156,7 @@ registry can discover `telnyx_sms`.
 
 - `pyproject.toml` now declares a real setuptools build backend, so wheels and
   sdists can be built and tagged cleanly.
+- The repo name now matches a direct installer command: `telnyx-hermes-sms`.
 - The CLI entry point is `telnyx-hermes-sms-install`.
 - As of 2026-05-31, the public GitHub repo has no tags or releases yet, so use
   the default-branch install command above until a release is cut.
