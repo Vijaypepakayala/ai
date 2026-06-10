@@ -13,10 +13,16 @@ Use Telnyx Messaging as a first-class Hermes platform adapter.
 ## Install into Hermes
 
 ```bash
-mkdir -p ~/.hermes/plugins/telnyx_sms
-cp __init__.py adapter.py plugin.yaml ~/.hermes/plugins/telnyx_sms/
+uvx --from "git+https://github.com/team-telnyx/telnyx-hermes-sms.git" telnyx-hermes-sms
 hermes plugins list
 hermes plugins enable telnyx-sms-platform  # or telnyx_sms depending on CLI key
+```
+
+If you prefer a persistent tool install:
+
+```bash
+uv tool install --python 3.12 "git+https://github.com/team-telnyx/telnyx-hermes-sms.git"
+telnyx-hermes-sms
 ```
 
 Restart the Hermes gateway after enabling the plugin.

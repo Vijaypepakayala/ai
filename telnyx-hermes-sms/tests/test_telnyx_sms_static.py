@@ -75,3 +75,10 @@ def test_pyproject_declares_repo_named_installer_entrypoint():
     pyproject = (ROOT / 'pyproject.toml').read_text()
     assert 'telnyx-hermes-sms = "telnyx_hermes_sms.installer:main"' in pyproject
     assert 'telnyx-hermes-sms-install = "telnyx_hermes_sms.installer:main"' in pyproject
+
+
+def test_skill_documents_installer_first_instead_of_manual_copy():
+    skill = (ROOT / 'SKILL.md').read_text()
+    assert 'uvx --from "git+https://github.com/team-telnyx/telnyx-hermes-sms.git" telnyx-hermes-sms' in skill
+    assert 'uv tool install --python 3.12 "git+https://github.com/team-telnyx/telnyx-hermes-sms.git"' in skill
+    assert 'cp __init__.py adapter.py plugin.yaml' not in skill
