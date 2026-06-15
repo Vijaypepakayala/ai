@@ -108,14 +108,24 @@ For outbound messaging or SMS callback flows:
 2. Use [Governed Communications](/tools/mcp-apps/apps/governed-communications/README.md) when the runtime should send messages or inspect their status from an allowlisted sender set.
 3. Load only the matching language skill, such as `telnyx-messaging-python` or `telnyx-messaging-javascript`.
 
+For direct REST writes outside the governed app boundary, follow this contract:
+
+- Generate and send a fresh `Idempotency-Key` on every mutating request that creates, confirms, retries, or otherwise changes state.
+- Reuse that same key only when retrying the exact same intended write after a timeout, transport failure, or ambiguous client-side result.
+- Treat `202 Accepted` as incomplete work. Poll the resource or operation-status endpoint until you see a terminal status, and honor `Retry-After` when Telnyx returns it.
+- Do not let the model invent completion from the initial write response alone when the API family documents asynchronous processing.
+
 TypeScript example:
 
 ```typescript
+import { randomUUID } from "node:crypto";
+
 const response = await fetch("https://api.telnyx.com/v2/messages", {
   method: "POST",
   headers: {
     Authorization: `Bearer ${process.env.TELNYX_API_KEY}`,
     "Content-Type": "application/json",
+    "Idempotency-Key": randomUUID(),
   },
   body: JSON.stringify({
     from: "+15551234567",

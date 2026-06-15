@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
@@ -11,10 +11,17 @@ import httpx
 class TelnyxAPIError(Exception):
     """Error from the Telnyx API."""
 
-    def __init__(self, status_code: int, detail: str, errors: list[dict[str, Any]] | None = None) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        detail: str,
+        errors: list[dict[str, Any]] | None = None,
+        retry_after_seconds: float | None = None,
+    ) -> None:
         self.status_code = status_code
         self.detail = detail
         self.errors = errors or []
+        self.retry_after_seconds = retry_after_seconds
         super().__init__(f"Telnyx API error {status_code}: {detail}")
 
 
@@ -47,6 +54,19 @@ class TelnyxAPIClient:
             "Accept": "application/json",
         }
 
+    def _build_headers(
+        self,
+        *,
+        headers: dict[str, str] | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, str]:
+        built = self._get_headers()
+        if idempotency_key:
+            built["Idempotency-Key"] = idempotency_key
+        if headers:
+            built.update(headers)
+        return built
+
     async def _get_async_client(self) -> httpx.AsyncClient:
         if self._async_client is None or self._async_client.is_closed:
             self._async_client = httpx.AsyncClient(
@@ -56,7 +76,8 @@ class TelnyxAPIClient:
             )
         return self._async_client
 
-    async def _handle_response(self, response: httpx.Response) -> dict[str, Any]:
+    async def _handle_response(self, response: httpx.Response) -> tuple[dict[str, Any], float | None]:
+        retry_after_seconds = _parse_retry_after_seconds(response.headers.get("retry-after"))
         if response.status_code >= 400:
             try:
                 body = response.json()
@@ -69,53 +90,140 @@ class TelnyxAPIClient:
                 status_code=response.status_code,
                 detail=detail,
                 errors=errors,
+                retry_after_seconds=retry_after_seconds,
             )
         if response.status_code == 204:
-            return {}
-        return response.json()  # type: ignore[no-any-return]
+            return {}, retry_after_seconds
+        return response.json(), retry_after_seconds  # type: ignore[no-any-return]
 
     async def get_async(
         self,
         path: str,
         *,
         params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Async GET request."""
         client = await self._get_async_client()
-        response = await client.get(path, params=params)
-        return await self._handle_response(response)
+        response = await client.get(path, params=params, headers=self._build_headers(headers=headers))
+        body, _ = await self._handle_response(response)
+        return body
 
     async def post_async(
         self,
         path: str,
         *,
         json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         """Async POST request."""
         client = await self._get_async_client()
-        response = await client.post(path, json=json)
-        return await self._handle_response(response)
+        response = await client.post(
+            path,
+            json=json,
+            headers=self._build_headers(headers=headers, idempotency_key=idempotency_key),
+        )
+        body, _ = await self._handle_response(response)
+        return body
 
     async def delete_async(
         self,
         path: str,
+        *,
+        headers: dict[str, str] | None = None,
+        idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         """Async DELETE request."""
         client = await self._get_async_client()
-        response = await client.delete(path)
-        return await self._handle_response(response)
+        response = await client.delete(
+            path,
+            headers=self._build_headers(headers=headers, idempotency_key=idempotency_key),
+        )
+        body, _ = await self._handle_response(response)
+        return body
 
-    def get(self, path: str, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    async def poll_async(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        interval_seconds: float = 1.0,
+        timeout_seconds: float | None = None,
+        is_done: Callable[[dict[str, Any]], bool] | None = None,
+    ) -> dict[str, Any]:
+        """Poll a GET endpoint until it reaches a terminal state."""
+        deadline = asyncio.get_running_loop().time() + (timeout_seconds or self._timeout)
+        poll_done = is_done or _default_is_done
+
+        while True:
+            client = await self._get_async_client()
+            response = await client.get(path, params=params, headers=self._build_headers(headers=headers))
+            body, retry_after_seconds = await self._handle_response(response)
+
+            if poll_done(body):
+                return body
+
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise TimeoutError(f"Timed out polling {path} after {timeout_seconds or self._timeout} seconds")
+
+            delay = min(retry_after_seconds or interval_seconds, remaining)
+            await asyncio.sleep(max(0.0, delay))
+
+    def get(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         """Sync GET request (convenience wrapper)."""
-        return _run_sync(self.get_async(path, params=params))
+        return _run_sync(self.get_async(path, params=params, headers=headers))
 
-    def post(self, path: str, *, json: dict[str, Any] | None = None) -> dict[str, Any]:
+    def post(
+        self,
+        path: str,
+        *,
+        json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
         """Sync POST request (convenience wrapper)."""
-        return _run_sync(self.post_async(path, json=json))
+        return _run_sync(self.post_async(path, json=json, headers=headers, idempotency_key=idempotency_key))
 
-    def delete(self, path: str) -> dict[str, Any]:
+    def delete(
+        self,
+        path: str,
+        *,
+        headers: dict[str, str] | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
         """Sync DELETE request (convenience wrapper)."""
-        return _run_sync(self.delete_async(path))
+        return _run_sync(self.delete_async(path, headers=headers, idempotency_key=idempotency_key))
+
+    def poll(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        interval_seconds: float = 1.0,
+        timeout_seconds: float | None = None,
+        is_done: Callable[[dict[str, Any]], bool] | None = None,
+    ) -> dict[str, Any]:
+        """Sync polling convenience wrapper."""
+        return _run_sync(
+            self.poll_async(
+                path,
+                params=params,
+                headers=headers,
+                interval_seconds=interval_seconds,
+                timeout_seconds=timeout_seconds,
+                is_done=is_done,
+            )
+        )
 
     async def close(self) -> None:
         """Close the async client."""
@@ -164,3 +272,28 @@ def _get_sync_loop() -> asyncio.AbstractEventLoop:
         _sync_thread = threading.Thread(target=_run_loop, args=(_sync_loop,), daemon=True)
         _sync_thread.start()
     return _sync_loop
+
+
+def _parse_retry_after_seconds(value: str | None) -> float | None:
+    if not value:
+        return None
+
+    try:
+        parsed = float(value)
+    except ValueError:
+        return None
+
+    return parsed if parsed >= 0 else None
+
+
+def _default_is_done(response: dict[str, Any]) -> bool:
+    data = response.get("data")
+    if isinstance(data, dict):
+        status = data.get("status") or data.get("operation_status")
+    else:
+        status = response.get("status")
+
+    if not isinstance(status, str) or not status:
+        return True
+
+    return status.lower() in {"completed", "failed", "canceled", "cancelled", "error", "succeeded"}

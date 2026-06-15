@@ -211,6 +211,31 @@ data = await toolkit.api_client.get_async("/phone_numbers")
 data = toolkit.api_client.get("/phone_numbers")
 ```
 
+For mutating REST calls, send a caller-generated idempotency key and poll asynchronous resources until they reach a terminal state:
+
+```python
+import uuid
+
+created = toolkit.api_client.post(
+    "/messages",
+    json={
+        "from": "+15551234567",
+        "to": "+15557654321",
+        "text": "Your workflow is live.",
+    },
+    idempotency_key=str(uuid.uuid4()),
+)
+
+message = toolkit.api_client.poll(
+    f"/messages/{created['data']['id']}",
+    timeout_seconds=30,
+)
+
+print(message["data"]["status"])
+```
+
+`poll()` respects `Retry-After` when Telnyx returns `202 Accepted`, and defaults to terminal statuses such as `completed`, `failed`, `cancelled`, and `succeeded`.
+
 ## Requirements
 
 - Python 3.11+

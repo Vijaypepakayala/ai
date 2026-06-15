@@ -128,6 +128,35 @@ const result = await toolkit.core.runTool("get_balance", {});
 console.log(JSON.parse(result));
 ```
 
+## Agent-Safe Writes
+
+For mutating REST calls, send a caller-generated idempotency key and poll asynchronous resources until they reach a terminal state.
+
+```typescript
+import { randomUUID } from "node:crypto";
+import { TelnyxAPIClient } from "@telnyx/agent-toolkit";
+
+const client = new TelnyxAPIClient(process.env.TELNYX_API_KEY!);
+
+const created = await client.post(
+  "/messages",
+  {
+    from: "+15551234567",
+    to: "+15557654321",
+    text: "Your workflow is live.",
+  },
+  { idempotencyKey: randomUUID() },
+);
+
+const message = await client.poll(`/messages/${created.data.id}`, {
+  timeoutMs: 30_000,
+});
+
+console.log(message.data.status);
+```
+
+`poll()` respects `Retry-After` when Telnyx returns `202 Accepted`, and defaults to terminal statuses such as `completed`, `failed`, `cancelled`, and `succeeded`.
+
 ## Requirements
 
 - Node.js 18+ (uses native `fetch`)

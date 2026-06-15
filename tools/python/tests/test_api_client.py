@@ -19,6 +19,11 @@ class TestTelnyxAPIClient:
         assert headers["Content-Type"] == "application/json"
         assert headers["Accept"] == "application/json"
 
+    def test_build_headers_with_idempotency_key(self, client: TelnyxAPIClient) -> None:
+        headers = client._build_headers(idempotency_key="idem-123", headers={"X-Test": "1"})
+        assert headers["Idempotency-Key"] == "idem-123"
+        assert headers["X-Test"] == "1"
+
     @respx.mock
     @pytest.mark.asyncio
     async def test_get_async_success(self, client: TelnyxAPIClient) -> None:
@@ -40,11 +45,57 @@ class TestTelnyxAPIClient:
     @respx.mock
     @pytest.mark.asyncio
     async def test_post_async_success(self, client: TelnyxAPIClient) -> None:
-        respx.post("https://api.telnyx.com/v2/messages").mock(
+        route = respx.post("https://api.telnyx.com/v2/messages").mock(
             return_value=httpx.Response(200, json={"data": {"id": "msg-123"}})
         )
-        result = await client.post_async("/messages", json={"to": "+1234", "text": "Hello"})
+        result = await client.post_async(
+            "/messages",
+            json={"to": "+1234", "text": "Hello"},
+            idempotency_key="idem-123",
+        )
         assert result["data"]["id"] == "msg-123"
+        assert route.calls[0].request.headers["Idempotency-Key"] == "idem-123"
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_poll_async_uses_retry_after_until_terminal(self, client: TelnyxAPIClient, monkeypatch: pytest.MonkeyPatch) -> None:
+        slept: list[float] = []
+
+        async def fake_sleep(delay: float) -> None:
+            slept.append(delay)
+
+        monkeypatch.setattr("telnyx_agent_toolkit.shared.api_client.asyncio.sleep", fake_sleep)
+
+        route = respx.get("https://api.telnyx.com/v2/messages/msg-123").mock(
+            side_effect=[
+                httpx.Response(
+                    202,
+                    headers={"Retry-After": "0.25"},
+                    json={"data": {"id": "msg-123", "status": "queued"}},
+                ),
+                httpx.Response(200, json={"data": {"id": "msg-123", "status": "completed"}}),
+            ]
+        )
+
+        result = await client.poll_async("/messages/msg-123", timeout_seconds=5)
+        assert result["data"]["status"] == "completed"
+        assert slept == [0.25]
+        assert route.call_count == 2
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_poll_async_times_out(self, client: TelnyxAPIClient) -> None:
+        respx.get("https://api.telnyx.com/v2/messages/msg-123").mock(
+            return_value=httpx.Response(202, json={"data": {"id": "msg-123", "status": "queued"}})
+        )
+
+        with pytest.raises(TimeoutError):
+            await client.poll_async(
+                "/messages/msg-123",
+                interval_seconds=0.001,
+                timeout_seconds=0.002,
+                is_done=lambda body: False,
+            )
 
     @respx.mock
     @pytest.mark.asyncio
