@@ -1,26 +1,9 @@
-import os
 import sys
-from pathlib import Path
+
+from tests._hermes import find_hermes_root
 
 
-def _find_hermes_root() -> Path | None:
-    """Locate a Hermes Agent checkout for tests that import gateway modules."""
-    candidates = []
-    env_root = os.getenv("HERMES_AGENT_ROOT")
-    if env_root:
-        candidates.append(Path(env_root).expanduser())
-    candidates.extend([
-        Path.cwd().parent / "hermes-agent",
-        Path.home() / ".hermes" / "hermes-agent",
-        Path("/Users/ifthikar/.hermes/hermes-agent"),
-    ])
-    for candidate in candidates:
-        if (candidate / "gateway" / "platforms" / "base.py").exists():
-            return candidate
-    return None
-
-
-HERMES_ROOT = _find_hermes_root()
+HERMES_ROOT = find_hermes_root()
 if HERMES_ROOT is not None and str(HERMES_ROOT) not in sys.path:
     sys.path.insert(0, str(HERMES_ROOT))
 

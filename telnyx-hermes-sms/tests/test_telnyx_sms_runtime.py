@@ -4,6 +4,10 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 
+from tests._hermes import ensure_hermes_on_path
+
+ensure_hermes_on_path()
+
 from gateway.config import PlatformConfig
 
 import adapter

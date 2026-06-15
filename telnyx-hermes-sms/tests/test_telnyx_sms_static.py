@@ -82,3 +82,9 @@ def test_skill_documents_installer_first_instead_of_manual_copy():
     assert 'uvx --from "git+https://github.com/team-telnyx/telnyx-hermes-sms.git" telnyx-hermes-sms' in skill
     assert 'uv tool install --python 3.12 "git+https://github.com/team-telnyx/telnyx-hermes-sms.git"' in skill
     assert 'cp __init__.py adapter.py plugin.yaml' not in skill
+
+
+def test_readme_documents_hermes_checkout_contract():
+    readme = (ROOT / 'README.md').read_text()
+    assert 'Set `HERMES_AGENT_ROOT` if it is not at `~/.hermes/hermes-agent`.' in readme
+    assert 'Hermes-dependent test modules skip with an explicit setup message' in readme

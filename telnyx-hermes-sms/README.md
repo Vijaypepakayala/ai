@@ -35,6 +35,9 @@ Requirements:
   Set `HERMES_AGENT_ROOT` if it is not at `~/.hermes/hermes-agent`.
 - `uv` is recommended for reproducible local test dependencies.
 
+Hermes-dependent test modules skip with an explicit setup message when that
+checkout is missing. Static tests still run without Hermes.
+
 ```bash
 git clone https://github.com/team-telnyx/telnyx-hermes-sms.git
 cd telnyx-hermes-sms
