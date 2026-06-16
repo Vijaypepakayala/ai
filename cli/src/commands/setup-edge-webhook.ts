@@ -53,12 +53,14 @@ export async function setupEdgeWebhookCommand(flags: Record<string, string | boo
       "telnyx-edge auth status",
       "telnyx-edge status",
       "telnyx-edge bindings create",
+      "telnyx-edge bindings update",
+      "telnyx-edge bindings delete",
       "telnyx-edge bindings validate",
       "telnyx-edge bindings get",
     ],
     kv_handoff_commands: [
       "telnyx-edge storage kv create --name <name>",
-      "telnyx-edge storage kv key put <kv-id> <key> <value>",
+      "telnyx-edge storage kv key put <kv-id> <key> <value> --ttl 30m",
     ],
     prerequisites: [
       "Install telnyx-edge",

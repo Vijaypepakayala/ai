@@ -87,10 +87,12 @@ telnyx-edge list
 telnyx-edge delete-func
 telnyx-edge secrets list
 telnyx-edge bindings create
+telnyx-edge bindings update
+telnyx-edge bindings delete
 telnyx-edge bindings validate
 telnyx-edge bindings get
 telnyx-edge storage kv create --name session-cache
-telnyx-edge storage kv key put <kv-id> prompt/system "edge-ready"
+telnyx-edge storage kv key put <kv-id> prompt/system "edge-ready" --ttl 30m
 telnyx-edge revisions list my-mcp-server
 telnyx-edge rollback my-mcp-server <revision-id>
 ```
@@ -116,6 +118,8 @@ When your function needs Telnyx API access, the upstream flow is:
 
 ```bash
 telnyx-edge bindings create
+telnyx-edge bindings update
+telnyx-edge bindings delete
 telnyx-edge bindings validate
 telnyx-edge bindings get
 ```
@@ -186,7 +190,7 @@ Concrete KV operations stay upstream as well:
 ```sh
 telnyx-edge storage kv create --name agent-session-cache
 telnyx-edge storage kv list
-telnyx-edge storage kv key put <kv-id> prompts/system "hello from edge"
+telnyx-edge storage kv key put <kv-id> prompts/system "hello from edge" --ttl 30m
 telnyx-edge storage kv key get <kv-id> prompts/system
 telnyx-edge storage kv key delete <kv-id> prompts/system
 ```

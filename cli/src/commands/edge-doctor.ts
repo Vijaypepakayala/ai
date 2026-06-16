@@ -98,9 +98,9 @@ export async function edgeDoctorCommand(flags: Record<string, string | boolean>)
       "Or scaffold directly with the upstream language templates: telnyx-edge new-func --language=js|ts|python|go|quarkus --name=<name>",
       "For the MCP example, add both TELNYX_API_KEY and SHARED_SECRET before shipping.",
       "Typed webhook/event routing starts well from: telnyx-edge new-func --from-dir=examples/ts/call-event-router --name=my-call-event-router",
-      "Create or validate your Telnyx API binding with: telnyx-edge bindings create, telnyx-edge bindings validate, and telnyx-edge bindings get",
+      "Manage your Telnyx API binding with: telnyx-edge bindings create, telnyx-edge bindings update, telnyx-edge bindings delete, telnyx-edge bindings validate, and telnyx-edge bindings get",
       "Deploy with: telnyx-edge ship",
-      "Provision KV resources directly in telnyx-edge when needed: telnyx-edge storage kv create --name <name> and telnyx-edge storage kv key put <kv-id> <key> <value>",
+      "Provision KV resources directly in telnyx-edge when needed: telnyx-edge storage kv create --name <name> and telnyx-edge storage kv key put <kv-id> <key> <value> --ttl 30m",
       "Inspect or clean up lifecycle with: telnyx-edge list, telnyx-edge status, telnyx-edge revisions list <name>, telnyx-edge rollback <name> <revision-id>, or telnyx-edge delete-func <name>",
       "Then connect the exposed HTTP or MCP boundary back into your AI workflow.",
     ];
