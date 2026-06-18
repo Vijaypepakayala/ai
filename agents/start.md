@@ -10,6 +10,8 @@ If you only read one page before deciding whether Telnyx fits your agent workflo
 
 The exact first-run evaluation route today is `POST https://telnyx.com/api/inference`. Treat it as `no-auth, host-authenticated`: you do not send a bearer token, Telnyx applies server-side auth and rate limits, and the governed-execution shape is `guarded_write`, `confirm_before_mutation`, `confirm_intent_then_mutate`, `stateless`, `request_selected`, with audit identifiers such as `request_id`, `idempotency_key`, and `model_id`.
 
+If you need the authenticated onboarding path with explicit billing and approval guardrails, use [`/guides/getting-started.md`](/guides/getting-started.md) as the canonical first workflow guide.
+
 ## Getting started
 
 ### Path 1: Zero-signup first API call
@@ -100,6 +102,7 @@ Start with `POST https://telnyx.com/api/inference` when the goal is first-run ev
 | Agent access | `https://telnyx.com/.well-known/agent-access.json` | Machine-readable demo-first and signup contract, including the current no-email production gap |
 | Agent skills index | `https://telnyx.com/.well-known/agent-skills/index.json` | Published skill catalog |
 | Auth guide | `https://telnyx.com/auth.md` | Bearer-auth and protected-resource discovery walkthrough |
+| Agent-first getting-started guide | `https://telnyx.com/guides/getting-started.md` | Authenticated onboarding path with billing preconditions and a first read-only workflow |
 | OAuth authorization server | `https://api.telnyx.com/.well-known/oauth-authorization-server` | OAuth metadata and agent onboarding pointers |
 | OAuth protected resource | `https://api.telnyx.com/.well-known/oauth-protected-resource` | Generic API bearer metadata |
 | MCP resource metadata | `https://api.telnyx.com/.well-known/oauth-protected-resource/v2/mcp` | MCP bearer metadata |
@@ -110,6 +113,7 @@ Start with `POST https://telnyx.com/api/inference` when the goal is first-run ev
 | MCP Apps catalog | `https://developers.telnyx.com/apps` | Public app-layer MCP catalog |
 | MCP Apps proof app | `https://developers.telnyx.com/apps/number-intelligence` | Example public app landing page |
 | OpenAPI spec | `https://telnyx.com/.well-known/openapi.json` | Machine-readable REST surface |
+| AI catalog | `https://telnyx.com/ai/catalog.json` | Workload-oriented AI discovery map with freshness boundaries and live-source links |
 | Capability index | `https://telnyx.com/ai/capabilities.json` | Machine-readable capability catalog |
 | Pricing | `https://telnyx.com/ai/pricing.json` | Machine-readable pricing surface |
 | Telnyx webhooks guide | `https://developers.telnyx.com/development/api-fundamentals/webhooks/receiving-webhooks` | Live Telnyx webhooks documentation for setup, signature verification, payloads, and retry behavior |
@@ -129,7 +133,7 @@ These are the canonical owners for the public onboarding and discovery content s
 - `agent.json` and `/.well-known/agent-card.json` for the machine-readable capability and identity maps
 - `/.well-known/agent-access.json` and `agent-signup.md` for onboarding and signup contract details
 - `auth.md` and `llms.txt` for auth and text-first retrieval guidance
-- `ai/capabilities.json` and `ai/pricing.json` for machine-readable capability and pricing mirrors
+- `ai/catalog.json`, `ai/capabilities.json`, and `ai/pricing.json` for machine-readable AI discovery, capability, and pricing mirrors
 
 ### Docs-hosted surfaces outside this repo
 
@@ -213,6 +217,7 @@ Canonical install-path guidance:
 - Local signup guide mirror: [`/agent-signup.md`](/agent-signup.md)
 - Local agent access mirror: [`/.well-known/agent-access.json`](/.well-known/agent-access.json)
 - Local agent skills index mirror: [`/.well-known/agent-skills/index.json`](/.well-known/agent-skills/index.json)
+- Local AI catalog mirror: [`/ai/catalog.json`](/ai/catalog.json)
 - Local capability mirror: [`/ai/capabilities.json`](/ai/capabilities.json)
 - Local pricing mirror: [`/ai/pricing.json`](/ai/pricing.json)
 - Runtime agent instructions: [`/AGENTS.md`](/AGENTS.md) and `https://telnyx.com/AGENTS.md`

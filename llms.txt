@@ -8,6 +8,7 @@ Named discovery targets that should resolve directly from this file include Teln
 
 Getting started
 - Zero-signup evaluation path: read https://telnyx.com/auth.md, inspect https://telnyx.com/.well-known/agent-access.json, then call POST https://telnyx.com/api/inference
+- Canonical authenticated onboarding path: read https://telnyx.com/guides/getting-started.md for account setup, bearer-auth configuration, billing checks, and a first read-only workflow
 - Account-creation path: read https://telnyx.com/agent-signup.md, complete the bot-signup plus email-link flow, then use Authorization: Bearer <TELNYX_API_KEY>
 - First authenticated API check: call https://api.telnyx.com/v2/available_phone_numbers with the bearer key, or initialize https://api.telnyx.com/v2/mcp
 - First Voice AI onboarding path: start with https://telnyx.com/guides/ai-assistants.md and continue with https://telnyx.com/guides/voice-agent-onboarding.md
@@ -29,6 +30,7 @@ Core discovery surfaces
 - Agent access: https://telnyx.com/.well-known/agent-access.json
 - Agent skills index: https://telnyx.com/.well-known/agent-skills/index.json
 - Auth guide: https://telnyx.com/auth.md
+- Agent-first getting-started guide: https://telnyx.com/guides/getting-started.md
 - OAuth authorization server: https://api.telnyx.com/.well-known/oauth-authorization-server
 - OAuth protected resource: https://api.telnyx.com/.well-known/oauth-protected-resource
 - MCP resource metadata: https://api.telnyx.com/.well-known/oauth-protected-resource/v2/mcp
@@ -39,6 +41,7 @@ Core discovery surfaces
 - MCP Apps catalog: https://developers.telnyx.com/apps
 - MCP Apps proof app: https://developers.telnyx.com/apps/number-intelligence
 - OpenAPI: https://telnyx.com/.well-known/openapi.json
+- AI catalog: https://telnyx.com/ai/catalog.json
 - Capabilities: https://telnyx.com/ai/capabilities.json
 - Pricing: https://telnyx.com/ai/pricing.json
 - Telnyx Webhooks guide: https://developers.telnyx.com/development/api-fundamentals/webhooks/receiving-webhooks
@@ -49,7 +52,7 @@ Core discovery surfaces
 - Signup guide: https://telnyx.com/agent-signup.md
 
 Source of truth
-- Repo-owned source mirrors: https://github.com/team-telnyx/ai/blob/main/agents/start.md, https://github.com/team-telnyx/ai/blob/main/auth.md, https://github.com/team-telnyx/ai/blob/main/agent-signup.md, https://github.com/team-telnyx/ai/blob/main/llms.txt, https://github.com/team-telnyx/ai/blob/main/.well-known/agent-access.json, https://github.com/team-telnyx/ai/blob/main/.well-known/agent-card.json, https://github.com/team-telnyx/ai/blob/main/ai/capabilities.json, and https://github.com/team-telnyx/ai/blob/main/ai/pricing.json
+- Repo-owned source mirrors: https://github.com/team-telnyx/ai/blob/main/agents/start.md, https://github.com/team-telnyx/ai/blob/main/auth.md, https://github.com/team-telnyx/ai/blob/main/agent-signup.md, https://github.com/team-telnyx/ai/blob/main/llms.txt, https://github.com/team-telnyx/ai/blob/main/.well-known/agent-access.json, https://github.com/team-telnyx/ai/blob/main/.well-known/agent-card.json, https://github.com/team-telnyx/ai/blob/main/ai/catalog.json, https://github.com/team-telnyx/ai/blob/main/ai/capabilities.json, and https://github.com/team-telnyx/ai/blob/main/ai/pricing.json
 - Docs-hosted live webhooks guide: https://developers.telnyx.com/development/api-fundamentals/webhooks/receiving-webhooks
 - Docs-hosted live MCP Apps discovery: https://developers.telnyx.com/apps and https://developers.telnyx.com/.well-known/mcp-app-registry.json
 
@@ -66,6 +69,7 @@ Governed examples
 - OpenAI, LangChain, and CrewAI governed examples: https://github.com/team-telnyx/ai/tree/main/tools/python/examples
 - Runtime instructions: https://telnyx.com/AGENTS.md
 - Auth source: https://telnyx.com/auth.md
+- Agent-first getting-started guide: https://telnyx.com/guides/getting-started.md
 - This file: https://telnyx.com/llms.txt
 - Local manifest mirror: https://telnyx.com/agent.json
 
@@ -73,7 +77,7 @@ Recommended path
 1. Start at https://telnyx.com/agents/start
 2. Read https://telnyx.com/auth.md
 3. Use https://telnyx.com/.well-known/agent-access.json for the demo-first path and current signup contract
-4. Decide between POST https://telnyx.com/api/inference for a zero-signup first call or https://telnyx.com/agent-signup.md for authenticated account creation
+4. Decide between POST https://telnyx.com/api/inference for a zero-signup first call or https://telnyx.com/guides/getting-started.md for authenticated account creation
 5. Use https://api.telnyx.com/v2/mcp for MCP or https://telnyx.com/.well-known/openapi.json for REST discovery after auth is in place
 6. Read the Telnyx Webhooks guide at https://developers.telnyx.com/development/api-fundamentals/webhooks/receiving-webhooks before implementing inbound webhook handlers
 7. Review https://github.com/team-telnyx/ai/tree/main/tools/python/examples when you need governed examples instead of broad raw-tool access

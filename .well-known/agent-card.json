@@ -92,7 +92,7 @@
     {
       "id": "capabilities",
       "name": "List Capabilities",
-      "description": "List all Telnyx AI infrastructure capabilities, certifications, compliance, data handling, and named developer entrypoints for Voice AI Agents, Webhooks, and x402 payments. Access via /ai/capabilities.json, /ai/compliance.json, and /ai/data-handling.json.",
+      "description": "List Telnyx AI infrastructure capabilities, workload-oriented AI catalog discovery, certifications, compliance, data handling, and named developer entrypoints. Access via /ai/catalog.json, /ai/capabilities.json, /ai/compliance.json, and /ai/data-handling.json.",
       "tags": [
         "capabilities",
         "discovery",
@@ -120,7 +120,8 @@
     "voice_agent_onboarding_guide": "https://telnyx.com/guides/voice-agent-onboarding.md",
     "webhooks_guide": "https://developers.telnyx.com/development/api-fundamentals/webhooks/receiving-webhooks",
     "webhooks_repo_mirror": "https://telnyx.com/guides/webhooks.md",
-    "x402_payments_guide": "https://telnyx.com/guides/x402-payments.md"
+    "x402_payments_guide": "https://telnyx.com/guides/x402-payments.md",
+    "ai_catalog": "https://telnyx.com/ai/catalog.json"
   },
   "gettingStarted": {
     "summary": "Start at the text-first discovery surfaces, then choose the zero-signup inference path or the authenticated API-key path depending on whether you need production resources.",
@@ -128,7 +129,7 @@
       "Read https://telnyx.com/agents/start",
       "Read https://telnyx.com/auth.md",
       "Inspect https://telnyx.com/.well-known/agent-access.json",
-      "Use POST https://telnyx.com/api/inference for a first no-signup evaluation call, or follow https://telnyx.com/agent-signup.md for API-key onboarding",
+      "Use POST https://telnyx.com/api/inference for a first no-signup evaluation call, or follow https://telnyx.com/guides/getting-started.md for authenticated onboarding with billing and approval guardrails",
       "For Voice AI assistants, continue with https://telnyx.com/guides/ai-assistants.md and https://telnyx.com/guides/voice-agent-onboarding.md"
     ]
   },
@@ -282,6 +283,16 @@
       "audit_identifiers": [
         "request_id",
         "resource_id"
+      ]
+    },
+    "ai_catalog": {
+      "risk_class": "read_only",
+      "approval_expectation": "none",
+      "memory_scope": "host_controlled",
+      "model_behavior": "host_controlled",
+      "approval_path": "none_read_only",
+      "audit_identifiers": [
+        "request_id"
       ]
     }
   }

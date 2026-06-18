@@ -88,7 +88,7 @@ The capability list in `agent.json` is the source of truth for what Telnyx surfa
 
 ### Editing public discovery assets
 
-The repo-owned public discovery mirrors live in `.well-known/agent-card.json`, `.well-known/agent-access.json`, `.well-known/agent-skills/index.json`, `ai/capabilities.json`, `ai/pricing.json`, `auth.md`, `llms.txt`, and `agents/start.md`. Keep those files aligned with the URLs published from `README.md`, `AGENTS.md`, and `agent.json`, then run:
+The repo-owned public discovery mirrors live in `.well-known/agent-card.json`, `.well-known/agent-access.json`, `.well-known/agent-skills/index.json`, `ai/catalog.json`, `ai/capabilities.json`, `ai/pricing.json`, `auth.md`, `llms.txt`, and `agents/start.md`. Keep those files aligned with the URLs published from `README.md`, `AGENTS.md`, and `agent.json`, then run:
 
 ```bash
 npm run test:discovery-assets
@@ -125,6 +125,7 @@ If you are an AI agent **using** Telnyx (not modifying this repo), the entry poi
 | You want to…                                              | Start here                                                              |
 | --------------------------------------------------------- | ----------------------------------------------------------------------- |
 | Discover Telnyx capabilities                              | `https://telnyx.com/agents/start` first, then `/agent.json` in this repo as the local mirror |
+| Complete the first authenticated Telnyx workflow          | `https://telnyx.com/guides/getting-started.md`                           |
 | Generate Telnyx code with a coding assistant              | Install the plugin: `team-telnyx/ai` marketplace (Claude / Cursor / Gemini / OpenCode) — see `README.md` |
 | Use Telnyx APIs from an agent framework (OpenAI Agents SDK, LangChain, CrewAI, Vercel AI SDK) | `tools/python/` or `tools/typescript/`                                   |
 | Talk to Telnyx via MCP                                    | `https://api.telnyx.com/v2/mcp` (Bearer auth) — proxy in `tools/mcp/`   |
@@ -150,6 +151,7 @@ See `agent.json` (`auth` block) for the canonical auth contract.
 | Agent skills index                               | `https://telnyx.com/.well-known/agent-skills/index.json`  |
 | Runtime agent contract                           | `https://telnyx.com/AGENTS.md`                            |
 | Auth guide                                       | `https://telnyx.com/auth.md`                              |
+| Agent-first getting-started guide                | `https://telnyx.com/guides/getting-started.md`            |
 | LLM index                                        | `https://telnyx.com/llms.txt`                             |
 | OAuth authorization server                       | `https://api.telnyx.com/.well-known/oauth-authorization-server` |
 | OAuth protected resource                         | `https://api.telnyx.com/.well-known/oauth-protected-resource` |
@@ -160,6 +162,7 @@ See `agent.json` (`auth` block) for the canonical auth contract.
 | MCP Apps catalog                                 | `https://developers.telnyx.com/apps`                      |
 | MCP Apps proof app                               | `https://developers.telnyx.com/apps/number-intelligence`  |
 | OpenAPI spec                                     | `https://telnyx.com/.well-known/openapi.json`             |
+| AI catalog                                       | `https://telnyx.com/ai/catalog.json`                      |
 | Capability index                                 | `https://telnyx.com/ai/capabilities.json`                 |
 | Pricing                                          | `https://telnyx.com/ai/pricing.json`                      |
 | Telnyx webhooks guide                           | `https://developers.telnyx.com/development/api-fundamentals/webhooks/receiving-webhooks` |

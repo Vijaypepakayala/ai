@@ -36,7 +36,8 @@
     "openapi_url": "https://telnyx.com/.well-known/openapi.json",
     "capabilities_url": "https://telnyx.com/ai/capabilities.json",
     "pricing_url": "https://telnyx.com/ai/pricing.json",
-    "webhooks_guide": "https://developers.telnyx.com/development/api-fundamentals/webhooks/receiving-webhooks"
+    "webhooks_guide": "https://developers.telnyx.com/development/api-fundamentals/webhooks/receiving-webhooks",
+    "ai_catalog_url": "https://telnyx.com/ai/catalog.json"
   },
   "governed_execution": {
     "schema_version": "2026-06-13",
@@ -92,7 +93,7 @@
       "method": "POST",
       "url": "https://telnyx.com/api/inference",
       "auth_mode": "no_auth_host_authenticated",
-      "guide": "https://telnyx.com/agent-signup.md",
+      "guide": "https://telnyx.com/guides/getting-started.md",
       "docs": "https://telnyx.com/.well-known/agent-access.json",
       "governance": {
         "risk_class": "guarded_write",
@@ -839,9 +840,11 @@
     "webhooks_repo_mirror": "https://telnyx.com/guides/webhooks.md",
     "voice_ai_agents_guide": "https://telnyx.com/guides/ai-assistants.md",
     "voice_agent_onboarding_guide": "https://telnyx.com/guides/voice-agent-onboarding.md",
+    "getting_started_guide": "https://telnyx.com/guides/getting-started.md",
     "x402_payments_guide": "https://telnyx.com/guides/x402-payments.md",
     "zero_signup_first_run": "https://telnyx.com/api/inference",
     "support": "https://support.telnyx.com",
-    "github": "https://github.com/team-telnyx"
+    "github": "https://github.com/team-telnyx",
+    "ai_catalog": "https://telnyx.com/ai/catalog.json"
   }
 }

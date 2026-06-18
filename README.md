@@ -26,7 +26,7 @@ This repo is the one-stop shop for AI Agents and AI-first developers building wi
 
 Start agent discovery at `https://telnyx.com/agents/start`. The surfaces below are the canonical repo-owned or repo-linked entry points that agents should use without guessing.
 
-The repo-owned source mirrors for that public path live in [`agents/start.md`](/agents/start.md), [`agent.json`](/agent.json), [`auth.md`](/auth.md), [`agent-signup.md`](/agent-signup.md), [`/.well-known/agent-access.json`](/.well-known/agent-access.json), [`/.well-known/agent-card.json`](/.well-known/agent-card.json), [`/.well-known/agent-skills/index.json`](/.well-known/agent-skills/index.json), [`/ai/capabilities.json`](/ai/capabilities.json), [`/ai/pricing.json`](/ai/pricing.json), [`AGENTS.md`](/AGENTS.md), and [`llms.txt`](/llms.txt). The corresponding public mirrors are `https://telnyx.com/AGENTS.md`, `https://telnyx.com/llms.txt`, `https://telnyx.com/ai/capabilities.json`, and `https://telnyx.com/ai/pricing.json`.
+The repo-owned source mirrors for that public path live in [`agents/start.md`](/agents/start.md), [`agent.json`](/agent.json), [`auth.md`](/auth.md), [`agent-signup.md`](/agent-signup.md), [`guides/getting-started.md`](/guides/getting-started.md), [`/.well-known/agent-access.json`](/.well-known/agent-access.json), [`/.well-known/agent-card.json`](/.well-known/agent-card.json), [`/.well-known/agent-skills/index.json`](/.well-known/agent-skills/index.json), [`/ai/catalog.json`](/ai/catalog.json), [`/ai/capabilities.json`](/ai/capabilities.json), [`/ai/pricing.json`](/ai/pricing.json), [`AGENTS.md`](/AGENTS.md), and [`llms.txt`](/llms.txt). The corresponding public mirrors are `https://telnyx.com/AGENTS.md`, `https://telnyx.com/llms.txt`, `https://telnyx.com/ai/catalog.json`, `https://telnyx.com/ai/capabilities.json`, and `https://telnyx.com/ai/pricing.json`.
 
 For Hermes Agent and OpenClaw users, the Telnyx-owned SMS platform adapter lives in [`/telnyx-hermes-sms`](/telnyx-hermes-sms). Start with [`telnyx-hermes-sms/README.md`](/telnyx-hermes-sms/README.md) for the installer CLI, Hermes plugin enablement steps, and the current canonical install path. Use that adapter instead of hardcoding Telnyx support into Hermes core. Today the canonical install path is the GitHub repo install command; once GitHub Releases are published, the tagged release path should become the stable default.
 
@@ -39,6 +39,7 @@ For first-run evaluation, use `POST https://telnyx.com/api/inference` first. Tha
 For high-signal, non-JavaScript discovery, start with the public text-first assets before broader docs exploration:
 
 - `https://telnyx.com/agents/start` for the crawlable agent entrypoint
+- `https://telnyx.com/guides/getting-started.md` for the canonical authenticated onboarding path and first read-only workflow
 - `https://telnyx.com/guides/ai-assistants.md` and `https://telnyx.com/guides/voice-agent-onboarding.md` for Telnyx Voice AI Agents
 - `https://telnyx.com/guides/webhooks.md` plus the live webhook docs URL for Telnyx Webhooks
 - `https://telnyx.com/guides/x402-payments.md` for Telnyx x402 Payments
@@ -50,6 +51,7 @@ For high-signal, non-JavaScript discovery, start with the public text-first asse
 | Agent access | `https://telnyx.com/.well-known/agent-access.json` | Machine-readable demo-first and signup contract, including the current no-email production gap |
 | Agent skills index | `https://telnyx.com/.well-known/agent-skills/index.json` | Published skill catalog |
 | Auth guide | `https://telnyx.com/auth.md` | Root agent auth walkthrough that pairs with protected-resource metadata |
+| Agent-first getting-started guide | `https://telnyx.com/guides/getting-started.md` | Canonical authenticated onboarding path with billing preconditions and a first read-only workflow |
 | OAuth authorization server | `https://api.telnyx.com/.well-known/oauth-authorization-server` | Auth-server metadata for delegated auth and agent onboarding pointers |
 | OAuth protected resource | `https://api.telnyx.com/.well-known/oauth-protected-resource` | Resource metadata for the generic API bearer surface |
 | MCP resource metadata | `https://api.telnyx.com/.well-known/oauth-protected-resource/v2/mcp` | Resource metadata for the MCP endpoint and bearer challenge target |
@@ -60,6 +62,7 @@ For high-signal, non-JavaScript discovery, start with the public text-first asse
 | MCP Apps catalog | `https://developers.telnyx.com/apps` | Docs-hosted landing page for focused MCP Apps |
 | MCP Apps proof app | `https://developers.telnyx.com/apps/number-intelligence` | Public per-app discovery document with tool names and `ui://` resources |
 | OpenAPI spec | `https://telnyx.com/.well-known/openapi.json` | Machine-readable API surface |
+| AI catalog | `https://telnyx.com/ai/catalog.json` | Workload-oriented AI discovery map with freshness boundaries and live-source links |
 | Capability index | `https://telnyx.com/ai/capabilities.json` | Machine-readable capability map |
 | Pricing | `https://telnyx.com/ai/pricing.json` | Machine-readable pricing surface |
 | Telnyx Webhooks guide | `https://developers.telnyx.com/development/api-fundamentals/webhooks/receiving-webhooks` | Live named Telnyx Webhooks entrypoint for configuration, signature verification, payload structure, and delivery debugging |
@@ -272,6 +275,8 @@ Validation note: what is public is the docs-hosted registry, app catalog, per-ap
 ## Guides
 
 Curl-first operational guides for common Telnyx workflows — SMS messaging, voice call control, AI assistants, phone numbers, porting, verification, webhooks, 10DLC registration, WireGuard networking, x402 payments, Edge Compute handoff patterns, and [evidence handoff / escalation runbooks](/guides/evidence-handoff.md).
+
+For the first authenticated account bootstrap with explicit approval and billing guardrails, start with [Getting Started With Telnyx For Agents](/guides/getting-started.md).
 
 For current assistant examples, start with [AI Voice Assistants](/guides/ai-assistants.md). That guide currently pins `openai/gpt-5.4` in hosted OpenAI assistant examples; treat it as an example value, not a stable default, and verify the live catalog before automation.
 
