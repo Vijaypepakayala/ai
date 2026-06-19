@@ -150,6 +150,96 @@ This is the fastest way to verify that the assistant path worked end-to-end befo
 
 If your first goal is only "did the assistant answer and complete a call correctly?", `conversation_id` is the most important AI identifier to save immediately after the first test call.
 
+## Production Memory Contract
+
+The first live call proves that Telnyx is producing the right IDs. The next production step is to persist a small voice-memory record outside the call so a returning caller and a human escalation path can both reuse the same context.
+
+Persist one record per completed call with:
+
+- a stable customer key such as CRM account ID, verified phone number, or ticket ID
+- `assistant_id`
+- `conversation_id`
+- `call_control_id`
+- `call_session_id`
+- the last user goal in plain language
+- a short assistant-generated summary you are willing to show a human operator
+- disposition metadata such as `resolved`, `follow_up_required`, or `escalated`
+- retention metadata such as `created_at`, `expires_at`, and the policy or queue that governs deletion
+
+The minimum production rule is: do not rely on `conversation_id` alone as the customer identity. Treat it as the AI-side run handle for one conversation, then map it to your customer key in your own system of record.
+
+### Suggested Voice Memory Record
+
+```json
+{
+  "customer_key": "acct_12345",
+  "assistant_id": "assistant-uuid",
+  "conversation_id": "conv-uuid",
+  "call_control_id": "v3:call-control-id",
+  "call_session_id": "session-uuid",
+  "caller_e164": "+15551234567",
+  "summary": "Caller reported a failed SIM activation after port-in and needs a same-day callback.",
+  "last_user_goal": "Finish activation on the original business line.",
+  "disposition": "follow_up_required",
+  "created_at": "2026-06-19T12:34:56Z",
+  "expires_at": "2026-07-19T12:34:56Z"
+}
+```
+
+## Persisting Memory After Each Call
+
+The cleanest source of truth for the persistence step is the post-call webhook plus a follow-up conversation fetch.
+
+1. Read `call.conversation.ended` and capture the IDs above.
+2. Fetch the conversation and messages with `conversation_id`.
+3. Store the small memory record in your CRM, ticketing system, or app database.
+4. Keep the full transcript only when your retention and consent policy explicitly allows it.
+
+```bash
+curl "https://api.telnyx.com/v2/ai/conversations/{conversation_id}" \
+  -H "Authorization: Bearer $TELNYX_API_KEY"
+
+curl "https://api.telnyx.com/v2/ai/conversations/{conversation_id}/messages" \
+  -H "Authorization: Bearer $TELNYX_API_KEY"
+```
+
+For voice-specific debugging later, also capture the `call.conversation_insights.generated` event when your workflow uses conversation insights. That event helps separate "the model chose poorly" from "the retrieved memory was already incomplete."
+
+## Retrieving Prior Context For A Returning Caller
+
+On the next inbound call, retrieve context in this order:
+
+1. resolve the caller to your customer key
+2. load the most recent still-valid memory record for that key
+3. fetch Telnyx conversation messages only when you need more detail than the stored summary
+4. pass a trimmed context window into `message_history` before starting the assistant
+
+Keep the rehydrated context short and deliberate. The safest production pattern is to pass a compact summary plus the last one or two turns that matter, not an unbounded transcript dump.
+
+```bash
+curl -X POST "https://api.telnyx.com/v2/calls/{call_control_id}/actions/ai_assistant_start" \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "assistant": {
+      "id": "your-assistant-id"
+    },
+    "message_history": [
+      {
+        "role": "system",
+        "content": "Returning caller context: account acct_12345 had a failed SIM activation earlier today. Confirm whether the activation completed before taking new action."
+      },
+      {
+        "role": "user",
+        "content": "The caller already verified the account and wants to continue the previous activation case."
+      }
+    ],
+    "send_message_history_updates": true
+  }'
+```
+
+Use `message_history` for the concise state you actively want the assistant to use in the next turn. Use the conversation APIs for audit, debugging, and optional deeper retrieval when the short state bundle is not enough.
+
 ## Reusing `message_history`
 
 The assistant answer webhook is the paved road for the first evaluation call. When you later need to continue context in a custom call-control flow, reuse prior turns as `message_history` with voice AI actions such as `ai_assistant_start` or `gather_using_ai`.
@@ -178,6 +268,35 @@ curl -X POST "https://api.telnyx.com/v2/calls/{call_control_id}/actions/ai_assis
 
 Use this pattern when you intentionally move from the no-code answer-webhook bootstrap into a more controlled Call Control workflow. For the detailed field surface, see [`skills/telnyx-voice-gather-curl/SKILL.md`](/skills/telnyx-voice-gather-curl/SKILL.md).
 
+## Escalation And Human Handoff Bundle
+
+When the assistant cannot safely finish the request, persist and hand off one operator-ready bundle before you transfer or queue the call.
+
+The minimum handoff bundle is:
+
+- `customer_key`
+- `assistant_id`
+- `conversation_id`
+- `call_control_id`
+- `call_session_id`
+- current caller phone number
+- short summary of what already happened
+- explicit reason for escalation
+- last successful verification state, if any
+
+If the caller is still on the line, use call transfer for the telephony move and attach the same bundle to the operator workspace, CRM ticket, or queue metadata your humans already monitor.
+
+```bash
+curl -X POST "https://api.telnyx.com/v2/calls/{call_control_id}/actions/transfer" \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "to": "+18005550199"
+  }'
+```
+
+The production rule is simple: the human should receive the same identifiers you would use to debug the call later. Do not collapse the handoff into a prose-only summary if that means `conversation_id` or `call_session_id` gets lost.
+
 ## Debugging After The First Bootstrap Call
 
 After one successful or failed live call, move to the read-only Voice Monitor path:
@@ -200,6 +319,37 @@ Voice Monitor is the paved-road debugger for:
 - provider and model confirmation
 - terminal hangup or failure causes
 - post-call recording discovery
+
+## Wrong Action Or Wrong Memory Triage
+
+When the assistant chose the wrong action or seemed to remember the wrong thing, inspect the failure in this order:
+
+1. Was the right customer record selected before the call started?
+2. Did the stored summary already contain stale or incorrect information?
+3. Did `message_history` over-specify the task and bias the assistant into a bad action?
+4. Did the live conversation messages show the caller correcting the assistant, but your persistence step missed that correction?
+5. Did the call-control timeline or webhook delivery fail before the retrieval or escalation branch completed?
+
+Use these surfaces together:
+
+- Voice Monitor for call timeline, webhook failures, provider confirmation, and terminal events
+- `GET /v2/ai/conversations/{conversation_id}` for conversation metadata
+- `GET /v2/ai/conversations/{conversation_id}/messages` for the exact turns the assistant saw
+- your own stored memory record for the summary and customer-key mapping that were fed back into the next call
+
+If the memory record is wrong but the conversation messages are right, fix your persistence or summarization path. If the memory record is right but the assistant still acted incorrectly, tighten the instructions, shorten the retrieved context, or add an explicit confirmation turn before risky actions.
+
+## Privacy And Retention Notes
+
+Voice memory is useful only if it is deliberately scoped.
+
+- Persist the minimum context needed for continuity and escalation, not every possible transcript field.
+- Set a retention window for conversation summaries, transcripts, and recordings before production rollout.
+- Keep customer identity keys separate from raw transcripts when your internal policy allows that split.
+- Redact or avoid storing payment data, secrets, or high-risk identifiers in `message_history` unless the workflow is explicitly designed and approved for that data class.
+- Make sure your caller disclosure, recording disclosure, and retention policy match what you actually store after the call.
+
+If policy requires short-lived memory only, store the operator handoff bundle and delete the detailed conversation payload on the schedule your compliance owner approved.
 
 ## Python Example
 
