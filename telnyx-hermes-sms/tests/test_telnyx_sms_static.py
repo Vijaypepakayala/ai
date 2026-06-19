@@ -86,5 +86,6 @@ def test_skill_documents_installer_first_instead_of_manual_copy():
 
 def test_readme_documents_hermes_checkout_contract():
     readme = (ROOT / 'README.md').read_text()
-    assert 'Set `HERMES_AGENT_ROOT` if it is not at `~/.hermes/hermes-agent`.' in readme
+    assert 'Set `HERMES_AGENT_ROOT` to the checkout itself, or set `HERMES_HOME`' in readme
+    assert 'or just: export HERMES_AGENT_ROOT="$HERMES_HOME"' in readme
     assert 'Hermes-dependent test modules skip with an explicit setup message' in readme
