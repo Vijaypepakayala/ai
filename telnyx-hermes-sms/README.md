@@ -32,7 +32,9 @@ Requirements:
 - Python 3.10+; Python 3.12 is recommended because local Hermes checkouts may
   use modern typing syntax.
 - A local Hermes Agent checkout for tests that import `gateway.*` modules.
-  Set `HERMES_AGENT_ROOT` if it is not at `~/.hermes/hermes-agent`.
+  Set `HERMES_AGENT_ROOT` to the checkout itself, or set `HERMES_HOME` / point
+  `HERMES_AGENT_ROOT` at the parent Hermes home directory when the checkout
+  lives at `.../hermes-agent`.
 - `uv` is recommended for reproducible local test dependencies.
 
 Hermes-dependent test modules skip with an explicit setup message when that
@@ -41,7 +43,8 @@ checkout is missing. Static tests still run without Hermes.
 ```bash
 git clone https://github.com/team-telnyx/telnyx-hermes-sms.git
 cd telnyx-hermes-sms
-export HERMES_AGENT_ROOT="$HOME/.hermes/hermes-agent"  # adjust if needed
+export HERMES_HOME="$HOME/.hermes"
+export HERMES_AGENT_ROOT="$HERMES_HOME/hermes-agent"  # or just: export HERMES_AGENT_ROOT="$HERMES_HOME"
 uv run --extra test python -m pytest tests/test_telnyx_sms_static.py tests/test_telnyx_sms_runtime.py tests/test_telnyx_sms_plugin_loading.py -q
 ```
 
@@ -51,7 +54,8 @@ Without `uv`, use any Python 3.10+ virtualenv:
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[test]"
-export HERMES_AGENT_ROOT="$HOME/.hermes/hermes-agent"
+export HERMES_HOME="$HOME/.hermes"
+export HERMES_AGENT_ROOT="$HERMES_HOME/hermes-agent"
 python -m pytest tests/test_telnyx_sms_static.py tests/test_telnyx_sms_runtime.py tests/test_telnyx_sms_plugin_loading.py -q
 ```
 
