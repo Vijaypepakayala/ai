@@ -9,6 +9,7 @@ import {
   listSetupAiPresets,
   resolveSetupAiInstructions,
 } from "../src/commands/setup-ai.ts";
+import { buildStatusCostGovernanceGuide } from "../src/commands/status.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI = join(__dirname, "..", "bin", "telnyx-agent.ts");
@@ -59,6 +60,16 @@ describe("setup-ai presets", () => {
     assert.ok(guide.usage_attribution.keep_ids.includes("conversation_id"));
     assert.ok(guide.spend_controls.some((item) => item.includes("usage-cost-explorer")));
     assert.match(guide.distinction_from_broader_governance, /TEL-421/);
+  });
+
+  it("returns a status cost-governance summary for long-running AI workflows", () => {
+    const guide = buildStatusCostGovernanceGuide();
+
+    assert.equal(guide.focus, "long_running_ai_workflows");
+    assert.match(guide.summary, /budget envelope/i);
+    assert.ok(guide.telnyx_controls.some((item) => item.includes("usage-cost-explorer")));
+    assert.ok(guide.tracking.keep_ids.includes("conversation_id"));
+    assert.match(guide.boundary, /TEL-430/);
   });
 
   it("shows setup-ai presets in CLI help", () => {

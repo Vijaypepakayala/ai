@@ -11,6 +11,19 @@
 
 If you are still deciding whether this native onboarding path is the right fit, read [Telnyx-Native Assistants Vs Third-Party Voice Orchestration](/guides/telnyx-native-vs-third-party-voice-orchestration.md) first.
 
+## Cost Governance Preflight
+
+Before you route a real customer or production queue to a voice agent, set the operator controls for cost as explicitly as you set the prompt and webhook:
+
+- define a daily pilot budget and a monthly ceiling that include telecom, model inference, transcription, synthesis, and any external tools
+- choose alert thresholds before launch, with an initial default at 50%, 80%, and 100% of the approved envelope
+- attribute usage by assistant name, phone number or campaign, environment, and customer or billing group
+- preserve `assistant_id`, `phone_number`, `call_control_id`, `call_session_id`, `conversation_id`, and `request_id` from the first live call onward
+- review unusually long calls, transfer loops, and downstream retry storms as spend incidents, not only quality incidents
+- if the workflow depends on external models or tools, apply quotas or alerts there too so the whole path fails closed together
+
+Use `telnyx-agent status` for a lightweight account preflight and `tools/mcp-apps/apps/usage-cost-explorer` when you need a governed billing view. This section is about budget ownership and spend visibility; it does not replace the broader governed-execution or discovery tracks elsewhere in the repo.
+
 ## Quick Start
 
 The production-friendly bootstrap path is:

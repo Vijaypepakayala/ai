@@ -97,6 +97,16 @@ Common examples:
 - sending US A2P traffic may require 10DLC registration
 - placing live calls or deploying assistants should preserve the IDs needed for later review
 
+For long-running voice agents or assistant workflows, do one additional preflight before the first real call:
+
+- set a daily pilot budget and a monthly ceiling that includes model inference, voice minutes, transcription, synthesis, and any downstream tools the agent can trigger
+- decide where alerts fire at 50%, 80%, and 100% of that envelope
+- decide how you will attribute spend by assistant, phone number or campaign, environment, and customer or billing group
+- preserve `assistant_id`, `phone_number`, `call_control_id`, `call_session_id`, `conversation_id`, and `request_id` so cost reviews can be tied back to specific runs
+- if you use external models or tools, place quotas or alerts there too so model spend and telecom spend fail closed together
+
+This is budget and attribution guidance, not a replacement for the broader governed-execution and discovery work tracked elsewhere in the repo.
+
 If any of those are unclear, stop at the read-only workflow in the next step and do not widen to live writes yet.
 
 ## Step 4: Run one complete read-only first workflow

@@ -31,6 +31,7 @@ describe("telnyx-agent CLI", () => {
       assert.ok(output.includes("Messaging"), "Should list Messaging category");
       assert.ok(output.includes("Voice"), "Should list Voice category");
       assert.ok(output.includes("AI"), "Should list AI category");
+      assert.ok(output.includes("AI Catalog"), "Should list AI catalog section");
       assert.ok(output.includes("Governance: risk="), "Should surface governed execution metadata");
       assert.ok(output.includes("path="), "Should surface approval path metadata");
       assert.ok(output.includes("audit="), "Should surface audit identifier metadata");
@@ -41,6 +42,7 @@ describe("telnyx-agent CLI", () => {
       const data = JSON.parse(output);
       assert.ok(data.api_capabilities, "Should have api_capabilities");
       assert.ok(data.composite_commands, "Should have composite_commands");
+      assert.ok(data.ai_catalog, "Should have ai_catalog");
       assert.ok(typeof data.total_tools === "number", "Should have total_tools count");
       assert.ok(data.total_tools >= 18, "Should have at least 18 tools");
       const firstCategory = Object.values(data.api_capabilities)[0] as Array<Record<string, unknown>>;
@@ -50,6 +52,8 @@ describe("telnyx-agent CLI", () => {
       assert.ok((data.composite_commands[0] as Record<string, unknown>).governance, "Composite command should have governance metadata");
       assert.ok(((data.composite_commands[0] as Record<string, unknown>).governance as Record<string, unknown>).approval_path, "Composite command should have approval path metadata");
       assert.ok(Array.isArray((((data.composite_commands[0] as Record<string, unknown>).governance as Record<string, unknown>).audit_identifiers)), "Composite command should have audit identifiers metadata");
+      assert.equal((data.ai_catalog as Record<string, unknown>).canonical_url, "https://telnyx.com/ai/catalog.json");
+      assert.ok(Array.isArray((data.ai_catalog as Record<string, unknown>).workloads), "AI catalog should expose workloads");
     });
   });
 
@@ -59,6 +63,7 @@ describe("telnyx-agent CLI", () => {
         const output = run("status");
         assert.ok(output.includes("Account Status"), "Should have status header");
         assert.ok(output.includes("Balance"), "Should show balance");
+        assert.ok(output.includes("Cost governance"), "Should show cost governance guidance");
       } catch (err: unknown) {
         const e = err as { stderr?: string };
         // Skip if no API key configured
@@ -77,6 +82,7 @@ describe("telnyx-agent CLI", () => {
         assert.ok("balance" in data, "Should have balance");
         assert.ok("phone_numbers" in data, "Should have phone_numbers");
         assert.ok("messaging_profiles" in data, "Should have messaging_profiles");
+        assert.ok("cost_governance" in data, "Should have cost_governance");
       } catch (err: unknown) {
         const e = err as { stderr?: string };
         if (e.stderr?.includes("No Telnyx API key")) {
