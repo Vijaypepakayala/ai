@@ -28,12 +28,14 @@ telnyx-agent status --json   # Machine-readable
 
 ### `telnyx-agent capabilities`
 
-Self-describing API surface — lists all available tools and composite commands.
+Self-describing API surface — lists all available tools, composite commands, and the workload-oriented AI catalog.
 
 ```bash
 telnyx-agent capabilities
 telnyx-agent capabilities --json
 ```
+
+The JSON output includes `ai_catalog`, which points back to the canonical repo-owned discovery surface at `https://telnyx.com/ai/catalog.json` and groups current Telnyx AI options by workload instead of a flat product list.
 
 ### `telnyx-agent setup-sms`
 
@@ -102,6 +104,10 @@ If you pass both `--preset` and `--instructions`, the custom instructions win an
 Output: `{ assistant_id, phone_number, test_command, preset_id, instructions_source }`
 
 This command is intentionally bootstrap-first rather than model-marketing-first. It should pick a working assistant setup for the current account instead of assuming one specific hosted model is available everywhere.
+
+After a successful run, `setup-ai` also emits a cost-governance preflight. Use that packet to set a daily or monthly spend envelope, retain the assistant and call correlation IDs needed for attribution, and place alerts around long calls, retry loops, and budget consumption before routing real traffic to the assistant.
+
+This is guidance, not a billing-system mutation. For account-level billing controls and read-first cost operations, use the `Usage & Cost Explorer` MCP App (`tools/mcp-apps/apps/usage-cost-explorer`) or your existing finance and observability stack.
 
 If you want the current Telnyx-hosted OpenAI assistant example path, use [`/guides/ai-assistants.md`](/guides/ai-assistants.md) and [`/guides/voice-agent-onboarding.md`](/guides/voice-agent-onboarding.md). Those assistant docs currently use `openai/gpt-5.4` in the first-run hosted examples; verify the live assistant catalog before scripting around that exact model ID.
 

@@ -10,7 +10,8 @@
 
 ## Model Selection
 
-- Use `openai/gpt-5.4` when you want the current Telnyx-hosted OpenAI reasoning model for voice assistants.
+- Resolve the live assistant model catalog first with `GET /v2/ai/models` or `telnyx ai models`. Treat named model IDs in this guide as examples, not a long-lived default contract.
+- Use `openai/gpt-5.4` when you want the current Telnyx-hosted OpenAI reasoning model for voice assistants and the live catalog for your account still exposes it.
 - Prefer Telnyx-hosted models first for production voice flows. Keeping STT, LLM, TTS, and telephony on the same Telnyx-managed path removes an extra vendor hop and simplifies billing and operations.
 - Reach for a custom OpenAI-compatible endpoint only when you have a hard requirement that the hosted model selector does not meet.
 
@@ -84,10 +85,25 @@ curl -X POST "https://api.telnyx.com/v2/ai/assistants" \
 > **Note:** The AI assistants API returns the object directly — not wrapped in a `"data"` field like other v2 endpoints.
 
 ## Hosted Inference Guidance
-
-- `openai/gpt-5.4` is available directly in the assistant model selector and via the Assistants API.
+- `openai/gpt-5.4` is the current example value in this guide, but availability can change by account or over time. Confirm with `GET /v2/ai/models` or `telnyx ai models` before relying on it in automation.
 - Telnyx-hosted inference is the default recommendation for real-time voice agents because the LLM stays on the same private Telnyx path as transcription, synthesis, and call media.
 - If you need a provider or routing policy outside the hosted catalog, use the custom OpenAI-compatible LLM path deliberately and document the external dependency in your deployment runbook.
+
+## Cost Governance Checklist
+
+Treat assistant rollout as a spend-governed release, not just a prompt release. The first production question is not only "does it work?" but also "what budget envelope does this workflow own when calls run long, tools retry, or traffic spikes?"
+
+- Set an explicit pilot envelope before production traffic: a daily budget, a monthly budget, and a maximum tolerated single-call duration for the assistant.
+- Model the full path cost, not only the LLM token line item. Include call minutes, transcription, synthesis, assistant inference, webhook or tool retries, and any external model or SaaS calls the assistant can trigger.
+- Keep correlation identifiers in every operational log or warehouse sink: `assistant_id`, `phone_number`, `call_control_id`, `call_session_id`, `conversation_id`, and request IDs from any external tools.
+- Attribute spend by assistant version, phone number or campaign, environment, and customer or billing group so you can isolate one runaway workflow without muting the entire account.
+- Alert before the hard stop. A practical first pass is 50% of the pilot budget, 80% of the monthly budget, and 100% of the approved envelope, plus anomaly alerts for unusually long calls, looping transfers, or repeated tool failures.
+- Put account-level controls in Telnyx billing and usage surfaces such as billing groups, usage reports, balance checks, and auto-recharge policy, then mirror those alerts in any external model or workflow provider so telecom spend and model spend fail closed together.
+- Keep a human escalation path for billing disputes, outages, cancellations, or any request likely to prolong the call without resolution.
+
+The CLI bootstrap path `telnyx-agent setup-ai` now emits the same cost-governance preflight after setup. Use that output as the operator handoff for first deployment.
+
+This checklist is intentionally narrower than the broader governed-execution and discovery work tracked in [TEL-421](/TEL/issues/TEL-421), [TEL-430](/TEL/issues/TEL-430), and [TEL-482](/TEL/issues/TEL-482). Here the goal is lightweight spend ownership and alerting guidance, not a new approval framework or billing product surface.
 
 ## Voice Trust Checklist
 
