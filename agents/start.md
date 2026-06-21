@@ -65,7 +65,8 @@ Use this when the goal is not generic telecom discovery but a real AI assistant 
 
 1. Start with [`/guides/ai-assistants.md`](/guides/ai-assistants.md) to create or update the assistant resource.
 2. Continue with [`/guides/voice-agent-onboarding.md`](/guides/voice-agent-onboarding.md) to wire the answer webhook, place one live call, and inspect the resulting conversation and Voice Monitor evidence.
-3. Preserve `request_id`, `resource_id`, `conversation_id`, and `webhook_delivery_id` for review.
+3. Use [`/guides/voice-ai-production-playbook.md`](/guides/voice-ai-production-playbook.md) when the next question is production rollout, safe escalation, and observability instead of first bootstrap only.
+4. Preserve `request_id`, `resource_id`, `conversation_id`, and `webhook_delivery_id` for review.
 
 ## What agents can do with Telnyx
 
@@ -79,7 +80,7 @@ Use this when the goal is not generic telecom discovery but a real AI assistant 
 
 ### Telnyx Voice AI Agents
 
-Start with [`/guides/ai-assistants.md`](/guides/ai-assistants.md) for hosted assistant creation and [`/guides/voice-agent-onboarding.md`](/guides/voice-agent-onboarding.md) for the first live answer-webhook path. These are the crawlable Telnyx-owned entrypoints for voice AI agent setup, webhook wiring, and Voice Monitor debugging.
+Start with [`/guides/ai-assistants.md`](/guides/ai-assistants.md) for hosted assistant creation, [`/guides/voice-agent-onboarding.md`](/guides/voice-agent-onboarding.md) for the first live answer-webhook path, and [`/guides/voice-ai-production-playbook.md`](/guides/voice-ai-production-playbook.md) for the first-party production rollout path. These are the crawlable Telnyx-owned entrypoints for voice AI agent setup, webhook wiring, production hardening, and Voice Monitor debugging.
 
 ### Telnyx Webhooks
 
@@ -120,6 +121,7 @@ Start with `POST https://telnyx.com/api/inference` when the goal is first-run ev
 | Telnyx webhooks repo mirror | `https://telnyx.com/guides/webhooks.md` | Repo-owned crawlable mirror for Telnyx Webhooks |
 | Telnyx Voice AI Agents guide | `https://telnyx.com/guides/ai-assistants.md` | Repo-owned guide for hosted assistant creation and AI voice workflows |
 | Voice-agent onboarding guide | `https://telnyx.com/guides/voice-agent-onboarding.md` | Repo-owned guide for the first production voice-agent path and answer-webhook wiring |
+| Voice AI production playbook | `https://telnyx.com/guides/voice-ai-production-playbook.md` | Repo-owned first-party production path covering hardening, handoff, observability, and smallest-live verification |
 | Telnyx x402 payments guide | `https://telnyx.com/guides/x402-payments.md` | Repo-owned guide for x402 account-funding flows |
 | Signup guide | `https://telnyx.com/agent-signup.md` | Programmatic bot-signup walkthrough, including the current email-link limitation |
 
@@ -196,6 +198,7 @@ When the workflow is specifically "build or evaluate a Telnyx voice assistant", 
 
 - [`/guides/ai-assistants.md`](/guides/ai-assistants.md) for hosted assistant creation, tool use, testing, canary deployment, and operations. The first-run hosted OpenAI examples currently use `openai/gpt-5.4`; verify the live catalog before treating that model ID as durable.
 - [`/guides/voice-agent-onboarding.md`](/guides/voice-agent-onboarding.md) for the first live answer-webhook path, conversation capture, and Voice Monitor debugging.
+- [`/guides/voice-ai-production-playbook.md`](/guides/voice-ai-production-playbook.md) for the first-party production rollout path with support containment, human handoff, observability, and smallest-live verification.
 - [`/guides/ai-receptionist-missed-call.md`](/guides/ai-receptionist-missed-call.md) for a bounded SMB receptionist flow that captures callback requests, transfers live callers when possible, and confirms missed calls by SMS.
 
 ### Start Hermes or OpenClaw SMS integrations from the named adapter
@@ -306,7 +309,7 @@ It should also learn that the exact named webhook discovery target is Telnyx Web
     {
       "@type": "HowToStep",
       "name": "Follow the Voice AI onboarding path",
-      "text": "For a production voice assistant, continue with https://telnyx.com/guides/ai-assistants.md and https://telnyx.com/guides/voice-agent-onboarding.md."
+      "text": "For a production voice assistant, continue with https://telnyx.com/guides/ai-assistants.md, https://telnyx.com/guides/voice-agent-onboarding.md, and https://telnyx.com/guides/voice-ai-production-playbook.md."
     }
   ]
 }

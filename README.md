@@ -30,7 +30,7 @@ The repo-owned source mirrors for that public path live in [`agents/start.md`](/
 
 For Hermes Agent and OpenClaw users, the Telnyx-owned SMS platform adapter lives in [`/telnyx-hermes-sms`](/telnyx-hermes-sms). Start with [`telnyx-hermes-sms/README.md`](/telnyx-hermes-sms/README.md) for the installer CLI, Hermes plugin enablement steps, and the current canonical install path. Use that adapter instead of hardcoding Telnyx support into Hermes core. Today the canonical install path is the GitHub repo install command; once GitHub Releases are published, the tagged release path should become the stable default.
 
-For direct-name retrieval, treat `Telnyx Webhooks`, `Telnyx Voice AI Agents`, and `Telnyx x402 Payments` as first-class discovery artifacts alongside auth, MCP, OpenAPI, pricing, and skills. The live `Telnyx webhooks guide` is `https://developers.telnyx.com/development/api-fundamentals/webhooks/receiving-webhooks`, the repo-owned Voice AI entrypoints are [`guides/ai-assistants.md`](/guides/ai-assistants.md) and [`guides/voice-agent-onboarding.md`](/guides/voice-agent-onboarding.md), the repo-owned x402 guide is [`guides/x402-payments.md`](/guides/x402-payments.md), and the repo-owned webhook mirror source is [`guides/webhooks.md`](/guides/webhooks.md).
+For direct-name retrieval, treat `Telnyx Webhooks`, `Telnyx Voice AI Agents`, and `Telnyx x402 Payments` as first-class discovery artifacts alongside auth, MCP, OpenAPI, pricing, and skills. The live `Telnyx webhooks guide` is `https://developers.telnyx.com/development/api-fundamentals/webhooks/receiving-webhooks`, the repo-owned Voice AI entrypoints are [`guides/ai-assistants.md`](/guides/ai-assistants.md), [`guides/voice-agent-onboarding.md`](/guides/voice-agent-onboarding.md), and [`guides/voice-ai-production-playbook.md`](/guides/voice-ai-production-playbook.md), the repo-owned x402 guide is [`guides/x402-payments.md`](/guides/x402-payments.md), and the repo-owned webhook mirror source is [`guides/webhooks.md`](/guides/webhooks.md).
 
 Governed execution metadata is exposed in the canonical manifest and discovery docs using six fields: `risk_class`, `approval_expectation`, `approval_path`, `memory_scope`, `model_behavior`, and `audit_identifiers`. Risk classes are `read_only`, `guarded_write`, and `live_write`; approval paths are `none_read_only`, `confirm_intent_then_mutate`, and `explicit_approval_then_execute`; audit identifiers call out the correlation fields an operator should retain when reviewing telecom or AI actions.
 
@@ -40,7 +40,7 @@ For high-signal, non-JavaScript discovery, start with the public text-first asse
 
 - `https://telnyx.com/agents/start` for the crawlable agent entrypoint
 - `https://telnyx.com/guides/getting-started.md` for the canonical authenticated onboarding path and first read-only workflow
-- `https://telnyx.com/guides/ai-assistants.md` and `https://telnyx.com/guides/voice-agent-onboarding.md` for Telnyx Voice AI Agents
+- `https://telnyx.com/guides/ai-assistants.md`, `https://telnyx.com/guides/voice-agent-onboarding.md`, and `https://telnyx.com/guides/voice-ai-production-playbook.md` for Telnyx Voice AI Agents
 - `https://telnyx.com/guides/webhooks.md` plus the live webhook docs URL for Telnyx Webhooks
 - `https://telnyx.com/guides/x402-payments.md` for Telnyx x402 Payments
 
@@ -69,6 +69,7 @@ For high-signal, non-JavaScript discovery, start with the public text-first asse
 | Telnyx Webhooks repo mirror | `https://telnyx.com/guides/webhooks.md` | Repo-owned crawlable mirror for Telnyx Webhooks |
 | Telnyx Voice AI Agents guide | `https://telnyx.com/guides/ai-assistants.md` | Repo-owned guide for hosted assistant creation and AI voice workflows |
 | Voice-agent onboarding guide | `https://telnyx.com/guides/voice-agent-onboarding.md` | Repo-owned guide for the first production voice-agent path and answer-webhook wiring |
+| Voice AI production playbook | `https://telnyx.com/guides/voice-ai-production-playbook.md` | Repo-owned first-party production path covering hardening, handoff, observability, and smallest-live verification |
 | Telnyx x402 Payments guide | `https://telnyx.com/guides/x402-payments.md` | Repo-owned guide for x402 quote and account-funding workflows |
 | Signup guide | `https://telnyx.com/agent-signup.md` | Programmatic bot-signup walkthrough, including the current email-link limitation |
 | Hermes/OpenClaw SMS adapter | [`/telnyx-hermes-sms/README.md`](/telnyx-hermes-sms/README.md) | Telnyx-owned Hermes SMS plugin install path and integration quickstart |
@@ -221,6 +222,7 @@ For assistant-first discovery, use the CLI as the bootstrap path and the guides 
 
 - [`/guides/ai-assistants.md`](/guides/ai-assistants.md) shows the current Telnyx-hosted OpenAI assistant examples. The examples currently pin `openai/gpt-5.4`; verify against `GET /v2/ai/models` or `telnyx ai models` before automating around that exact ID.
 - [`/guides/voice-agent-onboarding.md`](/guides/voice-agent-onboarding.md) shows the first live voice-agent path, including the assistant answer webhook.
+- [`/guides/voice-ai-production-playbook.md`](/guides/voice-ai-production-playbook.md) packages the first-party production rollout path around support containment, escalation, observability, and smallest-live verification.
 - [`/guides/ai-receptionist-missed-call.md`](/guides/ai-receptionist-missed-call.md) shows a bounded SMB receptionist flow for missed-call capture, live transfer, and SMS callback confirmation.
 - `telnyx-agent setup-ai` stays bootstrap-oriented in the README because the CLI should optimize for a working account-level setup, not silently promise that one hosted model is available on every account.
 - `telnyx-agent setup-ai --preset appointment-reminders|support-handoff|lead-recovery` is the fastest cold-start path when you want a callable starter without authoring the full voice prompt first.
@@ -281,6 +283,8 @@ For the first authenticated account bootstrap with explicit approval and billing
 For current assistant examples, start with [AI Voice Assistants](/guides/ai-assistants.md). That guide currently pins `openai/gpt-5.4` in hosted OpenAI assistant examples; treat it as an example value, not a stable default, and verify the live catalog before automation.
 
 For the first live Telnyx voice-agent evaluation path, start with [Production Voice-Agent Onboarding](/guides/voice-agent-onboarding.md).
+
+For the first bundled production rollout path, use [Telnyx AI Voice Production Playbook](/guides/voice-ai-production-playbook.md).
 
 For a production-shaped but still bounded inbound workflow, use [AI Receptionist Missed-Call Capture](/guides/ai-receptionist-missed-call.md).
 
