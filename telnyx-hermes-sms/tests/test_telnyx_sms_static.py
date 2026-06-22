@@ -89,3 +89,11 @@ def test_readme_documents_hermes_checkout_contract():
     assert 'Set `HERMES_AGENT_ROOT` to the checkout itself, or set `HERMES_HOME`' in readme
     assert 'or just: export HERMES_AGENT_ROOT="$HERMES_HOME"' in readme
     assert 'Hermes-dependent test modules skip with an explicit setup message' in readme
+
+
+def test_readme_and_bootstrap_script_document_download_first_install_path():
+    readme = (ROOT / 'README.md').read_text()
+    assert './install.sh' in readme
+
+    script = (ROOT / 'install.sh').read_text()
+    assert 'uv run --python 3.12 --with . telnyx-hermes-sms-install "$@"' in script

@@ -13,6 +13,17 @@ Canonical install path:
 - Today: install from the GitHub repository with `uv tool install --python 3.12 "git+https://github.com/team-telnyx/telnyx-hermes-sms.git"`.
 - Stable target: once GitHub Releases are published for `team-telnyx/telnyx-hermes-sms`, prefer the tagged release install command as the default copy-paste path.
 
+Quickest path if you already downloaded or cloned this repo:
+
+```bash
+./install.sh
+```
+
+That bootstrap script uses `uv` to run this checkout with a Python 3.12 tool
+runtime and then invokes the installer for you. It avoids the common failure
+mode where a machine's default `python3` is still 3.9.x, and it does not rely
+on your shell already exposing a `uv tool` bin directory on `PATH`.
+
 ## What's inside
 
 | File | Purpose |
@@ -113,6 +124,12 @@ Local checkout / pre-release validation path:
 ```bash
 git clone https://github.com/team-telnyx/telnyx-hermes-sms.git
 cd telnyx-hermes-sms
+./install.sh
+```
+
+If you prefer to run the equivalent commands yourself:
+
+```bash
 uv tool install --python 3.12 .
 telnyx-hermes-sms
 telnyx-hermes-sms-install
