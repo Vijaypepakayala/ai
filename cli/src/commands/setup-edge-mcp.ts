@@ -71,7 +71,7 @@ export async function setupEdgeMcpCommand(flags: Record<string, string | boolean
       "team-telnyx/ai provides the integration pattern, not the Edge lifecycle.",
       "Use telnyx-edge for auth, status, deploy, revisions, rollback, delete, secrets, bindings, and lifecycle management.",
       "The upstream MCP example currently expects both TELNYX_API_KEY and SHARED_SECRET before telnyx-edge ship.",
-      "Bindings create, update, delete, validate, and get live upstream as telnyx-edge commands; this helper only points to them.",
+      "Bindings create, update, delete, validate, and get live upstream as telnyx-edge commands; `telnyx-edge bindings create` is zero-arg and the Edge CLI now generates the temporary binding token/material itself.",
       "KV/storage commands live in telnyx-edge as well, including TTL-enabled writes such as telnyx-edge storage kv key put <kv-id> <key> <value> --ttl 30m, but this bridge does not wrap them directly today.",
       "After deploy, connect the exposed MCP or HTTP boundary back into your AI workflow.",
     ],

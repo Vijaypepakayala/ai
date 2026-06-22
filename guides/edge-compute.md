@@ -97,6 +97,8 @@ telnyx-edge revisions list my-mcp-server
 telnyx-edge rollback my-mcp-server <revision-id>
 ```
 
+The current upstream binding flow is zero-arg at creation time: `telnyx-edge bindings create` no longer takes a raw Telnyx API key on the command line. The Edge CLI generates the temporary binding token/material it needs, and follow-up lifecycle stays on the dedicated binding subcommands.
+
 | Command | Purpose |
 |---------|---------|
 | `telnyx-edge auth login` | Authenticate the Edge CLI with the public upstream flow |
@@ -123,6 +125,8 @@ telnyx-edge bindings delete
 telnyx-edge bindings validate
 telnyx-edge bindings get
 ```
+
+`telnyx-edge bindings create` is intentionally zero-arg here. Do not teach `telnyx-edge bindings create <your-telnyx-api-key>` in bridge docs or helpers; the current upstream CLI owns temporary-token generation itself.
 
 That keeps binding management owned by `telnyx-edge` instead of inventing a parallel `team-telnyx/ai` credential path.
 

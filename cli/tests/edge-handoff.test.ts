@@ -103,6 +103,7 @@ describe("CLI — Edge Compute handoff", () => {
     assert.ok(Array.isArray(data.next_steps));
     assert.ok(data.next_steps.some((s: string) => s.includes("SHARED_SECRET")));
     assert.ok(data.next_steps.some((s: string) => s.includes("bindings create")));
+    assert.ok(data.next_steps.some((s: string) => s.includes("zero-arg create flow")));
     assert.ok(data.next_steps.some((s: string) => s.includes("bindings update")));
     assert.ok(data.next_steps.some((s: string) => s.includes("bindings delete")));
     assert.ok(data.next_steps.some((s: string) => s.includes("bindings validate")));
@@ -158,6 +159,8 @@ describe("CLI — Edge Compute handoff", () => {
     assert.ok(data.validation_commands.some((command: string) => command.includes("bindings validate")));
     assert.ok(data.validation_commands.some((command: string) => command.includes("bindings get")));
     assert.ok(data.notes.some((note: string) => note.includes("--ttl 30m")));
+    assert.ok(data.notes.some((note: string) => note.includes("zero-arg")));
+    assert.ok(data.notes.some((note: string) => note.includes("temporary binding token")));
   });
 
   it("setup-edge-webhook returns concrete deploy handoff", () => {
@@ -175,6 +178,7 @@ describe("CLI — Edge Compute handoff", () => {
     assert.ok(data.validation_commands.some((command: string) => command.includes("bindings get")));
     assert.ok(data.kv_handoff_commands.some((command: string) => command.includes("storage kv key put")));
     assert.ok(data.kv_handoff_commands.some((command: string) => command.includes("--ttl 30m")));
+    assert.ok(data.notes.some((note: string) => note.includes("zero-arg upstream flow")));
     assert.ok(data.notes.some((note: string) => note.includes("call-event-router")));
     assert.ok(data.notes.some((note: string) => note.includes("rollback")));
   });
@@ -185,6 +189,8 @@ describe("CLI — Edge Compute handoff", () => {
     assert.ok(guide.includes("auth api-key set"));
     assert.ok(guide.includes("telnyx-edge status"));
     assert.ok(guide.includes("telnyx-edge bindings create"));
+    assert.ok(guide.includes("zero-arg"));
+    assert.ok(guide.includes("temporary binding token"));
     assert.ok(guide.includes("telnyx-edge bindings update"));
     assert.ok(guide.includes("telnyx-edge bindings delete"));
     assert.ok(guide.includes("telnyx-edge bindings validate"));

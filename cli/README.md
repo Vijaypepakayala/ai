@@ -128,9 +128,11 @@ What they do:
 - use `telnyx-edge auth login` as the safe default when capability detection is unavailable
 - prefer `telnyx-edge auth api-key set <your-api-key>` for agents only when the installed CLI supports it
 - point you at a real Edge example or the upstream `new-func --language=js|ts|python|go|quarkus` scaffold paths
-- surface readiness and discovery commands such as `telnyx-edge status`, `telnyx-edge bindings get`, and `telnyx-edge revisions list`
+- surface readiness and discovery commands such as `telnyx-edge status`, zero-arg `telnyx-edge bindings create`, `telnyx-edge bindings get`, and `telnyx-edge revisions list`
 - give you the concrete next deploy command
 - preserve an honest handoff instead of pretending `telnyx-agent` owns Edge lifecycle
+
+The binding handoff follows the current upstream behavior: `telnyx-edge bindings create` takes no API-key argument and lets the Edge CLI mint the temporary token/material it needs.
 
 ### `telnyx-agent fund-account`
 
