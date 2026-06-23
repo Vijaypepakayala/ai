@@ -15,6 +15,8 @@ const readJson = (path: string) => JSON.parse(readFileSync(join(ROOT, path), "ut
 const agentJson = readJson("agent.json");
 const agentCard = readJson(".well-known/agent-card.json");
 const skillsIndex = readJson(".well-known/agent-skills/index.json");
+const aiCatalog = readJson("ai/catalog.json");
+const aiCatalogAlias = readJson(".well-known/ai-catalog.json");
 const capabilities = readJson("ai/capabilities.json");
 const capabilitiesAlias = readJson(".well-known/ai-capabilities.json");
 const pricing = readJson("ai/pricing.json");
@@ -28,7 +30,9 @@ describe("source-controlled discovery assets", () => {
       ".well-known/agent-access.json",
       ".well-known/agent-card.json",
       ".well-known/agent-skills/index.json",
+      ".well-known/ai-catalog.json",
       ".well-known/ai-capabilities.json",
+      "ai/catalog.json",
       "ai/capabilities.json",
       "ai/pricing.json"
     ]) {
@@ -41,11 +45,20 @@ describe("source-controlled discovery assets", () => {
     assert.equal(agentCard.discovery.agent_access, agentJson.discovery.agent_access_url);
     assert.equal(agentCard.discovery.agent_skills, agentJson.discovery.agent_skills_index_url);
     assert.equal(agentCard.discovery.llms_txt, agentJson.discovery.llms_txt_url);
+    assert.equal(agentCard.discovery.ai_catalog, agentJson.discovery.ai_catalog_url);
     assert.equal(agentCard.mcp.url, agentJson.discovery.mcp_server_card_url);
     assert.deepEqual(agentCard.governed_execution.fields, agentJson.governed_execution.fields);
   });
 
-  it("keeps the capability and pricing mirrors aligned with their canonical URLs", () => {
+  it("keeps the AI catalog, capability, and pricing mirrors aligned with their canonical URLs", () => {
+    assert.equal(aiCatalog.canonical_url, agentJson.discovery.ai_catalog_url);
+    assert.equal(aiCatalogAlias.canonical_url, aiCatalog.canonical_url);
+    assert.equal(aiCatalogAlias.provider, aiCatalog.provider);
+    assert.equal(aiCatalogAlias.content.category, aiCatalog.content.category);
+    assert.equal(aiCatalog.content.source_of_truth.registry_plan_url, "https://telnyx.com/agents/ard-resource-catalog-plan.md");
+    assert.equal(aiCatalogAlias.content.source_of_truth.registry_plan_url, aiCatalog.content.source_of_truth.registry_plan_url);
+    assert.deepEqual(aiCatalog.content.governed_execution.fields, agentJson.governed_execution.fields);
+    assert.deepEqual(aiCatalogAlias.content.governed_execution.fields, aiCatalog.content.governed_execution.fields);
     assert.equal(capabilities.canonical_url, agentJson.discovery.capabilities_url);
     assert.equal(pricing.canonical_url, agentJson.discovery.pricing_url);
     assert.equal(capabilitiesAlias.canonical_url, capabilities.canonical_url);

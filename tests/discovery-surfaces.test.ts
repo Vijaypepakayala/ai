@@ -39,6 +39,7 @@ const canonicalDiscovery = {
   mcp_apps_catalog_url: "https://developers.telnyx.com/apps",
   mcp_apps_proof_app_url: "https://developers.telnyx.com/apps/number-intelligence",
   openapi_url: "https://telnyx.com/.well-known/openapi.json",
+  ai_catalog_url: "https://telnyx.com/ai/catalog.json",
   capabilities_url: "https://telnyx.com/ai/capabilities.json",
   pricing_url: "https://telnyx.com/ai/pricing.json",
   webhooks_guide: "https://developers.telnyx.com/development/api-fundamentals/webhooks/receiving-webhooks",
@@ -100,12 +101,24 @@ describe("agent discovery surfaces", () => {
   it("repo-owned machine-readable discovery assets exist locally", () => {
     for (const path of [
       ".well-known/agent-access.json",
+      "ai/catalog.json",
       "ai/capabilities.json",
       "ai/pricing.json",
       "llms.txt"
     ]) {
       assert.equal(existsSync(join(ROOT, path)), true, `${path} is missing`);
     }
+  });
+
+  it("local AI catalog mirror matches the canonical discovery URL and governed contract", () => {
+    const aiCatalog = JSON.parse(read("ai/catalog.json"));
+    assert.equal(aiCatalog.canonical_url, canonicalDiscovery.ai_catalog_url);
+    assert.equal(aiCatalog.provider, "telnyx");
+    assert.equal(aiCatalog.content.provider, "telnyx");
+    assert.deepEqual(aiCatalog.content.governed_execution.fields, agentJson.governed_execution.fields);
+    assert.equal(aiCatalog.content.surface_governance.risk_class, "read_only");
+    assert.ok(Array.isArray(aiCatalog.content.workloads));
+    assert.ok(aiCatalog.content.workloads.length >= 4);
   });
 
   it("local capability and pricing mirrors match the canonical discovery URLs", () => {
@@ -144,6 +157,7 @@ describe("agent discovery surfaces", () => {
     assert.equal(agentJson.links.mcp_apps_alias, canonicalDiscovery.mcp_apps_alias_url);
     assert.equal(agentJson.links.mcp_apps_catalog, canonicalDiscovery.mcp_apps_catalog_url);
     assert.equal(agentJson.links.mcp_apps_proof_app, canonicalDiscovery.mcp_apps_proof_app_url);
+    assert.equal(agentJson.links.ai_catalog, canonicalDiscovery.ai_catalog_url);
     assert.equal(agentJson.links.capabilities, canonicalDiscovery.capabilities_url);
     assert.equal(agentJson.links.pricing, canonicalDiscovery.pricing_url);
     assert.equal(agentJson.links.webhooks_guide, canonicalDiscovery.webhooks_guide);
@@ -211,6 +225,7 @@ describe("agent discovery surfaces", () => {
       canonicalDiscovery.auth_md_url,
       canonicalDiscovery.llms_txt_url,
       canonicalDiscovery.openapi_url,
+      canonicalDiscovery.ai_catalog_url,
       canonicalDiscovery.mcp_url,
       canonicalDiscovery.webhooks_guide,
       canonicalDiscovery.agents_md_url,

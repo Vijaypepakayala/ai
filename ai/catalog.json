@@ -1,0 +1,246 @@
+{
+  "schema_version": "1.0.0",
+  "provider": "telnyx",
+  "canonical_url": "https://telnyx.com/ai/catalog.json",
+  "updated_at": "2026-06-14T00:00:00Z",
+  "content": {
+    "provider": "telnyx",
+    "category": "ai_workload_catalog",
+    "updated_at": "2026-06-14T00:00:00Z",
+    "surface_governance": {
+      "risk_class": "read_only",
+      "approval_expectation": "none",
+      "approval_path": "none_read_only",
+      "memory_scope": "host_controlled",
+      "model_behavior": "host_controlled",
+      "audit_identifiers": [
+        "request_id"
+      ]
+    },
+    "source_of_truth": {
+      "maintenance_model": "Repo-maintained workload map with live links for volatile model and provider inventory.",
+      "repo_surface": "https://telnyx.com/ai/catalog.json",
+      "repo_mirror": "https://github.com/team-telnyx/ai/blob/main/ai/catalog.json",
+      "registry_plan_url": "https://telnyx.com/agents/ard-resource-catalog-plan.md",
+      "freshness_boundaries": [
+        "Treat the workload grouping in this file as stable repo guidance, but resolve live model inventory from the linked runtime surfaces before automation.",
+        "Assistant model IDs can change by region or account. Verify them with GET /v2/ai/models, telnyx ai models, or the current AI Assistants docs before scripting against a specific ID.",
+        "Inference model availability changes faster than repo releases. Verify it with the live inference model catalog or API before assuming a model is still available."
+      ]
+    },
+    "recent_releases": [
+      {
+        "date": "2026-06-12",
+        "title": "MiniMax M3 now available on Telnyx Inference",
+        "url": "https://telnyx.com/release-notes/minimax-m3",
+        "summary": "Adds a new open-weight inference option with long-context and multimodal positioning for coding and agent workflows."
+      },
+      {
+        "date": "2026-06-11",
+        "title": "Kimi K2.6 now available for Telnyx AI Assistants",
+        "url": "https://telnyx.com/release-notes/kimi-k2-6-ai-assistants",
+        "summary": "Expands the hosted assistant catalog with a Telnyx-hosted agentic model option in the US region."
+      },
+      {
+        "date": "2026-06-08",
+        "title": "Conversation Relay is now available on Telnyx",
+        "url": "https://telnyx.com/release-notes/conversation-relay-stream-text-websockets",
+        "summary": "Adds a text-streaming orchestration path between Telnyx telephony and an external AI engine without raw-audio handling."
+      },
+      {
+        "date": "2026-06-03",
+        "title": "Conversation Workflows now available for Telnyx AI Assistants",
+        "url": "https://telnyx.com/release-notes/conversation-workflows-ai-assistants",
+        "summary": "Adds directed-graph conversation orchestration with conditional routing and per-node overrides."
+      }
+    ],
+    "workloads": [
+      {
+        "id": "hosted_voice_assistants",
+        "name": "Hosted voice assistants on Telnyx",
+        "summary": "Use Telnyx-managed assistants when you want telephony, speech, and assistant runtime on one platform.",
+        "choose_when": [
+          "You want the assistant runtime, telephony, STT, and TTS managed inside Telnyx.",
+          "You want fast first-run voice evaluation from the portal or Assistants API.",
+          "You want built-in assistant features such as workflow routing, memory, handoff, or traffic testing."
+        ],
+        "discovery": {
+          "repo_guides": [
+            "https://telnyx.com/guides/ai-assistants.md",
+            "https://telnyx.com/guides/voice-agent-onboarding.md",
+            "https://telnyx.com/guides/ai-receptionist-missed-call.md"
+          ],
+          "live_docs": [
+            "https://developers.telnyx.com/docs/inference/ai-assistants/no-code-voice-assistant",
+            "https://developers.telnyx.com/docs/inference/ai-assistants/workflows",
+            "https://developers.telnyx.com/docs/inference/ai-assistants/agent-handoff",
+            "https://developers.telnyx.com/docs/inference/ai-assistants/version-testing-traffic-distribution"
+          ],
+          "live_model_resolution": [
+            "GET /v2/ai/models",
+            "telnyx ai models"
+          ],
+          "execution_entrypoints": [
+            "POST /v2/ai/assistants",
+            "POST /v2/calls"
+          ]
+        },
+        "freshness_note": "Do not pin a hosted assistant model from this repo alone. Resolve the current assistant catalog at runtime, then keep only the chosen model ID in your deployment config."
+      },
+      {
+        "id": "telnyx_inference_api",
+        "name": "Telnyx-hosted inference and embeddings",
+        "summary": "Use the OpenAI-compatible inference surface when you want stateless model calls, embeddings, or non-voice agent workloads.",
+        "choose_when": [
+          "You need chat completions or embeddings without the full voice-assistant runtime.",
+          "You want model choice at request time through an OpenAI-compatible API.",
+          "You want to evaluate new hosted inference models as the catalog changes."
+        ],
+        "discovery": {
+          "repo_guides": [
+            "https://telnyx.com/agents/start",
+            "https://telnyx.com/ai/capabilities.json"
+          ],
+          "live_docs": [
+            "https://developers.telnyx.com/docs/inference/getting-started",
+            "https://developers.telnyx.com/docs/inference/models"
+          ],
+          "live_model_resolution": [
+            "https://developers.telnyx.com/docs/inference/models",
+            "https://telnyx.com/ai/inference-models.json"
+          ],
+          "execution_entrypoints": [
+            "POST /v2/ai/chat/completions",
+            "POST /v2/ai/embeddings"
+          ]
+        },
+        "freshness_note": "Inference inventory is intentionally live-linked. Release notes may announce a model before this repo updates, so verify the runtime catalog before assuming availability."
+      },
+      {
+        "id": "external_llm_orchestration_on_telnyx_voice",
+        "name": "External LLM or agent stack on Telnyx voice",
+        "summary": "Keep Telnyx as the telecom and speech layer while an external AI engine owns reasoning or application logic.",
+        "choose_when": [
+          "You already run your own model gateway, OpenAI-compatible endpoint, or agent runtime.",
+          "You need a provider or model that is not in the hosted assistant catalog.",
+          "You want to preserve more application-layer control while keeping Telnyx telephony."
+        ],
+        "discovery": {
+          "repo_guides": [
+            "https://telnyx.com/guides/telnyx-native-vs-third-party-voice-orchestration.md",
+            "https://telnyx.com/guides/edge-compute.md"
+          ],
+          "live_docs": [
+            "https://developers.telnyx.com/docs/inference/ai-assistants/custom-llm",
+            "https://developers.telnyx.com/docs/voice/programmable-voice/voice-api-commands-and-resources"
+          ],
+          "execution_entrypoints": [
+            "POST /v2/ai/assistants",
+            "POST /v2/call_control_apps",
+            "POST /v2/calls"
+          ]
+        },
+        "freshness_note": "This path is capability-stable but provider-specific. Validate the external endpoint contract and any custom model IDs directly against your own runtime."
+      },
+      {
+        "id": "conversation_relay",
+        "name": "Conversation Relay for text-streaming voice AI",
+        "summary": "Use Conversation Relay when you want Telnyx telephony plus STT/TTS, but your app prefers text over raw-audio media streams.",
+        "choose_when": [
+          "Your AI stack already consumes text turns and should not ingest raw RTP or media frames.",
+          "You want WebSocket text streaming between live calls and your AI logic.",
+          "You want a lighter bridge from Telnyx voice into CRM, chatbot, or custom NLU workflows."
+        ],
+        "discovery": {
+          "release_note": "https://telnyx.com/release-notes/conversation-relay-stream-text-websockets",
+          "live_docs": [
+            "https://developers.telnyx.com/docs/voice/programmable-voice/voice-api-commands-and-resources"
+          ],
+          "execution_entrypoints": [
+            "Voice API start conversation relay command",
+            "TeXML Conversation Relay"
+          ]
+        },
+        "freshness_note": "Conversation Relay is a fast-moving orchestration surface. Treat the release note and current Voice API docs as the canonical contract before rollout."
+      },
+      {
+        "id": "assistant_workflows_and_handoffs",
+        "name": "Structured assistant orchestration",
+        "summary": "Use workflows, handoff, async tools, and traffic testing when one assistant needs staged reasoning, specialist routing, or controlled rollout.",
+        "choose_when": [
+          "A single prompt is too broad and the conversation needs distinct stages.",
+          "You need per-step model or voice overrides, deterministic edges, or assistant-to-assistant routing.",
+          "You want to test prompts, voices, or models gradually before promotion."
+        ],
+        "discovery": {
+          "repo_guides": [
+            "https://telnyx.com/guides/ai-assistants.md",
+            "https://telnyx.com/guides/voice-agent-onboarding.md"
+          ],
+          "live_docs": [
+            "https://developers.telnyx.com/docs/inference/ai-assistants/workflows",
+            "https://developers.telnyx.com/docs/inference/ai-assistants/agent-handoff",
+            "https://developers.telnyx.com/docs/inference/ai-assistants/async-tools",
+            "https://developers.telnyx.com/docs/inference/ai-assistants/version-testing-traffic-distribution"
+          ],
+          "execution_entrypoints": [
+            "POST /v2/ai/assistants",
+            "PATCH /v2/ai/assistants/{assistant_id}"
+          ]
+        },
+        "freshness_note": "These orchestration primitives evolve quickly. Use the live docs for field-level payload details even when this repo gives the right workload starting point."
+      }
+    ],
+    "operational_notes": [
+      "The repo is the source of truth for workload grouping and public discovery URLs, not for a guaranteed live model inventory.",
+      "Use release notes for recency, but use the linked docs or runtime catalog for the contract you automate against.",
+      "When a workload needs account-specific or region-specific model availability, preserve the resolved model ID in your own config after runtime discovery."
+    ],
+    "governed_execution": {
+      "schema_version": "2026-06-13",
+      "fields": [
+        "risk_class",
+        "approval_expectation",
+        "approval_path",
+        "memory_scope",
+        "model_behavior",
+        "audit_identifiers"
+      ],
+      "risk_classes": {
+        "read_only": "Discovery or inspection only. No account mutation or external side effect is expected.",
+        "guarded_write": "Billed execution or account-scoped mutation may occur. Confirm intent before mutating state.",
+        "live_write": "Can send traffic, move money, provision resources, or change regulated production state. Explicit approval is expected before execution."
+      },
+      "approval_expectations": {
+        "none": "No extra approval is expected beyond normal caller authorization.",
+        "confirm_before_mutation": "Obtain human or policy confirmation before any state-changing or billed execution.",
+        "confirm_before_external_effect": "Obtain explicit human or policy approval before sending traffic, spending funds, or provisioning live resources."
+      },
+      "approval_paths": {
+        "none_read_only": "Read-only discovery or inspection. Persist returned request identifiers for traceability when needed.",
+        "confirm_intent_then_mutate": "Capture user or policy confirmation and preserve request-scoped identifiers before any billed or state-changing execution.",
+        "explicit_approval_then_execute": "Require explicit operator approval, then retain the returned identifiers needed to review external effects, provisioning, or spend."
+      },
+      "memory_scopes": {
+        "stateless": "The surface does not retain conversation state unless the caller supplies it.",
+        "host_controlled": "Persistence, if any, is owned by Telnyx or the host system rather than the model runtime.",
+        "customer_configured": "The customer configures the memory or conversation-retention behavior for this capability.",
+        "app_scoped": "State is bounded to the MCP app or workflow contract rather than the full Telnyx account surface."
+      },
+      "model_behaviors": {
+        "host_controlled": "No model behavior is exposed at this discovery layer, or execution is not model-driven.",
+        "request_selected": "The caller chooses the model at request time.",
+        "customer_configured": "The customer selects and configures the model during resource setup.",
+        "app_defined": "Model behavior is constrained by the governed app or workflow surface."
+      },
+      "audit_identifier_legend": {
+        "request_id": "Request-scoped correlation identifier returned by the surface or retained in logs.",
+        "resource_id": "Identifier of the created or mutated Telnyx resource being acted on or reviewed later.",
+        "idempotency_key": "Caller-supplied key used to deduplicate retries or confirm operator intent.",
+        "model_id": "Model identifier selected or returned for AI inference and evaluation flows.",
+        "conversation_id": "Conversation or session identifier for assistant or workflow review.",
+        "webhook_delivery_id": "Webhook or event-delivery identifier used to reconcile downstream effects."
+      }
+    }
+  }
+}

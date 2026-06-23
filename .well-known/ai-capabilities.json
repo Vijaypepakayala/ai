@@ -2,7 +2,7 @@
   "schema_version": "1.0.0",
   "provider": "telnyx",
   "canonical_url": "https://telnyx.com/ai/capabilities.json",
-  "updated_at": "2026-06-06T17:04:57.175Z",
+  "updated_at": "2026-06-14T00:00:00Z",
   "content": {
     "provider": "telnyx",
     "category": "ai_agent_infrastructure",
@@ -164,8 +164,19 @@
             "request_id",
             "resource_id"
           ]
+        },
+        "ai_catalog": {
+          "risk_class": "read_only",
+          "approval_expectation": "none",
+          "memory_scope": "host_controlled",
+          "model_behavior": "host_controlled",
+          "approval_path": "none_read_only",
+          "audit_identifiers": [
+            "request_id"
+          ]
         }
-      }
+      },
+      "ai_catalog": "https://telnyx.com/ai/catalog.json"
     },
     "constraints": {
       "grpc_supported": false,
@@ -177,7 +188,8 @@
       "inference_models": "https://telnyx.com/ai/inference-models.json",
       "data_handling": "https://telnyx.com/ai/data-handling.json",
       "regional_resilience": "https://telnyx.com/ai/resilience.json",
-      "selection_methodology": "https://telnyx.com/benchmarks/methodology"
+      "selection_methodology": "https://telnyx.com/benchmarks/methodology",
+      "ai_catalog": "https://telnyx.com/ai/catalog.json"
     },
     "governed_execution": {
       "schema_version": "2026-06-13",
