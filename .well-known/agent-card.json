@@ -130,9 +130,61 @@
       "Read https://telnyx.com/auth.md",
       "Inspect https://telnyx.com/.well-known/agent-access.json",
       "Use POST https://telnyx.com/api/inference for a first no-signup evaluation call, or follow https://telnyx.com/guides/getting-started.md for authenticated onboarding with billing and approval guardrails",
+      "For side-effecting requests, send a fresh Idempotency-Key per mutating request, reuse it only for the exact same retried write, and treat 202 plus Retry-After as an in-progress polling contract",
       "For Voice AI assistants, continue with https://telnyx.com/guides/ai-assistants.md and https://telnyx.com/guides/voice-agent-onboarding.md"
     ]
   },
+  "surface_selection": [
+    {
+      "id": "agents_start",
+      "entrypoint": "https://telnyx.com/agents/start",
+      "use_when": "Start here for the first crawlable chooser that separates auth, manifest, MCP, webhooks, Voice AI, and x402 entrypoints.",
+      "memory_boundary": "read_only_document",
+      "approval_posture": "none_read_only"
+    },
+    {
+      "id": "agent_manifest",
+      "entrypoint": "https://telnyx.com/.well-known/agent-card.json",
+      "use_when": "Use when you need machine-readable links, governed-execution fields, and stable discovery URLs.",
+      "memory_boundary": "read_only_manifest",
+      "approval_posture": "none_read_only"
+    },
+    {
+      "id": "auth_contract",
+      "entrypoint": "https://telnyx.com/.well-known/agent-access.json",
+      "use_when": "Use when you need bearer-auth rules, protected-resource metadata, zero-signup evaluation details, or signup constraints.",
+      "memory_boundary": "read_only_auth_metadata",
+      "approval_posture": "none_read_only_then_follow_capability_rules"
+    },
+    {
+      "id": "mcp",
+      "entrypoint": "https://api.telnyx.com/v2/mcp",
+      "use_when": "Use when your agent already speaks MCP and should discover Telnyx tools dynamically.",
+      "memory_boundary": "host_controlled_or_app_scoped_by_tool",
+      "approval_posture": "capability_governed"
+    },
+    {
+      "id": "toolkits",
+      "entrypoint": "https://github.com/team-telnyx/ai/tree/main/tools/python",
+      "use_when": "Use when you need framework-native tools inside OpenAI Agents SDK, LangChain, CrewAI, or Vercel AI SDK.",
+      "memory_boundary": "caller_orchestrated_plus_capability_memory_scope",
+      "approval_posture": "capability_governed"
+    },
+    {
+      "id": "cli",
+      "entrypoint": "https://github.com/team-telnyx/ai/tree/main/cli",
+      "use_when": "Use when you need composable provisioning or account operations from a terminal or automation step.",
+      "memory_boundary": "host_controlled_account_state",
+      "approval_posture": "confirm_before_mutation_or_explicit_approval_for_live_write"
+    },
+    {
+      "id": "skills",
+      "entrypoint": "https://telnyx.com/.well-known/agent-skills/index.json",
+      "use_when": "Use when you want retrieval-only Telnyx product context for a coding assistant before exposing raw account access.",
+      "memory_boundary": "retrieval_only_context",
+      "approval_posture": "none_for_context_only"
+    }
+  ],
   "governed_execution": {
     "schema_version": "2026-06-13",
     "fields": [
@@ -177,6 +229,23 @@
       "model_id": "Model identifier selected or returned for AI inference and evaluation flows.",
       "conversation_id": "Conversation or session identifier for assistant or workflow review.",
       "webhook_delivery_id": "Webhook or event-delivery identifier used to reconcile downstream effects."
+    }
+  },
+  "retry_idempotency_contract": {
+    "applies_to": [
+      "guarded_write",
+      "live_write"
+    ],
+    "mutating_requests": {
+      "idempotency_key_header": "Idempotency-Key",
+      "generate_new_key_when": "Send a fresh Idempotency-Key on every mutating request that creates, confirms, retries, or otherwise changes state.",
+      "reuse_same_key_only_when": "Reuse that same key only when retrying the exact same intended write after a timeout, transport failure, or ambiguous client-side result."
+    },
+    "async_completion": {
+      "treat_202_accepted_as_in_progress": true,
+      "poll_to_terminal_state": true,
+      "honor_retry_after": true,
+      "guidance": "Do not infer completion from the initial write response alone when the API family documents asynchronous processing."
     }
   },
   "discovery_governance": {

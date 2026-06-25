@@ -11,7 +11,7 @@ interface Capability {
   governance: GovernanceMetadata;
 }
 
-interface GovernanceMetadata {
+export interface GovernanceMetadata {
   risk_class: "read_only" | "guarded_write" | "live_write";
   approval_expectation: "none" | "confirm_before_mutation" | "confirm_before_external_effect";
   approval_path: "none_read_only" | "confirm_intent_then_mutate" | "explicit_approval_then_execute";
@@ -26,7 +26,37 @@ interface CompositeCommand {
   governance: GovernanceMetadata;
 }
 
-const GOVERNANCE_PRESETS = {
+interface AiCatalogEntry {
+  id: string;
+  name: string;
+  summary: string;
+  discovery: string[];
+  freshness_note: string;
+}
+
+interface AiCatalogSummary {
+  canonical_url: string;
+  updated_at: string;
+  freshness_note: string;
+  workloads: AiCatalogEntry[];
+}
+
+interface RetryIdempotencyContract {
+  applies_to: Array<GovernanceMetadata["risk_class"]>;
+  mutating_requests: {
+    idempotency_key_header: string;
+    generate_new_key_when: string;
+    reuse_same_key_only_when: string;
+  };
+  async_completion: {
+    treat_202_accepted_as_in_progress: boolean;
+    poll_to_terminal_state: boolean;
+    honor_retry_after: boolean;
+    guidance: string;
+  };
+}
+
+export const GOVERNANCE_PRESETS = {
   readOnlyHost: {
     risk_class: "read_only",
     approval_expectation: "none",
@@ -93,7 +123,7 @@ const GOVERNANCE_PRESETS = {
   },
 } satisfies Record<string, GovernanceMetadata>;
 
-const CAPABILITIES: Record<string, Capability[]> = {
+export const CAPABILITIES: Record<string, Capability[]> = {
   "📱 Messaging": [
     { name: "SMS / MMS", description: "Send and receive text and multimedia messages", actions: ["send_sms", "list_messaging_profiles", "create_messaging_profile"], governance: GOVERNANCE_PRESETS.liveHost },
   ],
@@ -144,7 +174,7 @@ const CAPABILITIES: Record<string, Capability[]> = {
   ],
 };
 
-const COMPOSITE_COMMANDS: CompositeCommand[] = [
+export const COMPOSITE_COMMANDS: CompositeCommand[] = [
   { name: "telnyx-agent setup-sms", description: "Zero to SMS: creates messaging profile, buys number, assigns it", governance: GOVERNANCE_PRESETS.liveHost },
   { name: "telnyx-agent setup-voice", description: "Zero to voice: creates SIP connection, buys number, assigns it", governance: GOVERNANCE_PRESETS.liveHost },
   { name: "telnyx-agent setup-iot", description: "Zero to IoT: lists SIMs, creates group, activates SIM", governance: GOVERNANCE_PRESETS.guardedHost },
@@ -163,6 +193,82 @@ const COMPOSITE_COMMANDS: CompositeCommand[] = [
   { name: "telnyx-agent capabilities", description: "This command — lists all available API capabilities", governance: GOVERNANCE_PRESETS.readOnlyStateless },
 ];
 
+const AI_CATALOG: AiCatalogSummary = {
+  canonical_url: "https://telnyx.com/ai/catalog.json",
+  updated_at: "2026-06-14T00:00:00Z",
+  freshness_note: "Workload groupings here are repo-maintained. Resolve live model inventory from the linked runtime surfaces before automating against a specific model ID.",
+  workloads: [
+    {
+      id: "hosted_voice_assistants",
+      name: "Hosted voice assistants",
+      summary: "Telnyx-managed assistant runtime with telephony, STT, TTS, and assistant configuration on one platform.",
+      discovery: [
+        "GET /v2/ai/models",
+        "telnyx ai models",
+        "https://telnyx.com/guides/ai-assistants.md",
+      ],
+      freshness_note: "Assistant model IDs are account- and region-sensitive. Resolve them live before deployment."
+    },
+    {
+      id: "telnyx_inference_api",
+      name: "Telnyx-hosted inference and embeddings",
+      summary: "OpenAI-compatible inference for chat completions, embeddings, and non-voice agent workloads.",
+      discovery: [
+        "https://developers.telnyx.com/docs/inference/models",
+        "https://telnyx.com/ai/inference-models.json",
+        "POST /v2/ai/chat/completions",
+      ],
+      freshness_note: "Inference inventory changes faster than repo releases. Confirm model availability from the live catalog."
+    },
+    {
+      id: "external_llm_orchestration_on_telnyx_voice",
+      name: "External LLM orchestration on Telnyx voice",
+      summary: "Keep Telnyx for telephony and speech while your own model gateway or agent runtime owns reasoning.",
+      discovery: [
+        "https://developers.telnyx.com/docs/inference/ai-assistants/custom-llm",
+        "https://telnyx.com/guides/telnyx-native-vs-third-party-voice-orchestration.md",
+      ],
+      freshness_note: "Validate provider-specific model IDs and OpenAI-compatible contract details directly against the external runtime."
+    },
+    {
+      id: "conversation_relay",
+      name: "Conversation Relay",
+      summary: "Text-streaming voice orchestration path between Telnyx telephony and an external AI engine without raw-audio handling.",
+      discovery: [
+        "https://telnyx.com/release-notes/conversation-relay-stream-text-websockets",
+        "Voice API start conversation relay command",
+      ],
+      freshness_note: "Use the current Voice API docs for the runtime contract before rollout."
+    },
+    {
+      id: "assistant_workflows_and_handoffs",
+      name: "Structured assistant orchestration",
+      summary: "Workflows, handoff, async tools, and traffic testing for staged or multi-agent assistant behavior.",
+      discovery: [
+        "https://developers.telnyx.com/docs/inference/ai-assistants/workflows",
+        "https://developers.telnyx.com/docs/inference/ai-assistants/agent-handoff",
+        "https://developers.telnyx.com/docs/inference/ai-assistants/version-testing-traffic-distribution",
+      ],
+      freshness_note: "Use the live docs for field-level payload shapes even when the workload choice is clear here."
+    },
+  ]
+};
+
+export const RETRY_IDEMPOTENCY_CONTRACT: RetryIdempotencyContract = {
+  applies_to: ["guarded_write", "live_write"],
+  mutating_requests: {
+    idempotency_key_header: "Idempotency-Key",
+    generate_new_key_when: "Send a fresh Idempotency-Key on every mutating request that creates, confirms, retries, or otherwise changes state.",
+    reuse_same_key_only_when: "Reuse that same key only when retrying the exact same intended write after a timeout, transport failure, or ambiguous client-side result.",
+  },
+  async_completion: {
+    treat_202_accepted_as_in_progress: true,
+    poll_to_terminal_state: true,
+    honor_retry_after: true,
+    guidance: "Do not infer completion from the initial write response alone when the API family documents asynchronous processing.",
+  },
+};
+
 export async function capabilitiesCommand(flags: Record<string, string | boolean>): Promise<void> {
   const jsonOutput = flags.json === true;
 
@@ -170,6 +276,8 @@ export async function capabilitiesCommand(flags: Record<string, string | boolean
     outputJson({
       api_capabilities: CAPABILITIES,
       composite_commands: COMPOSITE_COMMANDS,
+      ai_catalog: AI_CATALOG,
+      retry_idempotency_contract: RETRY_IDEMPOTENCY_CONTRACT,
       total_tools: Object.values(CAPABILITIES).flat().reduce((sum, c) => sum + c.actions.length, 0),
     });
     return;
@@ -200,4 +308,23 @@ export async function capabilitiesCommand(flags: Record<string, string | boolean
 
   const total = Object.values(CAPABILITIES).flat().reduce((sum, c) => sum + c.actions.length, 0);
   console.log(`Total: ${total} API tools across ${Object.keys(CAPABILITIES).length} categories\n`);
+
+  console.log("📚 AI Catalog:\n");
+  console.log(`  Canonical URL: ${AI_CATALOG.canonical_url}`);
+  console.log(`  Updated: ${AI_CATALOG.updated_at}`);
+  console.log(`  Freshness: ${AI_CATALOG.freshness_note}\n`);
+
+  for (const workload of AI_CATALOG.workloads) {
+    console.log(`  ${workload.name} — ${workload.summary}`);
+    console.log(`    Discovery: ${workload.discovery.join(" | ")}`);
+    console.log(`    Note: ${workload.freshness_note}\n`);
+  }
+
+  console.log("🔁 Retry & Idempotency:\n");
+  console.log(`  Applies to: ${RETRY_IDEMPOTENCY_CONTRACT.applies_to.join(", ")}`);
+  console.log(`  Header: ${RETRY_IDEMPOTENCY_CONTRACT.mutating_requests.idempotency_key_header}`);
+  console.log(`  Fresh key: ${RETRY_IDEMPOTENCY_CONTRACT.mutating_requests.generate_new_key_when}`);
+  console.log(`  Reuse only: ${RETRY_IDEMPOTENCY_CONTRACT.mutating_requests.reuse_same_key_only_when}`);
+  console.log(`  Async writes: treat 202 as in-progress=${RETRY_IDEMPOTENCY_CONTRACT.async_completion.treat_202_accepted_as_in_progress}; poll=${RETRY_IDEMPOTENCY_CONTRACT.async_completion.poll_to_terminal_state}; honor Retry-After=${RETRY_IDEMPOTENCY_CONTRACT.async_completion.honor_retry_after}`);
+  console.log(`  Note: ${RETRY_IDEMPOTENCY_CONTRACT.async_completion.guidance}\n`);
 }

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CAPABILITIES as CLI_CAPABILITIES, RETRY_IDEMPOTENCY_CONTRACT as CLI_RETRY_IDEMPOTENCY_CONTRACT } from "../cli/src/commands/capabilities.ts";
 
 const __dirname = typeof import.meta.dirname === "string"
   ? import.meta.dirname
@@ -20,6 +21,24 @@ const agentCard = JSON.parse(read(".well-known/agent-card.json"));
 const agentAccess = JSON.parse(read(".well-known/agent-access.json"));
 const capabilitiesJson = JSON.parse(read("ai/capabilities.json"));
 const pricingJson = JSON.parse(read("ai/pricing.json"));
+const capabilityById = new Map(
+  agentJson.capabilities.map((capability: { id: string }) => [capability.id, capability])
+);
+const overlappingCliGovernanceByAgentCapabilityId = {
+  messaging: CLI_CAPABILITIES["📱 Messaging"][0].governance,
+  voice: CLI_CAPABILITIES["📞 Voice"][0].governance,
+  ai_assistants: CLI_CAPABILITIES["🤖 AI"][2].governance,
+  ai_inference: CLI_CAPABILITIES["🤖 AI"][0].governance,
+  numbers: CLI_CAPABILITIES["🔢 Numbers"][0].governance,
+  verify: CLI_CAPABILITIES["✅ Verify"][0].governance,
+  fax: CLI_CAPABILITIES["📠 Fax"][0].governance,
+  iot: CLI_CAPABILITIES["📡 IoT"][0].governance,
+  networking: CLI_CAPABILITIES["🔐 Networking"][0].governance,
+  edge_compute: CLI_CAPABILITIES["⚡ Edge Compute"][0].governance,
+  "10dlc": CLI_CAPABILITIES["📋 10DLC Compliance"][0].governance,
+  payments: CLI_CAPABILITIES["💳 Payments"][0].governance,
+  porting: CLI_CAPABILITIES["🔄 Porting"][0].governance,
+} as const;
 
 const canonicalDiscovery = {
   start_url: "https://telnyx.com/agents/start",
@@ -78,6 +97,22 @@ describe("agent discovery surfaces", () => {
       assert.ok(Array.isArray(capability.governance.audit_identifiers), `${capability.id} missing audit_identifiers`);
       assert.ok(capability.governance.audit_identifiers.length > 0, `${capability.id} has empty audit_identifiers`);
     }
+  });
+
+  it("keeps overlapping manifest capabilities aligned with the CLI governance contract", () => {
+    for (const [capabilityId, governance] of Object.entries(overlappingCliGovernanceByAgentCapabilityId)) {
+      assert.deepEqual(
+        capabilityById.get(capabilityId)?.governance,
+        governance,
+        `${capabilityId} governance drifted from cli/src/commands/capabilities.ts`
+      );
+    }
+  });
+
+  it("keeps retry and idempotency guidance aligned across machine-readable public surfaces", () => {
+    assert.deepEqual(agentJson.retry_idempotency_contract, CLI_RETRY_IDEMPOTENCY_CONTRACT);
+    assert.deepEqual(agentCard.retry_idempotency_contract, agentJson.retry_idempotency_contract);
+    assert.equal(agentJson.first_run_paths[0].retry_idempotency_contract, "default_mutating_request_contract");
   });
 
   it("public discovery JSON mirrors expose the same governed-execution contract", () => {
