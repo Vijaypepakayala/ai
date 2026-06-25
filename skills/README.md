@@ -163,6 +163,9 @@ npx skills add team-telnyx/ai --skill telnyx-messaging-python --agent cursor
 | `telnyx-ai-assistants-*` | AI voice assistants with knowledge bases |
 | `telnyx-ai-inference-*` | LLM inference, embeddings, AI analytics |
 | `telnyx-missions-*` | Automated AI-driven workflows and tasks |
+| `telnyx-ai-voice-agent-bootstrap` | Repeatable first-run callable assistant setup, answer-webhook wiring, and first live-call verification |
+| `telnyx-ai-conversation-memory` | Conversation history persistence, returning-caller retrieval, and `message_history` reuse |
+| `telnyx-ai-tts-provider-switching` | TTS provider choice, voice switching, and post-change validation for live assistants |
 
 #### IoT & Networking
 

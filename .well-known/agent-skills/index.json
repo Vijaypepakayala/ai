@@ -411,6 +411,14 @@
       "documentation": "https://developers.telnyx.com/docs/inference/ai-assistants/integrations"
     },
     {
+      "name": "telnyx-ai-conversation-memory",
+      "type": "skill-md",
+      "description": "Repeatable setup for Telnyx AI conversation history, voice-memory persistence, and retrieval into future calls. Covers when to use conversation_id, message_history, and knowledge bases, plus the minimum record to store outside Telnyx for returning-caller context.",
+      "url": "https://raw.githubusercontent.com/team-telnyx/ai/main/skills/telnyx-ai-conversation-memory/SKILL.md",
+      "digest": "sha256:a632fbc27dfe6d3a065fe55af841190a7073af960f43efe081bed5e330be0321",
+      "documentation": "https://telnyx.com/guides/voice-agent-onboarding.md"
+    },
+    {
       "name": "telnyx-ai-inference-curl",
       "type": "skill-md",
       "description": "Access Telnyx LLM inference APIs, embeddings, and AI analytics for call insights and summaries. This skill provides REST API (curl) examples.",
@@ -465,6 +473,22 @@
       "url": "https://raw.githubusercontent.com/team-telnyx/ai/main/skills/telnyx-ai-outbound-voice-python/SKILL.md",
       "digest": "sha256:e8fff751ab42677d89315ee163a1e2ecf1f38c5394f44140d497ebaaf694fdb9",
       "documentation": "https://developers.telnyx.com/docs/inference/ai-assistants/integrations"
+    },
+    {
+      "name": "telnyx-ai-tts-provider-switching",
+      "type": "skill-md",
+      "description": "Repeatable setup for choosing, testing, and switching Telnyx AI assistant text-to-speech providers. Covers when to stay on Telnyx-hosted voice, when to move to ElevenLabs or another provider, the verification loop after a voice change, and the operational fields to preserve from call.conversation.ended.",
+      "url": "https://raw.githubusercontent.com/team-telnyx/ai/main/skills/telnyx-ai-tts-provider-switching/SKILL.md",
+      "digest": "sha256:2478c7e8f1b559b39680b4e1cf10598088f065425b96a770c31301104e7ef2bd",
+      "documentation": "https://telnyx.com/guides/ai-assistants.md"
+    },
+    {
+      "name": "telnyx-ai-voice-agent-bootstrap",
+      "type": "skill-md",
+      "description": "Repeatable first-run setup for a callable Telnyx AI voice assistant. Covers hosted-assistant versus programmable-call-control choices, assistant creation, answer-webhook wiring, first live-call verification, and the IDs to preserve for debugging and rollout.",
+      "url": "https://raw.githubusercontent.com/team-telnyx/ai/main/skills/telnyx-ai-voice-agent-bootstrap/SKILL.md",
+      "digest": "sha256:8b9abcedfe142b35c6c00a9601fb10caa2f030588911889f6f75383f3d9158cb",
+      "documentation": "https://telnyx.com/guides/voice-agent-onboarding.md"
     },
     {
       "name": "telnyx-cli",

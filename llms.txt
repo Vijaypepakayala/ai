@@ -12,6 +12,7 @@ Getting started
 - Account-creation path: read https://telnyx.com/agent-signup.md, complete the bot-signup plus email-link flow, then use Authorization: Bearer <TELNYX_API_KEY>
 - First authenticated API check: call https://api.telnyx.com/v2/available_phone_numbers with the bearer key, or initialize https://api.telnyx.com/v2/mcp
 - First Voice AI onboarding path: start with https://telnyx.com/guides/ai-assistants.md and continue with https://telnyx.com/guides/voice-agent-onboarding.md
+- Repeatable Voice AI workflow skills: https://github.com/team-telnyx/ai/tree/main/skills/telnyx-ai-voice-agent-bootstrap, https://github.com/team-telnyx/ai/tree/main/skills/telnyx-ai-conversation-memory, and https://github.com/team-telnyx/ai/tree/main/skills/telnyx-ai-tts-provider-switching
 - CLI bootstrap after key creation: run telnyx-agent status --json
 
 What an agent should learn first
@@ -65,6 +66,7 @@ How to choose a surface
 - Use https://telnyx.com/.well-known/openapi.json when the workflow needs endpoint-level REST exploration or code generation.
 - Use https://developers.telnyx.com/apps when the workflow should stay on a focused, governed MCP App with narrower tool exposure.
 - Use https://telnyx.com/guides/ai-assistants.md and https://telnyx.com/guides/voice-agent-onboarding.md when the task is specifically first-run assistant creation, answer-webhook wiring, or GPT-5.4-hosted assistant evaluation.
+- Use the workflow skills above when the task is specifically repeatable voice bootstrap, returning-caller memory setup, or TTS provider switching.
 - Use https://telnyx.com/guides/x402-payments.md when the task is specifically x402 account funding.
 - Read the Telnyx Webhooks guide at https://developers.telnyx.com/development/api-fundamentals/webhooks/receiving-webhooks before implementing inbound webhook handlers or retry logic.
 

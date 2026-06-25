@@ -15,6 +15,15 @@
 - Prefer Telnyx-hosted models first for production voice flows. Keeping STT, LLM, TTS, and telephony on the same Telnyx-managed path removes an extra vendor hop and simplifies billing and operations.
 - Reach for a custom OpenAI-compatible endpoint only when you have a hard requirement that the hosted model selector does not meet.
 
+## Reusable Setup Workflows
+
+Use these workflow artifacts when the job is a repeatable setup path rather than a one-off API call:
+
+- [`skills/telnyx-ai-voice-agent-bootstrap/SKILL.md`](/skills/telnyx-ai-voice-agent-bootstrap/SKILL.md) for first-run callable assistant setup, answer-webhook wiring, and first live-call verification
+- [`skills/telnyx-ai-conversation-memory/SKILL.md`](/skills/telnyx-ai-conversation-memory/SKILL.md) for post-call memory persistence, returning-caller retrieval, and `message_history` reuse
+- [`skills/telnyx-ai-tts-provider-switching/SKILL.md`](/skills/telnyx-ai-tts-provider-switching/SKILL.md) for TTS provider choice, assistant voice switching, and post-change validation
+- [`skills/telnyx-ai-outbound-voice-python/SKILL.md`](/skills/telnyx-ai-outbound-voice-python/SKILL.md) for outbound assistant calls, number assignment, and telephony settings
+
 ## Quick Start
 
 ```bash

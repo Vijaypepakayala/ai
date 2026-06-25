@@ -213,6 +213,12 @@ npx skills add team-telnyx/ai --skill <SKILL> --agent <AGENT>
 
 For a multi-surface Telnyx entrypoint aimed at external coding agents, start with `telnyx-external-coding-agents`, then add only the product-specific language skills the workflow needs.
 
+For repeatable Voice AI setup work, the repo also includes workflow skills that sit above the raw API references:
+
+- `telnyx-ai-voice-agent-bootstrap` for first-run callable assistant setup and answer-webhook wiring
+- `telnyx-ai-conversation-memory` for post-call memory persistence and returning-caller retrieval
+- `telnyx-ai-tts-provider-switching` for voice-provider choice and assistant TTS migrations
+
 > [!NOTE]
 > See [Skills](/skills/README.md) for full install instrcuctions and comprehensive list of available skills
 
