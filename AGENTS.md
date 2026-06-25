@@ -132,12 +132,25 @@ If you are an AI agent **using** Telnyx (not modifying this repo), the entry poi
 | Provision Telnyx infrastructure programmatically          | `cli/` — `npm install -g @telnyx/cli`                                   |
 | Get an API key as an agent                                | `https://telnyx.com/agent-signup.md` (PoW-based programmatic signup)   |
 
+Pick the interface that matches the control boundary:
+
+| Surface | Start here | Use when | Memory boundary | Approval posture |
+| --- | --- | --- | --- | --- |
+| Crawlable chooser | `https://telnyx.com/agents/start` | First read for auth, manifest, MCP, webhooks, Voice AI, and x402 entrypoints | Read-only document; no conversation state implied | No extra approval; discovery only |
+| Manifest | `https://telnyx.com/.well-known/agent-card.json` or local `/agent.json` | Need machine-readable links, governed-execution fields, and stable discovery URLs | Read-only manifest; no execution state is stored there | No extra approval; inspect `risk_class`, `approval_expectation`, and `approval_path` first |
+| Auth contract | `https://telnyx.com/auth.md` and `https://telnyx.com/.well-known/agent-access.json` | Need bearer-auth rules, protected-resource metadata, zero-signup evaluation, or signup limits | Read-only auth metadata | No extra approval for reading; follow capability-specific approval before writes |
+| MCP | `https://api.telnyx.com/v2/mcp` | Agent already speaks MCP and should discover tools dynamically | Host-controlled account state; app-layer MCP Apps narrow state to the app contract | Approval depends on the tool capability; preserve audit identifiers |
+| Toolkit | `tools/python/` or `tools/typescript/` | Need framework-native tools inside OpenAI Agents SDK, LangChain, CrewAI, or Vercel AI SDK | Your framework owns orchestration memory; Telnyx-side retention still follows each capability's `memory_scope` | Approval depends on the capability you expose |
+| CLI | `cli/` | Need composable provisioning or account operations from a terminal or automation step | Host-controlled account state | Confirm intent before billed or live provisioning actions |
+| Skills | `skills/` | Need retrieval-only product context for coding assistants before handing them raw account access | Retrieval context only; no Telnyx runtime state is created by installing a skill | No extra approval to read or install context; separate approval still applies to live actions |
+
 ### Auth (for runtime consumers)
 
 - **API keys**: Bearer token, `Authorization: Bearer <key>`. Get one via the portal or programmatically via `https://telnyx.com/agent-signup.md`.
 - **OAuth**: Metadata at `https://api.telnyx.com/.well-known/oauth-authorization-server`.
 - **MCP**: Bearer auth against `https://api.telnyx.com/v2/mcp`. Card at `https://telnyx.com/.well-known/mcp/server-card.json`.
 - **Auth discovery**: Start at `https://telnyx.com/auth.md`, then follow `https://api.telnyx.com/.well-known/oauth-protected-resource` or the MCP-specific `https://api.telnyx.com/.well-known/oauth-protected-resource/v2/mcp`.
+- **Retry and idempotency**: For side-effecting requests, send a fresh `Idempotency-Key` on every mutating call, reuse that same key only when retrying the exact same intended write after a timeout, transport failure, or ambiguous client-side result, treat `202 Accepted` as incomplete work, and honor `Retry-After` while polling for a terminal outcome.
 
 See `agent.json` (`auth` block) for the canonical auth contract.
 

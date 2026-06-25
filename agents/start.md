@@ -10,7 +10,23 @@ If you only read one page before deciding whether Telnyx fits your agent workflo
 
 The exact first-run evaluation route today is `POST https://telnyx.com/api/inference`. Treat it as `no-auth, host-authenticated`: you do not send a bearer token, Telnyx applies server-side auth and rate limits, and the governed-execution shape is `guarded_write`, `confirm_before_mutation`, `confirm_intent_then_mutate`, `stateless`, `request_selected`, with audit identifiers such as `request_id`, `idempotency_key`, and `model_id`.
 
+For side-effecting Telnyx requests, send a fresh `Idempotency-Key` on every mutating request, reuse that same key only when retrying the exact same intended write after a timeout, transport failure, or ambiguous client-side result, treat `202 Accepted` as still in progress, and honor `Retry-After` before polling again.
+
 If you need the authenticated onboarding path with explicit billing and approval guardrails, use [`/guides/getting-started.md`](/guides/getting-started.md) as the canonical first workflow guide.
+
+## Surface chooser
+
+Use the first surface that matches the job instead of treating every Telnyx entrypoint as interchangeable.
+
+| Surface | Start here | Use when | Memory boundary | Approval posture |
+| --- | --- | --- | --- | --- |
+| Crawlable chooser | `https://telnyx.com/agents/start` | You need the first human-readable page that separates auth, manifest, MCP, webhook, Voice AI, and x402 entrypoints | Read-only page; no conversation retention implied | No extra approval; discovery only |
+| Machine-readable manifest | `https://telnyx.com/.well-known/agent-card.json` or local `/agent.json` | You need stable URLs, capability links, and governed-execution metadata | Read-only manifest; execution state is not stored here | No extra approval; inspect governance fields before calling live surfaces |
+| Auth contract | `https://telnyx.com/auth.md` and `https://telnyx.com/.well-known/agent-access.json` | You need bearer-auth rules, protected-resource metadata, zero-signup evaluation, or signup constraints | Read-only auth metadata | No extra approval for reading; capability approval rules still apply to writes |
+| MCP | `https://api.telnyx.com/v2/mcp` | Your agent already speaks MCP and should discover tools at runtime | Host-controlled account state; focused MCP Apps narrow state to the app contract | Approval depends on the tool capability; keep audit identifiers |
+| Toolkits | `https://github.com/team-telnyx/ai/tree/main/tools/python` or `https://github.com/team-telnyx/ai/tree/main/tools/typescript` | You want framework-native tools inside OpenAI Agents SDK, LangChain, CrewAI, or Vercel AI SDK | Your framework owns orchestration memory; Telnyx-side retention still follows each capability's `memory_scope` | Approval depends on the capability you expose |
+| CLI | `https://github.com/team-telnyx/ai/tree/main/cli` | You want composable provisioning and account operations from a terminal or automation step | Host-controlled account state | Confirm intent before billed or live provisioning actions |
+| Skills | `https://github.com/team-telnyx/ai/tree/main/skills` | You want retrieval-only Telnyx product context for a coding assistant without handing it raw account access first | Retrieval context only; installing a skill does not create Telnyx runtime state | No extra approval to read or install context; separate approval still applies to live actions |
 
 ## Getting started
 

@@ -58,6 +58,24 @@
   },
   "fast_path": {
     "description": "Try the API immediately. The primary first-run evaluation path is a host-authenticated inference request through telnyx.com, so no signup, API key, or email is required. Main REST and MCP surfaces still require a standard Telnyx API key.",
+    "retry_idempotency_contract": {
+      "id": "default_mutating_request_contract",
+      "applies_to": [
+        "guarded_write",
+        "live_write"
+      ],
+      "mutating_requests": {
+        "idempotency_key_header": "Idempotency-Key",
+        "generate_new_key_when": "Send a fresh Idempotency-Key on every mutating request that creates, confirms, retries, or otherwise changes state.",
+        "reuse_same_key_only_when": "Reuse that same key only when retrying the exact same intended write after a timeout, transport failure, or ambiguous client-side result."
+      },
+      "async_completion": {
+        "treat_202_accepted_as_in_progress": true,
+        "poll_to_terminal_state": true,
+        "honor_retry_after": true,
+        "guidance": "Do not infer completion from the initial write response alone when the API family documents asynchronous processing."
+      }
+    },
     "primary_path": {
       "name": "inference",
       "method": "POST",
@@ -75,7 +93,8 @@
           "model_id"
         ]
       },
-      "note": "Recommended first-run evaluation path. Telnyx applies server-side auth and rate limits on behalf of the caller."
+      "note": "Recommended first-run evaluation path. Telnyx applies server-side auth and rate limits on behalf of the caller.",
+      "retry_idempotency_contract": "default_mutating_request_contract"
     },
     "demo_endpoints": [
       {
@@ -203,7 +222,7 @@
         "steps": [
           "Read https://telnyx.com/auth.md",
           "Inspect https://telnyx.com/.well-known/agent-access.json",
-          "POST https://telnyx.com/api/inference"
+          "POST https://telnyx.com/api/inference with a fresh Idempotency-Key if you are making a mutating or billable write"
         ],
         "success_signal": "A response body plus request-scoped identifiers such as request_id, idempotency_key, or model_id."
       },
