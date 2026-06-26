@@ -68,7 +68,8 @@
           "repo_guides": [
             "https://telnyx.com/guides/ai-assistants.md",
             "https://telnyx.com/guides/voice-agent-onboarding.md",
-            "https://telnyx.com/guides/ai-receptionist-missed-call.md"
+            "https://telnyx.com/guides/ai-receptionist-missed-call.md",
+            "https://telnyx.com/guides/voice-ai-fraud-alerts.md"
           ],
           "live_docs": [
             "https://developers.telnyx.com/docs/inference/ai-assistants/no-code-voice-assistant",

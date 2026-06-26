@@ -83,6 +83,7 @@ Use this when the goal is not generic telecom discovery but a real AI assistant 
 2. Continue with [`/guides/voice-agent-onboarding.md`](/guides/voice-agent-onboarding.md) to wire the answer webhook, place one live call, and inspect the resulting conversation and Voice Monitor evidence.
 3. Load [`/skills/telnyx-ai-voice-agent-bootstrap/SKILL.md`](/skills/telnyx-ai-voice-agent-bootstrap/SKILL.md), [`/skills/telnyx-ai-conversation-memory/SKILL.md`](/skills/telnyx-ai-conversation-memory/SKILL.md), or [`/skills/telnyx-ai-tts-provider-switching/SKILL.md`](/skills/telnyx-ai-tts-provider-switching/SKILL.md) when the task is a repeatable setup workflow rather than a single guide read.
 4. Use [`/guides/voice-ai-production-playbook.md`](/guides/voice-ai-production-playbook.md) when the next question is production rollout, safe escalation, and observability instead of first bootstrap only.
+5. Use [`/guides/voice-ai-fraud-alerts.md`](/guides/voice-ai-fraud-alerts.md) when the workflow is a regulated or trust-sensitive fraud alert that needs explicit disclosure, confirm or deny handling, human escalation, and a durable SMS review path.
 5. Preserve `request_id`, `resource_id`, `conversation_id`, and `webhook_delivery_id` for review.
 
 ## What agents can do with Telnyx
@@ -97,7 +98,7 @@ Use this when the goal is not generic telecom discovery but a real AI assistant 
 
 ### Telnyx Voice AI Agents
 
-Start with [`/guides/ai-assistants.md`](/guides/ai-assistants.md) for hosted assistant creation, [`/guides/voice-agent-onboarding.md`](/guides/voice-agent-onboarding.md) for the first live answer-webhook path, and [`/guides/voice-ai-production-playbook.md`](/guides/voice-ai-production-playbook.md) for the first-party production rollout path. For repeatable setup tasks, add [`/skills/telnyx-ai-voice-agent-bootstrap/SKILL.md`](/skills/telnyx-ai-voice-agent-bootstrap/SKILL.md), [`/skills/telnyx-ai-conversation-memory/SKILL.md`](/skills/telnyx-ai-conversation-memory/SKILL.md), or [`/skills/telnyx-ai-tts-provider-switching/SKILL.md`](/skills/telnyx-ai-tts-provider-switching/SKILL.md). These are the crawlable Telnyx-owned entrypoints for voice AI agent setup, webhook wiring, memory reuse, voice-provider changes, and Voice Monitor debugging.
+Start with [`/guides/ai-assistants.md`](/guides/ai-assistants.md) for hosted assistant creation, [`/guides/voice-agent-onboarding.md`](/guides/voice-agent-onboarding.md) for the first live answer-webhook path, and [`/guides/voice-ai-production-playbook.md`](/guides/voice-ai-production-playbook.md) for the first-party production rollout path. Add [`/guides/voice-ai-fraud-alerts.md`](/guides/voice-ai-fraud-alerts.md) when the workflow is a regulated fraud alert that needs disclosure and audit hooks. For repeatable setup tasks, add [`/skills/telnyx-ai-voice-agent-bootstrap/SKILL.md`](/skills/telnyx-ai-voice-agent-bootstrap/SKILL.md), [`/skills/telnyx-ai-conversation-memory/SKILL.md`](/skills/telnyx-ai-conversation-memory/SKILL.md), or [`/skills/telnyx-ai-tts-provider-switching/SKILL.md`](/skills/telnyx-ai-tts-provider-switching/SKILL.md). These are the crawlable Telnyx-owned entrypoints for voice AI agent setup, webhook wiring, memory reuse, voice-provider changes, and Voice Monitor debugging.
 
 ### Telnyx Webhooks
 
@@ -217,6 +218,7 @@ When the workflow is specifically "build or evaluate a Telnyx voice assistant", 
 - [`/guides/voice-agent-onboarding.md`](/guides/voice-agent-onboarding.md) for the first live answer-webhook path, conversation capture, and Voice Monitor debugging.
 - [`/guides/voice-ai-production-playbook.md`](/guides/voice-ai-production-playbook.md) for the first-party production rollout path with support containment, human handoff, observability, and smallest-live verification.
 - [`/guides/ai-receptionist-missed-call.md`](/guides/ai-receptionist-missed-call.md) for a bounded SMB receptionist flow that captures callback requests, transfers live callers when possible, and confirms missed calls by SMS.
+- [`/guides/voice-ai-fraud-alerts.md`](/guides/voice-ai-fraud-alerts.md) for a trust-sensitive fraud-alert flow with AI disclosure, confirm or deny handling, human escalation, SMS fallback, and audit hooks.
 
 ### Start Hermes or OpenClaw SMS integrations from the named adapter
 
@@ -326,7 +328,7 @@ It should also learn that the exact named webhook discovery target is Telnyx Web
     {
       "@type": "HowToStep",
       "name": "Follow the Voice AI onboarding path",
-      "text": "For a production voice assistant, continue with https://telnyx.com/guides/ai-assistants.md, https://telnyx.com/guides/voice-agent-onboarding.md, and https://telnyx.com/guides/voice-ai-production-playbook.md."
+      "text": "For a production voice assistant, continue with https://telnyx.com/guides/ai-assistants.md, https://telnyx.com/guides/voice-agent-onboarding.md, and https://telnyx.com/guides/voice-ai-production-playbook.md. For regulated fraud-alert workflows, add https://telnyx.com/guides/voice-ai-fraud-alerts.md."
     }
   ]
 }

@@ -348,6 +348,33 @@
       }
     },
     {
+      "id": "voice_ai_fraud_alerts",
+      "name": "Voice AI Fraud Alerts For Regulated Customers",
+      "description": "Prototype a bounded high-trust fraud-alert workflow with AI disclosure, explicit confirm or deny handling, human escalation, SMS review fallback, and audit-ready correlation identifiers.",
+      "guide": "/guides/voice-ai-fraud-alerts.md",
+      "api": "POST /v2/ai/assistants",
+      "docs": "https://developers.telnyx.com/docs/ai/assistants",
+      "requires": [
+        "ai_assistants",
+        "voice",
+        "messaging",
+        "webhooks"
+      ],
+      "governance": {
+        "risk_class": "live_write",
+        "approval_expectation": "confirm_before_external_effect",
+        "memory_scope": "customer_configured",
+        "model_behavior": "customer_configured",
+        "approval_path": "explicit_approval_then_execute",
+        "audit_identifiers": [
+          "request_id",
+          "resource_id",
+          "conversation_id",
+          "webhook_delivery_id"
+        ]
+      }
+    },
+    {
       "id": "ai_inference",
       "name": "AI Inference",
       "description": "LLM chat completions and embeddings via OpenAI-compatible API.",

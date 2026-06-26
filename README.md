@@ -244,6 +244,7 @@ For assistant-first discovery, use the CLI as the bootstrap path and the guides 
 - [`/guides/voice-agent-onboarding.md`](/guides/voice-agent-onboarding.md) shows the first live voice-agent path, including the assistant answer webhook.
 - [`/guides/voice-ai-production-playbook.md`](/guides/voice-ai-production-playbook.md) packages the first-party production rollout path around support containment, escalation, observability, and smallest-live verification.
 - [`/guides/ai-receptionist-missed-call.md`](/guides/ai-receptionist-missed-call.md) shows a bounded SMB receptionist flow for missed-call capture, live transfer, and SMS callback confirmation.
+- [`/guides/voice-ai-fraud-alerts.md`](/guides/voice-ai-fraud-alerts.md) shows a regulated-market fraud-alert flow with AI disclosure, explicit confirm or deny handling, human escalation, SMS review fallback, and audit hooks.
 - `telnyx-agent setup-ai` stays bootstrap-oriented in the README because the CLI should optimize for a working account-level setup, not silently promise that one hosted model is available on every account.
 - `telnyx-agent setup-ai --preset appointment-reminders|support-handoff|lead-recovery` is the fastest cold-start path when you want a callable starter without authoring the full voice prompt first.
 
