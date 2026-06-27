@@ -30,6 +30,7 @@ opencode plugin -g @telnyx/opencode
 - persists the enabled-model allowlist in `~/.config/opencode/telnyx-models.json`
 - lets users enable additional Telnyx-hosted models through the `/telnyx` TUI command
 - strips `maxOutputTokens` before requests so Telnyx accepts tool-enabled runs
+- excludes known-unsafe hosted models from plugin registration by default; currently `zai-org/GLM-5.2` is withheld because streamed tool-call arguments may be corrupted in OpenCode workflows
 
 ## Authenticate
 
@@ -99,6 +100,12 @@ Path:
 
 - `~/.config/opencode/telnyx-models.json`
 - override with `OPENCODE_TELNYX_MODELS_PATH`
+
+Known-unsafe models are still withheld from registration even if they appear in the saved allowlist. For internal validation only, set:
+
+```bash
+export OPENCODE_TELNYX_INCLUDE_UNSAFE_MODELS=1
+```
 
 ## TUI model manager
 
@@ -172,6 +179,10 @@ or set `TELNYX_API_KEY` and retry.
 ### A small-context model fails while larger models work
 
 Some smaller models cannot fit OpenCode's full tool list and system prompt into their effective prompt budget. This is model-specific, not a plugin auth issue.
+
+### `zai-org/GLM-5.2` does not appear in `/telnyx`
+
+As of June 27, 2026, the plugin excludes `zai-org/GLM-5.2` by default because we have an open compatibility investigation for corrupted streamed tool-call arguments. Set `OPENCODE_TELNYX_INCLUDE_UNSAFE_MODELS=1` only if you are intentionally validating that failure mode.
 
 ### `/telnyx` does not appear
 
