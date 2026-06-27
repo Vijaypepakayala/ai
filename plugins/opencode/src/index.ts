@@ -2,13 +2,13 @@ import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import type { Plugin } from "@opencode-ai/plugin"
-import { DEFAULT_ENABLED_MODELS, THINKING_CAPABLE_MODELS, loadEnabledModels, persistEnabledModels } from "./models-config"
+import { DEFAULT_ENABLED_MODELS, loadEnabledModels, persistEnabledModels } from "./models-config"
+import { isTelnyxHostedModel, modelConfig } from "./model-filter"
 
 const PROVIDER_ID = "telnyx"
 const API_BASE = "https://api.telnyx.com/v2/ai"
 const OPENAI_BASE = `${API_BASE}/openai`
 const MODELS_URL = `${API_BASE}/models`
-const TEXT_TASKS = new Set(["text-generation", "text generation"])
 
 const sessionVariants = new Map<string, string>()
 
@@ -41,55 +41,6 @@ function apiKey(): string | undefined {
   return process.env.TELNYX_API_KEY ?? storedApiKey()
 }
 
-function isTelnyxHostedModel(model: JsonObject): boolean {
-  return typeof model.owned_by === "string" && model.owned_by.toLowerCase() === "telnyx"
-}
-
-function modelConfig(model: JsonObject): [string, JsonObject] | undefined {
-  const id = typeof model.id === "string" ? model.id : undefined
-  const task = typeof model.task === "string" ? model.task : undefined
-  const context = typeof model.context_length === "number" ? model.context_length : undefined
-  if (!id || !task || context === undefined) return undefined
-  if (!TEXT_TASKS.has(task)) return undefined
-  if (!isTelnyxHostedModel(model)) return undefined
-
-  const shortId = id.includes("/") ? id.split("/").pop() ?? id : id
-  const vision = model.is_vision_supported === true
-  const output = typeof model.max_output_length === "number" ? model.max_output_length : 16384
-  const thinking = THINKING_CAPABLE_MODELS.has(id)
-
-  const base: JsonObject = {
-    name: shortId,
-    limit: { context, output },
-    ...(vision
-      ? {
-          attachment: true,
-          modalities: {
-            input: ["text", "image"],
-            output: ["text"],
-          },
-        }
-      : {}),
-  }
-
-  if (thinking) {
-    base.reasoning = true
-    base.options = { enable_thinking: true }
-    base.variants = {
-      thinking: { enable_thinking: true },
-      "no-thinking": { enable_thinking: false },
-      max: { disabled: true },
-      high: { disabled: true },
-      medium: { disabled: true },
-      low: { disabled: true },
-      fast: { disabled: true },
-      none: { disabled: true },
-    }
-  }
-
-  return [id, base]
-}
-
 async function fetchModels(key: string | undefined, enabledModelIDs: readonly string[]): Promise<Record<string, JsonObject>> {
   if (!key) return {}
 
@@ -106,7 +57,7 @@ async function fetchModels(key: string | undefined, enabledModelIDs: readonly st
 
     for (const item of data) {
       if (!isObject(item)) continue
-      const parsed = modelConfig(item)
+      const parsed = modelConfig(item, process.env)
       if (!parsed) continue
       availableModels.set(parsed[0], parsed[1])
     }
@@ -136,7 +87,7 @@ async function fetchAllHostedModelIDs(key: string | undefined): Promise<string[]
 
     for (const item of data) {
       if (!isObject(item)) continue
-      const parsed = modelConfig(item)
+      const parsed = modelConfig(item, process.env)
       if (!parsed) continue
       modelIDs.push(parsed[0])
     }

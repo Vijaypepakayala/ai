@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { spawnSync } from "node:child_process"
 import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { describeModelCompatibility, isTelnyxHostedModel, modelConfig, unsafeModelsOverrideEnvVar } from "../src/model-filter.js"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT_DIR = resolve(__dirname, "..")
@@ -30,6 +31,7 @@ interface ModelDescriptor {
   organization: string | undefined
   recommendedForAssistants: boolean
   requiresExternalKey: boolean
+  knownIssue?: string
 }
 
 interface ProbeResult {
@@ -52,10 +54,6 @@ interface ModelResult {
 
 function isObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null
-}
-
-function isTelnyxHostedModel(model: JsonObject): boolean {
-  return typeof model.owned_by === "string" && model.owned_by.toLowerCase() === TELNYX_OWNER
 }
 
 function shouldIncludeExternalModels(): boolean {
@@ -172,6 +170,11 @@ async function fetchModels(apiKey: string): Promise<ModelDescriptor[]> {
     if (!id || !task) return []
     if (!TEXT_TASKS.has(task)) return []
 
+    const compatibility = describeModelCompatibility(item, process.env)
+    const hostedByTelnyx = isTelnyxHostedModel(item)
+    const supportedConfig = modelConfig(item, process.env)
+    if (hostedByTelnyx && !supportedConfig && !compatibility) return []
+
     return [{
       id,
       providerModel: `${PROVIDER_ID}/${id}`,
@@ -180,7 +183,8 @@ async function fetchModels(apiKey: string): Promise<ModelDescriptor[]> {
       ownedBy,
       organization,
       recommendedForAssistants,
-      requiresExternalKey: !isTelnyxHostedModel(item),
+      requiresExternalKey: !hostedByTelnyx,
+      knownIssue: compatibility?.reason,
     }]
   }).sort((left, right) => left.id.localeCompare(right.id))
 }
@@ -424,6 +428,19 @@ async function main(): Promise<void> {
       console.log(`Running probes for ${model.providerModel}...`)
       if (model.requiresExternalKey) {
         const note = `requires external provider key (${model.ownedBy ?? "unknown"}) via api_key_ref/api_key and is filtered from plugin registration`
+        results.push({
+          modelId: model.id,
+          providerModel: model.providerModel,
+          context: model.context,
+          vision: model.vision,
+          simple: skippedProbe("simple", note),
+          tool: skippedProbe("tool", note),
+        })
+        continue
+      }
+
+      if (model.knownIssue) {
+        const note = `known incompatibility: ${model.knownIssue}; set ${unsafeModelsOverrideEnvVar()}=1 to include for internal validation`
         results.push({
           modelId: model.id,
           providerModel: model.providerModel,
