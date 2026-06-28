@@ -1,8 +1,14 @@
+from __future__ import annotations
+
 import os
 import sys
 from pathlib import Path
 
 import pytest
+
+
+def _runtime_supports_hermes() -> bool:
+    return sys.version_info >= (3, 10)
 
 
 def _candidate_roots(root: Path) -> list[Path]:
@@ -36,6 +42,13 @@ def find_hermes_root() -> Path | None:
 
 def ensure_hermes_on_path() -> Path:
     """Add the Hermes checkout to sys.path or skip with setup guidance."""
+    if not _runtime_supports_hermes():
+        pytest.skip(
+            "Hermes-dependent tests require Python 3.10+ because Hermes uses "
+            "modern typing syntax. Re-run with `uv run --python 3.12 ...` or "
+            "another Python 3.10+ interpreter.",
+            allow_module_level=True,
+        )
     hermes_root = find_hermes_root()
     if hermes_root is None:
         pytest.skip(

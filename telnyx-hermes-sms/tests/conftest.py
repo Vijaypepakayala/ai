@@ -1,6 +1,6 @@
 import sys
 
-from tests._hermes import find_hermes_root
+from tests._hermes import _runtime_supports_hermes, find_hermes_root
 
 
 HERMES_ROOT = find_hermes_root()
@@ -10,9 +10,11 @@ if HERMES_ROOT is not None and str(HERMES_ROOT) not in sys.path:
 
 def _ensure_telnyx_sms_registered():
     """Pre-register telnyx_sms so Platform('telnyx_sms') works in all tests."""
+    if not _runtime_supports_hermes():
+        return
     try:
         from gateway.platform_registry import PlatformEntry, platform_registry
-    except (ImportError, ModuleNotFoundError):
+    except (ImportError, ModuleNotFoundError, TypeError):
         return
 
     if not platform_registry.is_registered("telnyx_sms"):

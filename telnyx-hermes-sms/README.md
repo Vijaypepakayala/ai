@@ -49,7 +49,12 @@ Requirements:
 - `uv` is recommended for reproducible local test dependencies.
 
 Hermes-dependent test modules skip with an explicit setup message when that
-checkout is missing. Static tests still run without Hermes.
+checkout is missing. Static tests still run without Hermes, and the bootstrap
+helper now imports cleanly even if a machine's default `python3` is still 3.9,
+so contributors reach the skip guidance instead of a `Path | None` annotation
+crash. If you do have a Hermes checkout but you launch pytest with Python 3.9,
+Hermes-dependent tests skip with a Python-version message instead of importing
+Hermes and failing during collection.
 
 ```bash
 git clone https://github.com/team-telnyx/telnyx-hermes-sms.git
