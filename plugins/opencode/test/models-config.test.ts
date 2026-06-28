@@ -8,7 +8,7 @@ import {
   MODELS_CONFIG_VERSION,
   loadEnabledModels,
   persistEnabledModels,
-} from "../src/models-config.js"
+} from "../src/models-config.ts"
 
 describe("models-config", () => {
   let originalModelsPath: string | undefined

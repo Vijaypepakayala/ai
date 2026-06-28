@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { spawnSync } from "node:child_process"
 import { dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { describeModelCompatibility, isTelnyxHostedModel, modelConfig, unsafeModelsOverrideEnvVar } from "../src/model-filter.js"
+import { describeModelCompatibility, isTelnyxHostedModel, modelConfig, unsafeModelsOverrideEnvVar } from "../src/model-filter.ts"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT_DIR = resolve(__dirname, "..")
