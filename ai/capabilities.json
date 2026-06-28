@@ -49,6 +49,7 @@
       "quickstart_url": "https://developers.telnyx.com/docs/quickstart",
       "openapi_url": "https://developers.telnyx.com/openapi.json",
       "pricing_json": "https://telnyx.com/ai/pricing.json",
+      "rate_limits_json": "https://telnyx.com/ai/rate-limits.json",
       "agent_skills": "https://telnyx.com/.well-known/agent-skills/index.json",
       "mcp_server": "https://api.telnyx.com/v2/mcp",
       "agent_card": "https://telnyx.com/.well-known/agent-card.json",
@@ -181,6 +182,18 @@
     "constraints": {
       "grpc_supported": false,
       "rate_limits_url": "https://telnyx.com/ai/rate-limits.json"
+    },
+    "async_contracts": {
+      "number_orders": {
+        "create": "POST https://api.telnyx.com/v2/number_orders",
+        "poll": "GET https://api.telnyx.com/v2/number_orders/{id}",
+        "resource_id_field": "data.id",
+        "terminal_statuses": [
+          "success",
+          "failed"
+        ],
+        "retry_after_header": "Retry-After"
+      }
     },
     "detail_endpoints": {
       "compliance": "https://telnyx.com/ai/compliance.json",

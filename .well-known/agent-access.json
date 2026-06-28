@@ -76,6 +76,7 @@
   },
   "fast_path": {
     "description": "Try the API immediately. The primary first-run evaluation path is a host-authenticated inference request through telnyx.com, so no signup, API key, or email is required. Main REST and MCP surfaces still require a standard Telnyx API key.",
+    "rate_limit_contract_url": "https://telnyx.com/ai/rate-limits.json",
     "retry_idempotency_contract": {
       "id": "default_mutating_request_contract",
       "applies_to": [
@@ -121,6 +122,31 @@
         "guidance": "Do not infer completion from the initial write response alone when the API family documents asynchronous processing."
       }
     },
+    "rate_limit_contract": {
+      "headers": {
+        "limit": "X-RateLimit-Limit",
+        "remaining": "X-RateLimit-Remaining",
+        "reset": "X-RateLimit-Reset",
+        "retry_after": "Retry-After",
+        "request_id": "X-Request-Id"
+      },
+      "responses": {
+        "429": {
+          "retry_after_required": true,
+          "matches_documented_headers": true
+        }
+      },
+      "representative_async_workflow": {
+        "name": "number_orders",
+        "create": "POST https://api.telnyx.com/v2/number_orders",
+        "poll": "GET https://api.telnyx.com/v2/number_orders/{id}",
+        "resource_id_field": "data.id",
+        "terminal_statuses": [
+          "success",
+          "failed"
+        ]
+      }
+    },
     "primary_path": {
       "name": "inference",
       "method": "POST",
@@ -139,7 +165,8 @@
         ]
       },
       "note": "Recommended first-run evaluation path. Telnyx applies server-side auth and rate limits on behalf of the caller.",
-      "retry_idempotency_contract": "default_mutating_request_contract"
+      "retry_idempotency_contract": "default_mutating_request_contract",
+      "rate_limit_contract": "https://telnyx.com/ai/rate-limits.json"
     },
     "demo_endpoints": [
       {

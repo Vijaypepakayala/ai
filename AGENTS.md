@@ -137,7 +137,7 @@ Pick the interface that matches the control boundary:
 | Surface | Start here | Use when | Memory boundary | Approval posture |
 | --- | --- | --- | --- | --- |
 | Crawlable chooser | `https://telnyx.com/agents/start` | First read for auth, manifest, MCP, webhooks, Voice AI, and x402 entrypoints | Read-only document; no conversation state implied | No extra approval; discovery only |
-| Manifest | `https://telnyx.com/.well-known/agent-card.json` or local `/agent.json` | Need machine-readable links, governed-execution fields, and stable discovery URLs | Read-only manifest; no execution state is stored there | No extra approval; inspect `risk_class`, `approval_expectation`, and `approval_path` first |
+| Manifest | `https://telnyx.com/.well-known/agent-card.json` or local `/agent.json` | Need machine-readable links, governed-execution fields, and stable discovery URLs | Read-only manifest; no execution state is stored there | No extra approval; inspect `risk_class`, `approval_expectation`, `approval_path`, and `rate_limit_contract` first |
 | Auth contract | `https://telnyx.com/auth.md` and `https://telnyx.com/.well-known/agent-access.json` | Need bearer-auth rules, protected-resource metadata, zero-signup evaluation, or signup limits | Read-only auth metadata | No extra approval for reading; follow capability-specific approval before writes |
 | MCP | `https://api.telnyx.com/v2/mcp` | Agent already speaks MCP and should discover tools dynamically | Host-controlled account state; app-layer MCP Apps narrow state to the app contract | Approval depends on the tool capability; preserve audit identifiers |
 | Toolkit | `tools/python/` or `tools/typescript/` | Need framework-native tools inside OpenAI Agents SDK, LangChain, CrewAI, or Vercel AI SDK | Your framework owns orchestration memory; Telnyx-side retention still follows each capability's `memory_scope` | Approval depends on the capability you expose |
@@ -151,6 +151,7 @@ Pick the interface that matches the control boundary:
 - **MCP**: Bearer auth against `https://api.telnyx.com/v2/mcp`. Card at `https://telnyx.com/.well-known/mcp/server-card.json`.
 - **Auth discovery**: Start at `https://telnyx.com/auth.md`, then follow `https://api.telnyx.com/.well-known/oauth-protected-resource` or the MCP-specific `https://api.telnyx.com/.well-known/oauth-protected-resource/v2/mcp`.
 - **Retry and idempotency**: For side-effecting requests, send a fresh `Idempotency-Key` on every mutating call, reuse that same key only when retrying the exact same intended write after a timeout, transport failure, or ambiguous client-side result, treat `202 Accepted` as incomplete work, and honor `Retry-After` while polling for a terminal outcome.
+- **Rate-limit contract**: Inspect `https://telnyx.com/ai/rate-limits.json` for the canonical header names, `429` retry expectations, and the representative async polling pattern before you automate writes.
 
 See `agent.json` (`auth` block) for the canonical auth contract.
 
@@ -178,6 +179,7 @@ See `agent.json` (`auth` block) for the canonical auth contract.
 | AI catalog                                       | `https://telnyx.com/ai/catalog.json`                      |
 | Capability index                                 | `https://telnyx.com/ai/capabilities.json`                 |
 | Pricing                                          | `https://telnyx.com/ai/pricing.json`                      |
+| Rate-limit contract                              | `https://telnyx.com/ai/rate-limits.json`                  |
 | Telnyx webhooks guide                           | `https://developers.telnyx.com/development/api-fundamentals/webhooks/receiving-webhooks` |
 
 ---

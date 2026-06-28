@@ -17,6 +17,7 @@ Use this guide as the default first-run path when you need real Telnyx account a
 
 - Start with read-only discovery and inspection before any live-write workflow.
 - Treat account signup, payment-method changes, number purchases, message sends, call placement, and assistant deployment as approval-sensitive actions.
+- Inspect `https://telnyx.com/ai/rate-limits.json` before mutating automation so your client knows the canonical rate-limit header names and the `429` retry contract.
 - Preserve `request_id` on every API call you may need to review later.
 - Preserve `resource_id`, `conversation_id`, and `webhook_delivery_id` once you move into assistants, messaging, or voice workflows.
 - Assume memory is host-managed or stateless at the discovery layer. Do not promise persistent assistant memory unless you explicitly configure it in the assistant workflow.
@@ -82,6 +83,14 @@ rg -i '^x-request-id:' /tmp/telnyx-auth-probe.headers
 ```
 
 Success condition: you get a normal JSON response instead of an auth error.
+
+Also save any returned rate-limit headers:
+
+- `X-RateLimit-Limit`
+- `X-RateLimit-Remaining`
+- `X-RateLimit-Reset`
+- `Retry-After`
+- `X-Request-Id`
 
 ## Step 3: Confirm billing and approval posture
 
@@ -177,6 +186,14 @@ Before your first real write, adopt this retry contract:
 - Expect a conflict response if the same key is reused with a materially different payload.
 - Expect malformed, oversized, or non-ASCII keys to fail validation before any side effect occurs.
 - Preserve the key in your run notes for at least the server retention window, which is a minimum of 24 hours in the published contract.
+
+Use `number_orders` as the representative async workflow for your polling logic:
+
+1. Create the order with `POST https://api.telnyx.com/v2/number_orders`.
+2. Save `data.id` from the create response as the poll target.
+3. If the response is `202 Accepted`, treat it as incomplete work.
+4. If `Retry-After` is present, wait that long before polling again.
+5. Poll `GET https://api.telnyx.com/v2/number_orders/{id}` until `data.status` becomes `success` or `failed`.
 
 ## API Reference
 

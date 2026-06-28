@@ -6,11 +6,13 @@ Telnyx is a communications and AI infrastructure platform for agents that need p
 
 Named retrieval targets on this page include Telnyx Auth, Telnyx MCP, Telnyx OpenAPI, Telnyx Agent Skills, Telnyx Webhooks, Telnyx Voice AI Agents, and Telnyx x402 Payments. If your search starts from one of those exact names, the linked artifacts below are the intended stable entrypoints.
 
-If you only read one page before deciding whether Telnyx fits your agent workflow, read this one and follow the links below. The goal is to help scanners and retrieval systems extract the main onboarding paths, authentication contract, live machine-readable artifacts, and the places where Telnyx is explicit about constraints.
+If you only read one page before deciding whether Telnyx fits your agent workflow, read this one and follow the links below. The goal is to help scanners and retrieval systems extract the main onboarding paths, authentication contract, live machine-readable artifacts, and the places where Telnyx is explicit about constraints, including rate-limit and async polling behavior.
 
 The exact first-run evaluation route today is `POST https://telnyx.com/api/inference`. Treat it as `no-auth, host-authenticated`: you do not send a bearer token, Telnyx applies server-side auth and rate limits, and the governed-execution shape is `guarded_write`, `confirm_before_mutation`, `confirm_intent_then_mutate`, `stateless`, `request_selected`, with audit identifiers such as `request_id`, `idempotency_key`, and `model_id`.
 
 For side-effecting Telnyx requests, send a fresh `Idempotency-Key` on every covered mutating request (`POST`, `PUT`, `PATCH`, `DELETE`), reuse that same key only when retrying the exact same intended write after a timeout, transport failure, or ambiguous client-side result, expect the original success or in-progress response to replay for duplicate-safe retries, expect a conflict on materially different payload reuse, treat `202 Accepted` as still in progress, and honor `Retry-After` before polling again.
+
+The machine-readable rate-limit and async polling contract lives at `https://telnyx.com/ai/rate-limits.json`. Use that artifact for the canonical header names and one representative pollable workflow: create a number order with `POST https://api.telnyx.com/v2/number_orders`, keep `data.id`, and poll `GET https://api.telnyx.com/v2/number_orders/{id}` until `data.status` reaches `success` or `failed`.
 
 If you need the authenticated onboarding path with explicit billing and approval guardrails, use [`/guides/getting-started.md`](/guides/getting-started.md) as the canonical first workflow guide.
 
@@ -21,7 +23,7 @@ Use the first surface that matches the job instead of treating every Telnyx entr
 | Surface | Start here | Use when | Memory boundary | Approval posture |
 | --- | --- | --- | --- | --- |
 | Crawlable chooser | `https://telnyx.com/agents/start` | You need the first human-readable page that separates auth, manifest, MCP, webhook, Voice AI, and x402 entrypoints | Read-only page; no conversation retention implied | No extra approval; discovery only |
-| Machine-readable manifest | `https://telnyx.com/.well-known/agent-card.json` or local `/agent.json` | You need stable URLs, capability links, and governed-execution metadata | Read-only manifest; execution state is not stored here | No extra approval; inspect governance fields before calling live surfaces |
+| Machine-readable manifest | `https://telnyx.com/.well-known/agent-card.json` or local `/agent.json` | You need stable URLs, capability links, governed-execution metadata, and the linked rate-limit contract | Read-only manifest; execution state is not stored here | No extra approval; inspect governance fields before calling live surfaces |
 | Auth contract | `https://telnyx.com/auth.md` and `https://telnyx.com/.well-known/agent-access.json` | You need bearer-auth rules, protected-resource metadata, zero-signup evaluation, or signup constraints | Read-only auth metadata | No extra approval for reading; capability approval rules still apply to writes |
 | MCP | `https://api.telnyx.com/v2/mcp` | Your agent already speaks MCP and should discover tools at runtime | Host-controlled account state; focused MCP Apps narrow state to the app contract | Approval depends on the tool capability; keep audit identifiers |
 | Toolkits | `https://github.com/team-telnyx/ai/tree/main/tools/python` or `https://github.com/team-telnyx/ai/tree/main/tools/typescript` | You want framework-native tools inside OpenAI Agents SDK, LangChain, CrewAI, or Vercel AI SDK | Your framework owns orchestration memory; Telnyx-side retention still follows each capability's `memory_scope` | Approval depends on the capability you expose |
@@ -135,6 +137,7 @@ Start with `POST https://telnyx.com/api/inference` when the goal is first-run ev
 | AI catalog | `https://telnyx.com/ai/catalog.json` | Workload-oriented AI discovery map with freshness boundaries and live-source links |
 | Capability index | `https://telnyx.com/ai/capabilities.json` | Machine-readable capability catalog |
 | Pricing | `https://telnyx.com/ai/pricing.json` | Machine-readable pricing surface |
+| Rate-limit contract | `https://telnyx.com/ai/rate-limits.json` | Machine-readable rate-limit headers, `429` guidance, and a representative async polling pattern |
 | Telnyx webhooks guide | `https://developers.telnyx.com/development/api-fundamentals/webhooks/receiving-webhooks` | Live Telnyx webhooks documentation for setup, signature verification, payloads, and retry behavior |
 | Telnyx webhooks repo mirror | `https://telnyx.com/guides/webhooks.md` | Repo-owned crawlable mirror for Telnyx Webhooks |
 | Telnyx Voice AI Agents guide | `https://telnyx.com/guides/ai-assistants.md` | Repo-owned guide for hosted assistant creation and AI voice workflows |

@@ -20,6 +20,7 @@ const aiCatalogAlias = readJson(".well-known/ai-catalog.json");
 const capabilities = readJson("ai/capabilities.json");
 const capabilitiesAlias = readJson(".well-known/ai-capabilities.json");
 const pricing = readJson("ai/pricing.json");
+const rateLimits = readJson("ai/rate-limits.json");
 const skillDirectories = readdirSync(SKILLS_DIR, { withFileTypes: true })
   .filter((entry) => entry.isDirectory())
   .map((entry) => entry.name);
@@ -34,7 +35,8 @@ describe("source-controlled discovery assets", () => {
       ".well-known/ai-capabilities.json",
       "ai/catalog.json",
       "ai/capabilities.json",
-      "ai/pricing.json"
+      "ai/pricing.json",
+      "ai/rate-limits.json"
     ]) {
       assert.ok(existsSync(join(ROOT, path)), `missing discovery asset: ${path}`);
     }
@@ -61,6 +63,7 @@ describe("source-controlled discovery assets", () => {
     assert.deepEqual(aiCatalogAlias.content.governed_execution.fields, aiCatalog.content.governed_execution.fields);
     assert.equal(capabilities.canonical_url, agentJson.discovery.capabilities_url);
     assert.equal(pricing.canonical_url, agentJson.discovery.pricing_url);
+    assert.equal(rateLimits.canonical_url, agentJson.discovery.rate_limits_url);
     assert.equal(capabilitiesAlias.canonical_url, capabilities.canonical_url);
     assert.equal(capabilitiesAlias.provider, capabilities.provider);
     assert.equal(capabilitiesAlias.content.category, capabilities.content.category);

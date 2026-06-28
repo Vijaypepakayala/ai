@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0.0",
+  "provider": "telnyx",
+  "canonical_url": "https://telnyx.com/ai/rate-limits.json",
+  "updated_at": "2026-06-28T00:00:00Z",
+  "content": {
+    "provider": "telnyx",
+    "category": "agent_runtime_contract",
+    "default_headers": {
+      "limit": "X-RateLimit-Limit",
+      "remaining": "X-RateLimit-Remaining",
+      "reset": "X-RateLimit-Reset",
+      "retry_after": "Retry-After",
+      "request_id": "X-Request-Id"
+    },
+    "responses": {
+      "429": {
+        "retry_after_required": true,
+        "matches_documented_headers": true,
+        "guidance": "Honor Retry-After before retrying. Use the documented rate-limit headers for remaining budget and reset timing instead of guessing."
+      }
+    },
+    "surfaces": [
+      {
+        "name": "host_authenticated_inference_demo",
+        "method": "POST",
+        "url": "https://telnyx.com/api/inference",
+        "auth_mode": "no_auth_host_authenticated",
+        "header_contract": "default"
+      },
+      {
+        "name": "authenticated_rest_v2",
+        "method": "ANY",
+        "url": "https://api.telnyx.com/v2",
+        "auth_mode": "bearer_api_key",
+        "header_contract": "default"
+      }
+    ],
+    "async_job_handoff": {
+      "polling_signals": [
+        "Location",
+        "resource_id",
+        "job_id",
+        "documented_resource_pattern"
+      ],
+      "representative_workflow": {
+        "name": "number_orders",
+        "create": "POST https://api.telnyx.com/v2/number_orders",
+        "poll": "GET https://api.telnyx.com/v2/number_orders/{id}",
+        "resource_id_field": "data.id",
+        "terminal_statuses": [
+          "success",
+          "failed"
+        ],
+        "retry_after_header": "Retry-After",
+        "notes": "If the create response returns the order identifier before provisioning is complete, keep polling the order resource until it reaches a terminal status."
+      }
+    }
+  }
+}

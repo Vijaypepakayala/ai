@@ -21,6 +21,7 @@ const agentCard = JSON.parse(read(".well-known/agent-card.json"));
 const agentAccess = JSON.parse(read(".well-known/agent-access.json"));
 const capabilitiesJson = JSON.parse(read("ai/capabilities.json"));
 const pricingJson = JSON.parse(read("ai/pricing.json"));
+const rateLimitsJson = JSON.parse(read("ai/rate-limits.json"));
 const capabilityById = new Map(
   agentJson.capabilities.map((capability: { id: string }) => [capability.id, capability])
 );
@@ -61,6 +62,7 @@ const canonicalDiscovery = {
   ai_catalog_url: "https://telnyx.com/ai/catalog.json",
   capabilities_url: "https://telnyx.com/ai/capabilities.json",
   pricing_url: "https://telnyx.com/ai/pricing.json",
+  rate_limits_url: "https://telnyx.com/ai/rate-limits.json",
   webhooks_guide: "https://developers.telnyx.com/development/api-fundamentals/webhooks/receiving-webhooks",
 } as const;
 
@@ -116,6 +118,19 @@ describe("agent discovery surfaces", () => {
     assert.equal(agentJson.first_run_paths[0].retry_idempotency_contract, "default_mutating_request_contract");
   });
 
+  it("keeps the machine-readable rate-limit and async contract aligned across public surfaces", () => {
+    assert.deepEqual(agentCard.rate_limit_contract, agentJson.rate_limit_contract);
+    assert.equal(agentAccess.fast_path.rate_limit_contract_url, canonicalDiscovery.rate_limits_url);
+    assert.equal(agentAccess.fast_path.primary_path.rate_limit_contract, canonicalDiscovery.rate_limits_url);
+    assert.equal(rateLimitsJson.canonical_url, canonicalDiscovery.rate_limits_url);
+    assert.deepEqual(rateLimitsJson.content.default_headers, agentJson.rate_limit_contract.headers);
+    assert.deepEqual(
+      rateLimitsJson.content.async_job_handoff.representative_workflow.terminal_statuses,
+      agentJson.rate_limit_contract.async_job_handoff.representative_workflow.terminal_statuses
+    );
+    assert.equal(capabilitiesJson.content.discovery.rate_limits_json, canonicalDiscovery.rate_limits_url);
+  });
+
   it("public discovery JSON mirrors expose the same governed-execution contract", () => {
     assert.deepEqual(agentCard.governed_execution.fields, agentJson.governed_execution.fields);
     assert.deepEqual(agentAccess.governed_execution.fields, agentJson.governed_execution.fields);
@@ -140,6 +155,7 @@ describe("agent discovery surfaces", () => {
       "ai/catalog.json",
       "ai/capabilities.json",
       "ai/pricing.json",
+      "ai/rate-limits.json",
       "llms.txt"
     ]) {
       assert.equal(existsSync(join(ROOT, path)), true, `${path} is missing`);
@@ -164,6 +180,9 @@ describe("agent discovery surfaces", () => {
     assert.equal(pricingJson.canonical_url, canonicalDiscovery.pricing_url);
     assert.equal(pricingJson.provider, "telnyx");
     assert.equal(pricingJson.content.provider, "telnyx");
+    assert.equal(rateLimitsJson.canonical_url, canonicalDiscovery.rate_limits_url);
+    assert.equal(rateLimitsJson.provider, "telnyx");
+    assert.equal(rateLimitsJson.content.provider, "telnyx");
   });
 
   it("agent.json auth matches the discovery access surface", () => {
@@ -195,6 +214,7 @@ describe("agent discovery surfaces", () => {
     assert.equal(agentJson.links.mcp_apps_proof_app, canonicalDiscovery.mcp_apps_proof_app_url);
     assert.equal(agentJson.links.ai_catalog, canonicalDiscovery.ai_catalog_url);
     assert.equal(agentJson.links.capabilities, canonicalDiscovery.capabilities_url);
+    assert.equal(agentJson.links.rate_limits, canonicalDiscovery.rate_limits_url);
     assert.equal(agentJson.links.pricing, canonicalDiscovery.pricing_url);
     assert.equal(agentJson.links.webhooks_guide, canonicalDiscovery.webhooks_guide);
   });

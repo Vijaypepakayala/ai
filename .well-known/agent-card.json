@@ -121,7 +121,8 @@
     "webhooks_guide": "https://developers.telnyx.com/development/api-fundamentals/webhooks/receiving-webhooks",
     "webhooks_repo_mirror": "https://telnyx.com/guides/webhooks.md",
     "x402_payments_guide": "https://telnyx.com/guides/x402-payments.md",
-    "ai_catalog": "https://telnyx.com/ai/catalog.json"
+    "ai_catalog": "https://telnyx.com/ai/catalog.json",
+    "rate_limits": "https://telnyx.com/ai/rate-limits.json"
   },
   "gettingStarted": {
     "summary": "Start at the text-first discovery surfaces, then choose the zero-signup inference path or the authenticated API-key path depending on whether you need production resources.",
@@ -129,6 +130,7 @@
       "Read https://telnyx.com/agents/start",
       "Read https://telnyx.com/auth.md",
       "Inspect https://telnyx.com/.well-known/agent-access.json",
+      "Inspect https://telnyx.com/ai/rate-limits.json for canonical rate-limit headers and Retry-After behavior",
       "Use POST https://telnyx.com/api/inference for a first no-signup evaluation call, or follow https://telnyx.com/guides/getting-started.md for authenticated onboarding with billing and approval guardrails",
       "For side-effecting requests, send a fresh Idempotency-Key per mutating request, reuse it only for the exact same retried write, and treat 202 plus Retry-After as an in-progress polling contract",
       "For Voice AI assistants, continue with https://telnyx.com/guides/ai-assistants.md and https://telnyx.com/guides/voice-agent-onboarding.md"
@@ -274,6 +276,42 @@
       "poll_to_terminal_state": true,
       "honor_retry_after": true,
       "guidance": "Do not infer completion from the initial write response alone when the API family documents asynchronous processing."
+    }
+  },
+  "rate_limit_contract": {
+    "discovery_url": "https://telnyx.com/ai/rate-limits.json",
+    "headers": {
+      "limit": "X-RateLimit-Limit",
+      "remaining": "X-RateLimit-Remaining",
+      "reset": "X-RateLimit-Reset",
+      "retry_after": "Retry-After",
+      "request_id": "X-Request-Id"
+    },
+    "responses": {
+      "429": {
+        "retry_after_required": true,
+        "matches_documented_headers": true,
+        "guidance": "Honor Retry-After before retrying. Treat the documented rate-limit headers as the source of truth for remaining budget and reset timing."
+      }
+    },
+    "async_job_handoff": {
+      "polling_signals": [
+        "Location",
+        "resource_id",
+        "job_id",
+        "documented_resource_pattern"
+      ],
+      "representative_workflow": {
+        "name": "number_orders",
+        "create": "POST https://api.telnyx.com/v2/number_orders",
+        "poll": "GET https://api.telnyx.com/v2/number_orders/{id}",
+        "resource_id_field": "data.id",
+        "terminal_statuses": [
+          "success",
+          "failed"
+        ],
+        "retry_after_header": "Retry-After"
+      }
     }
   },
   "discovery_governance": {

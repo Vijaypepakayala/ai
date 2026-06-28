@@ -25,6 +25,7 @@ Start discovery from the public agent surfaces before writing code:
 curl https://telnyx.com/.well-known/agent-card.json
 curl https://telnyx.com/.well-known/agent-skills/index.json
 curl https://telnyx.com/auth.md
+curl https://telnyx.com/ai/rate-limits.json
 ```
 
 Then follow this order:
@@ -112,6 +113,7 @@ For direct REST writes outside the governed app boundary, follow this contract:
 
 - Generate and send a fresh `Idempotency-Key` on every mutating request that creates, confirms, retries, or otherwise changes state.
 - Reuse that same key only when retrying the exact same intended write after a timeout, transport failure, or ambiguous client-side result.
+- Read `https://telnyx.com/ai/rate-limits.json` so the client uses the canonical `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`, and `Retry-After` headers instead of inventing its own throttle model.
 - Treat `202 Accepted` as incomplete work. Poll the resource or operation-status endpoint until you see a terminal status, and honor `Retry-After` when Telnyx returns it.
 - Do not let the model invent completion from the initial write response alone when the API family documents asynchronous processing.
 
