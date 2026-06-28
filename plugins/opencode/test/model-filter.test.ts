@@ -1,6 +1,6 @@
 import { afterEach, describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { knownUnsafeModelReason, modelConfig, unsafeModelsOverrideEnvVar } from "../src/model-filter.js"
+import { knownUnsafeModelReason, modelConfig, unsafeModelsOverrideEnvVar } from "../src/model-filter.ts"
 
 describe("model-filter", () => {
   const envVar = unsafeModelsOverrideEnvVar()

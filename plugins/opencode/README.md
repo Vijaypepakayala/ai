@@ -145,7 +145,7 @@ The repo includes a live regression harness that:
 Create a `.env` file in `plugins/opencode/` or export `TELNYX_API_KEY`, then run:
 
 ```bash
-npm test
+npm run test:live
 ```
 
 Useful optional filters:
@@ -183,6 +183,16 @@ Some smaller models cannot fit OpenCode's full tool list and system prompt into 
 ### `zai-org/GLM-5.2` does not appear in `/telnyx`
 
 As of June 27, 2026, the plugin excludes `zai-org/GLM-5.2` by default because we have an open compatibility investigation for corrupted streamed tool-call arguments. Set `OPENCODE_TELNYX_INCLUDE_UNSAFE_MODELS=1` only if you are intentionally validating that failure mode.
+
+### How do I run the lightweight package tests?
+
+Run:
+
+```bash
+npm test
+```
+
+This runs the local unit tests directly from the TypeScript sources. The live Telnyx model probe remains available as `npm run test:live`.
 
 ### `/telnyx` does not appear
 
