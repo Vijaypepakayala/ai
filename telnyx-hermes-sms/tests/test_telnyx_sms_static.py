@@ -89,6 +89,15 @@ def test_readme_documents_hermes_checkout_contract():
     assert 'Set `HERMES_AGENT_ROOT` to the checkout itself, or set `HERMES_HOME`' in readme
     assert 'or just: export HERMES_AGENT_ROOT="$HERMES_HOME"' in readme
     assert 'Hermes-dependent test modules skip with an explicit setup message' in readme
+    assert 'contributors reach the skip guidance' in readme
+    assert '`Path | None` annotation' in readme
+    assert 'Hermes-dependent tests skip with a Python-version message' in readme
+
+
+def test_hermes_bootstrap_defers_annotation_evaluation():
+    bootstrap = (ROOT / 'tests' / '_hermes.py').read_text()
+    assert bootstrap.startswith('from __future__ import annotations')
+    assert 'Hermes-dependent tests require Python 3.10+' in bootstrap
 
 
 def test_readme_and_bootstrap_script_document_download_first_install_path():
