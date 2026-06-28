@@ -64,6 +64,12 @@ Then fetch the authorization-server metadata from `authorization_servers[0] + "/
 
 `agent_auth` is the machine-readable summary of Telnyx's current agent registration path. Today it advertises the live bot-signup endpoints (`register_uri`, `claim_uri`, `challenge_uri`) plus the human-readable `skill` and `signup_guide_uri` documents that explain the full sequence. Telnyx does not currently expose the full WorkOS-style `/agent/auth`, `/agent/auth/claim`, or `/agent/auth/revoke` endpoint family, so treat the published `agent_auth` block as an onboarding map for the current API-key flow rather than as a claim that those protocol routes exist.
 
+Protocol and product notes:
+
+- Protocol requirement: if a bearer challenge is present, follow the `resource_metadata` hint first and then read the protected-resource and authorization-server metadata.
+- Product convention: `https://telnyx.com/.well-known/agent-access.json` now mirrors the preferred walkthrough (`auth.md`), signup walkthrough (`agent-signup.md`), and the audited MCP bearer-challenge entrypoint so a clean-session agent can recover without guessing which document to read next.
+- Bounded adoption decision: the audited public challenge surface is `https://api.telnyx.com/v2/mcp`. If a generic REST probe does not emit `WWW-Authenticate`, use `https://api.telnyx.com/.well-known/oauth-protected-resource` directly instead of inferring hidden routes.
+
 ## 3. Pick a Credential Path
 
 Choose one of these paths:
@@ -118,6 +124,13 @@ MCP-Protocol-Version: 2025-06-18
 Use the same bearer presentation for REST and MCP:
 
 - Header: `Authorization: Bearer <TELNYX_API_KEY>`
+- For agent-facing mutating REST writes in the initial rollout scope, send `Idempotency-Key` on `POST`, `PUT`, `PATCH`, and `DELETE` requests to resources such as `/v2/messages`, `/v2/calls`, `/v2/number_orders`, `/v2/phone_numbers/{id}`, and `/v2/ai/assistants/{id}`.
+- Generate a fresh opaque ASCII key per intended mutation. UUIDv4 is the recommended default.
+- Reusing the same key with the same normalized request should return the original success response after completion, or a deterministic in-progress response while the original request is still running.
+- Reusing the same key with a materially different payload should fail with a conflict response rather than executing a second write.
+- Treat malformed, oversized, or non-ASCII keys as client errors that should be fixed before retrying.
+- Plan around a minimum 24-hour server retention window for idempotency records.
+- When a covered write returns `202 Accepted`, treat it as in progress and honor `Retry-After` before polling for a terminal result.
 - Generic REST base: `https://api.telnyx.com/v2`
 - MCP endpoint: `https://api.telnyx.com/v2/mcp`
 

@@ -112,6 +112,7 @@ describe("agent discovery surfaces", () => {
   it("keeps retry and idempotency guidance aligned across machine-readable public surfaces", () => {
     assert.deepEqual(agentJson.retry_idempotency_contract, CLI_RETRY_IDEMPOTENCY_CONTRACT);
     assert.deepEqual(agentCard.retry_idempotency_contract, agentJson.retry_idempotency_contract);
+    assert.deepEqual(agentAccess.fast_path.retry_idempotency_contract, agentJson.retry_idempotency_contract);
     assert.equal(agentJson.first_run_paths[0].retry_idempotency_contract, "default_mutating_request_contract");
   });
 

@@ -117,7 +117,7 @@ export class TelnyxAPIClient {
   }
 
   private async request(
-    method: "GET" | "POST" | "DELETE",
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
     path: string,
     options: {
       params?: Record<string, unknown>;
@@ -172,6 +172,24 @@ export class TelnyxAPIClient {
     options: TelnyxRequestOptions = {},
   ): Promise<Record<string, unknown>> {
     const response = await this.request("POST", path, { json, request: options });
+    return response.body;
+  }
+
+  async put(
+    path: string,
+    json?: Record<string, unknown>,
+    options: TelnyxRequestOptions = {},
+  ): Promise<Record<string, unknown>> {
+    const response = await this.request("PUT", path, { json, request: options });
+    return response.body;
+  }
+
+  async patch(
+    path: string,
+    json?: Record<string, unknown>,
+    options: TelnyxRequestOptions = {},
+  ): Promise<Record<string, unknown>> {
+    const response = await this.request("PATCH", path, { json, request: options });
     return response.body;
   }
 

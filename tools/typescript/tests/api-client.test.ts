@@ -28,6 +28,25 @@ describe("TelnyxAPIClient", () => {
     assert.equal(result.data.id, "msg-123");
   });
 
+  it("sends Idempotency-Key on put and patch writes", async () => {
+    const seenMethods: string[] = [];
+
+    globalThis.fetch = async (input, init) => {
+      seenMethods.push(String(init?.method));
+      assert.equal(String(input), "https://api.telnyx.com/v2/messages/msg-123");
+      assert.equal((init?.headers as Record<string, string>)["Idempotency-Key"], "idem-456");
+      return new Response(JSON.stringify({ data: { id: "msg-123" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    const client = new TelnyxAPIClient("test-key");
+    await client.put("/messages/msg-123", { text: "updated" }, { idempotencyKey: "idem-456" });
+    await client.patch("/messages/msg-123", { tags: ["agent"] }, { idempotencyKey: "idem-456" });
+    assert.deepEqual(seenMethods, ["PUT", "PATCH"]);
+  });
+
   it("polls until a terminal status and respects Retry-After", async () => {
     const seenMethods: string[] = [];
     let callCount = 0;

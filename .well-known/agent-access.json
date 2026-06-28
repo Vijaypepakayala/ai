@@ -24,6 +24,24 @@
       ]
     }
   },
+  "auth_discovery": {
+    "walkthrough_uri": "https://telnyx.com/auth.md",
+    "signup_guide_uri": "https://telnyx.com/agent-signup.md",
+    "agent_manifest_uri": "https://telnyx.com/.well-known/agent-card.json",
+    "oauth_authorization_server_uri": "https://api.telnyx.com/.well-known/oauth-authorization-server",
+    "oauth_protected_resource_uri": "https://api.telnyx.com/.well-known/oauth-protected-resource",
+    "mcp_resource_metadata_uri": "https://api.telnyx.com/.well-known/oauth-protected-resource/v2/mcp",
+    "mcp_server_card_uri": "https://telnyx.com/.well-known/mcp/server-card.json",
+    "preferred_bearer_challenge": {
+      "audited_entrypoint": "https://api.telnyx.com/v2/mcp",
+      "decision": "emit_resource_metadata_hint",
+      "status_code": 401,
+      "header": "WWW-Authenticate",
+      "scheme": "Bearer",
+      "resource_metadata_uri": "https://api.telnyx.com/.well-known/oauth-protected-resource/v2/mcp",
+      "rest_fallback_note": "If a generic REST probe does not emit a bearer challenge, fetch oauth_protected_resource_uri directly."
+    }
+  },
   "documentation": {
     "account_creation": "https://developers.telnyx.com/docs/account-setup/create-account",
     "toolkit_getting_started": "https://github.com/team-telnyx/telnyx-toolkit/tree/main/getting-started",
@@ -64,10 +82,37 @@
         "guarded_write",
         "live_write"
       ],
+      "initial_endpoint_scope": {
+        "methods": [
+          "POST",
+          "PUT",
+          "PATCH",
+          "DELETE"
+        ],
+        "patterns": [
+          "/v2/messages",
+          "/v2/messages/{id}",
+          "/v2/calls",
+          "/v2/calls/{id}/actions/*",
+          "/v2/number_orders",
+          "/v2/phone_numbers/{id}",
+          "/v2/ai/assistants",
+          "/v2/ai/assistants/{id}"
+        ],
+        "rationale": "Covers the highest-value agent-facing REST writes that create, update, or trigger telecom and assistant side effects."
+      },
       "mutating_requests": {
         "idempotency_key_header": "Idempotency-Key",
+        "key_format": "Caller-generated opaque token up to 255 ASCII characters; UUIDv4 is the recommended default.",
         "generate_new_key_when": "Send a fresh Idempotency-Key on every mutating request that creates, confirms, retries, or otherwise changes state.",
         "reuse_same_key_only_when": "Reuse that same key only when retrying the exact same intended write after a timeout, transport failure, or ambiguous client-side result."
+      },
+      "server_behavior": {
+        "retention_window": "Servers should retain idempotency records for at least 24 hours after the first accepted write.",
+        "duplicate_success": "Reusing the same key with the same normalized request after a completed write should return the original success response body and status without re-executing the mutation.",
+        "duplicate_in_flight": "Reusing the same key while the original write is still processing should return a deterministic in-progress response, typically 202 Accepted, and preserve Retry-After guidance when available.",
+        "conflicting_reuse": "Reusing the same key with a materially different request payload should fail with a 409-style conflict and no second mutation.",
+        "malformed_key": "Missing, oversized, or non-ASCII idempotency keys on covered mutating endpoints should fail validation before any side effect occurs."
       },
       "async_completion": {
         "treat_202_accepted_as_in_progress": true,

@@ -143,6 +143,42 @@ class TelnyxAPIClient:
         body, _ = await self._handle_response(response)
         return body
 
+    async def put_async(
+        self,
+        path: str,
+        *,
+        json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Async PUT request."""
+        client = await self._get_async_client()
+        response = await client.put(
+            path,
+            json=json,
+            headers=self._build_headers(headers=headers, idempotency_key=idempotency_key),
+        )
+        body, _ = await self._handle_response(response)
+        return body
+
+    async def patch_async(
+        self,
+        path: str,
+        *,
+        json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Async PATCH request."""
+        client = await self._get_async_client()
+        response = await client.patch(
+            path,
+            json=json,
+            headers=self._build_headers(headers=headers, idempotency_key=idempotency_key),
+        )
+        body, _ = await self._handle_response(response)
+        return body
+
     async def poll_async(
         self,
         path: str,
@@ -202,6 +238,28 @@ class TelnyxAPIClient:
     ) -> dict[str, Any]:
         """Sync DELETE request (convenience wrapper)."""
         return _run_sync(self.delete_async(path, headers=headers, idempotency_key=idempotency_key))
+
+    def put(
+        self,
+        path: str,
+        *,
+        json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Sync PUT request (convenience wrapper)."""
+        return _run_sync(self.put_async(path, json=json, headers=headers, idempotency_key=idempotency_key))
+
+    def patch(
+        self,
+        path: str,
+        *,
+        json: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Sync PATCH request (convenience wrapper)."""
+        return _run_sync(self.patch_async(path, json=json, headers=headers, idempotency_key=idempotency_key))
 
     def poll(
         self,

@@ -58,6 +58,22 @@ class TestTelnyxAPIClient:
 
     @respx.mock
     @pytest.mark.asyncio
+    async def test_put_and_patch_async_send_idempotency_key(self, client: TelnyxAPIClient) -> None:
+        put_route = respx.put("https://api.telnyx.com/v2/messages/msg-123").mock(
+            return_value=httpx.Response(200, json={"data": {"id": "msg-123"}})
+        )
+        patch_route = respx.patch("https://api.telnyx.com/v2/messages/msg-123").mock(
+            return_value=httpx.Response(200, json={"data": {"id": "msg-123"}})
+        )
+
+        await client.put_async("/messages/msg-123", json={"text": "updated"}, idempotency_key="idem-456")
+        await client.patch_async("/messages/msg-123", json={"tags": ["agent"]}, idempotency_key="idem-456")
+
+        assert put_route.calls[0].request.headers["Idempotency-Key"] == "idem-456"
+        assert patch_route.calls[0].request.headers["Idempotency-Key"] == "idem-456"
+
+    @respx.mock
+    @pytest.mark.asyncio
     async def test_poll_async_uses_retry_after_until_terminal(self, client: TelnyxAPIClient, monkeypatch: pytest.MonkeyPatch) -> None:
         slept: list[float] = []
 
@@ -154,3 +170,18 @@ class TestTelnyxAPIClient:
         )
         result = client.post("/messages", json={"to": "+1234", "text": "Test"})
         assert result["data"]["id"] == "msg-456"
+
+    @respx.mock
+    def test_sync_put_and_patch(self, client: TelnyxAPIClient) -> None:
+        put_route = respx.put("https://api.telnyx.com/v2/messages/msg-456").mock(
+            return_value=httpx.Response(200, json={"data": {"id": "msg-456", "status": "updated"}})
+        )
+        patch_route = respx.patch("https://api.telnyx.com/v2/messages/msg-456").mock(
+            return_value=httpx.Response(200, json={"data": {"id": "msg-456", "status": "patched"}})
+        )
+        put_result = client.put("/messages/msg-456", json={"text": "Test"}, idempotency_key="idem-789")
+        patch_result = client.patch("/messages/msg-456", json={"text": "Patch"}, idempotency_key="idem-789")
+        assert put_result["data"]["status"] == "updated"
+        assert patch_result["data"]["status"] == "patched"
+        assert put_route.calls[0].request.headers["Idempotency-Key"] == "idem-789"
+        assert patch_route.calls[0].request.headers["Idempotency-Key"] == "idem-789"

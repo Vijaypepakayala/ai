@@ -165,6 +165,19 @@ Keep these IDs in your task notes, runbook, or escalation artifact:
 
 That is the minimum audit trail that lets another operator reproduce what happened without guessing.
 
+## Write contract for agent-facing REST mutations
+
+Before your first real write, adopt this retry contract:
+
+- Send `Idempotency-Key` on covered `POST`, `PUT`, `PATCH`, and `DELETE` requests.
+- The initial rollout scope is the highest-value agent-facing write surfaces: `/v2/messages`, `/v2/messages/{id}`, `/v2/calls`, `/v2/calls/{id}/actions/*`, `/v2/number_orders`, `/v2/phone_numbers/{id}`, `/v2/ai/assistants`, and `/v2/ai/assistants/{id}`.
+- Use a fresh caller-generated opaque ASCII token for each intended mutation. UUIDv4 is the recommended default.
+- Reuse that same key only when retrying the exact same intended write after a timeout, transport failure, or ambiguous client-side result.
+- Expect duplicate-safe behavior: the same key plus the same normalized request should replay the original success response once completed, or return a deterministic in-progress response while the first write is still running.
+- Expect a conflict response if the same key is reused with a materially different payload.
+- Expect malformed, oversized, or non-ASCII keys to fail validation before any side effect occurs.
+- Preserve the key in your run notes for at least the server retention window, which is a minimum of 24 hours in the published contract.
+
 ## API Reference
 
 This guide uses these surfaces first:

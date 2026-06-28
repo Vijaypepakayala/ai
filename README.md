@@ -48,7 +48,7 @@ Governed execution metadata is exposed in the canonical manifest and discovery d
 
 For first-run evaluation, use `POST https://telnyx.com/api/inference` first. That path is `no-auth, host-authenticated`: the caller does not send a bearer token, Telnyx applies server-side auth and rate limits, and the governed-execution shape is `guarded_write`, `confirm_before_mutation`, `confirm_intent_then_mutate`, `stateless`, `request_selected`, with audit identifiers such as `request_id`, `idempotency_key`, and `model_id`. The main REST surface at `https://api.telnyx.com/v2` and MCP surface at `https://api.telnyx.com/v2/mcp` remain standard API-key-authenticated paths.
 
-For side-effecting Telnyx requests, make retry intent explicit: send a fresh `Idempotency-Key` on every mutating request, reuse that same key only when retrying the exact same intended write after a timeout, transport failure, or ambiguous client-side result, treat `202 Accepted` as in-progress rather than complete, and honor `Retry-After` when polling for a terminal outcome.
+For side-effecting Telnyx requests, make retry intent explicit: send a fresh `Idempotency-Key` on every covered mutating request (`POST`, `PUT`, `PATCH`, `DELETE`), reuse that same key only when retrying the exact same intended write after a timeout, transport failure, or ambiguous client-side result, expect a deterministic replay of the original success or in-flight response for duplicate-safe retries, expect a conflict on materially different payload reuse, treat `202 Accepted` as in-progress rather than complete, and honor `Retry-After` when polling for a terminal outcome.
 
 For high-signal, non-JavaScript discovery, start with the public text-first assets before broader docs exploration:
 

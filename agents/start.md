@@ -10,7 +10,7 @@ If you only read one page before deciding whether Telnyx fits your agent workflo
 
 The exact first-run evaluation route today is `POST https://telnyx.com/api/inference`. Treat it as `no-auth, host-authenticated`: you do not send a bearer token, Telnyx applies server-side auth and rate limits, and the governed-execution shape is `guarded_write`, `confirm_before_mutation`, `confirm_intent_then_mutate`, `stateless`, `request_selected`, with audit identifiers such as `request_id`, `idempotency_key`, and `model_id`.
 
-For side-effecting Telnyx requests, send a fresh `Idempotency-Key` on every mutating request, reuse that same key only when retrying the exact same intended write after a timeout, transport failure, or ambiguous client-side result, treat `202 Accepted` as still in progress, and honor `Retry-After` before polling again.
+For side-effecting Telnyx requests, send a fresh `Idempotency-Key` on every covered mutating request (`POST`, `PUT`, `PATCH`, `DELETE`), reuse that same key only when retrying the exact same intended write after a timeout, transport failure, or ambiguous client-side result, expect the original success or in-progress response to replay for duplicate-safe retries, expect a conflict on materially different payload reuse, treat `202 Accepted` as still in progress, and honor `Retry-After` before polling again.
 
 If you need the authenticated onboarding path with explicit billing and approval guardrails, use [`/guides/getting-started.md`](/guides/getting-started.md) as the canonical first workflow guide.
 

@@ -211,7 +211,7 @@ data = await toolkit.api_client.get_async("/phone_numbers")
 data = toolkit.api_client.get("/phone_numbers")
 ```
 
-For mutating REST calls, send a caller-generated idempotency key and poll asynchronous resources until they reach a terminal state:
+For mutating REST calls, send a caller-generated idempotency key on `POST`, `PUT`, `PATCH`, and `DELETE`, and poll asynchronous resources until they reach a terminal state:
 
 ```python
 import uuid
@@ -234,7 +234,17 @@ message = toolkit.api_client.poll(
 print(message["data"]["status"])
 ```
 
-`poll()` respects `Retry-After` when Telnyx returns `202 Accepted`, and defaults to terminal statuses such as `completed`, `failed`, `cancelled`, and `succeeded`.
+You can apply the same contract to update flows:
+
+```python
+toolkit.api_client.patch(
+    f"/messages/{created['data']['id']}",
+    json={"tags": ["agent-safe"]},
+    idempotency_key=str(uuid.uuid4()),
+)
+```
+
+`poll()` respects `Retry-After` when Telnyx returns `202 Accepted`, and defaults to terminal statuses such as `completed`, `failed`, `cancelled`, and `succeeded`. Reuse the same key only for an exact retry of the same intended write; changing the payload while reusing the key should be treated as a conflict.
 
 ## Requirements
 

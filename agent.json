@@ -137,14 +137,42 @@
     }
   },
   "retry_idempotency_contract": {
+    "id": "default_mutating_request_contract",
     "applies_to": [
       "guarded_write",
       "live_write"
     ],
+    "initial_endpoint_scope": {
+      "methods": [
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE"
+      ],
+      "patterns": [
+        "/v2/messages",
+        "/v2/messages/{id}",
+        "/v2/calls",
+        "/v2/calls/{id}/actions/*",
+        "/v2/number_orders",
+        "/v2/phone_numbers/{id}",
+        "/v2/ai/assistants",
+        "/v2/ai/assistants/{id}"
+      ],
+      "rationale": "Covers the highest-value agent-facing REST writes that create, update, or trigger telecom and assistant side effects."
+    },
     "mutating_requests": {
       "idempotency_key_header": "Idempotency-Key",
+      "key_format": "Caller-generated opaque token up to 255 ASCII characters; UUIDv4 is the recommended default.",
       "generate_new_key_when": "Send a fresh Idempotency-Key on every mutating request that creates, confirms, retries, or otherwise changes state.",
       "reuse_same_key_only_when": "Reuse that same key only when retrying the exact same intended write after a timeout, transport failure, or ambiguous client-side result."
+    },
+    "server_behavior": {
+      "retention_window": "Servers should retain idempotency records for at least 24 hours after the first accepted write.",
+      "duplicate_success": "Reusing the same key with the same normalized request after a completed write should return the original success response body and status without re-executing the mutation.",
+      "duplicate_in_flight": "Reusing the same key while the original write is still processing should return a deterministic in-progress response, typically 202 Accepted, and preserve Retry-After guidance when available.",
+      "conflicting_reuse": "Reusing the same key with a materially different request payload should fail with a 409-style conflict and no second mutation.",
+      "malformed_key": "Missing, oversized, or non-ASCII idempotency keys on covered mutating endpoints should fail validation before any side effect occurs."
     },
     "async_completion": {
       "treat_202_accepted_as_in_progress": true,

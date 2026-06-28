@@ -130,7 +130,7 @@ console.log(JSON.parse(result));
 
 ## Agent-Safe Writes
 
-For mutating REST calls, send a caller-generated idempotency key and poll asynchronous resources until they reach a terminal state.
+For mutating REST calls, send a caller-generated idempotency key on `POST`, `PUT`, `PATCH`, and `DELETE`, and poll asynchronous resources until they reach a terminal state.
 
 ```typescript
 import { randomUUID } from "node:crypto";
@@ -155,7 +155,17 @@ const message = await client.poll(`/messages/${created.data.id}`, {
 console.log(message.data.status);
 ```
 
-`poll()` respects `Retry-After` when Telnyx returns `202 Accepted`, and defaults to terminal statuses such as `completed`, `failed`, `cancelled`, and `succeeded`.
+You can also update existing resources with the same idempotency contract:
+
+```typescript
+await client.patch(
+  `/messages/${created.data.id}`,
+  { tags: ["agent-safe"] },
+  { idempotencyKey: randomUUID() },
+);
+```
+
+`poll()` respects `Retry-After` when Telnyx returns `202 Accepted`, and defaults to terminal statuses such as `completed`, `failed`, `cancelled`, and `succeeded`. Reuse the same key only for an exact retry of the same intended write; changing the payload with the same key should be treated as a conflict.
 
 ## Requirements
 
