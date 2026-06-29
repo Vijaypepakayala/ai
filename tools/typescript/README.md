@@ -128,6 +128,17 @@ const result = await toolkit.core.runTool("get_balance", {});
 console.log(JSON.parse(result));
 ```
 
+## Agent-Access Contract
+
+This toolkit follows the same published access contract as the top-level Telnyx agent surfaces:
+
+- Start auth discovery at `https://telnyx.com/auth.md` and `https://telnyx.com/.well-known/agent-access.json`.
+- Use `https://api.telnyx.com/.well-known/oauth-protected-resource` for the generic REST bearer metadata and `https://api.telnyx.com/.well-known/oauth-protected-resource/v2/mcp` for the hosted MCP bearer metadata when you need to compare raw toolkit access with a governed MCP App.
+- Treat `https://telnyx.com/ai/rate-limits.json` as the canonical machine-readable source for rate-limit headers, `429` guidance, and the representative async polling contract. Honor `Retry-After` and retain request-scoped audit identifiers.
+- For side-effecting toolkit calls, send a fresh `Idempotency-Key` on each covered `POST`, `PUT`, `PATCH`, or `DELETE`, reuse it only for the exact same retried write after a timeout, transport failure, or ambiguous client-side result, and treat `202 Accepted` as in progress until polling reaches a terminal state.
+- Approval posture remains capability-specific. If you need confirmation- or policy-gated mutations instead of raw endpoint semantics, prefer a focused MCP App.
+- This README is a repo-owned contract and implementation guide. Live API behavior is host-owned and should be checked against the protected-resource metadata, rate-limit contract, and runtime responses.
+
 ## Agent-Safe Writes
 
 For mutating REST calls, send a caller-generated idempotency key on `POST`, `PUT`, `PATCH`, and `DELETE`, and poll asynchronous resources until they reach a terminal state.

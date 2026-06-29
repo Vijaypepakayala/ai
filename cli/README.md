@@ -114,7 +114,7 @@ If you want the current Telnyx-hosted OpenAI assistant example path, use [`/guid
 ### Edge Compute handoff commands
 
 These are **thin executable bridges**, not native Edge lifecycle support.
-They make Edge Compute usable from `telnyx-agent` while keeping real deploy/auth/secrets/bindings/revisions ownership in `telnyx-edge`. They only suggest API-key auth when the installed Edge CLI actually exposes it; the current public upstream release is `v0.2.0`, and the docs still lead with `telnyx-edge auth login`.
+They make Edge Compute usable from `telnyx-agent` while keeping real deploy/auth/secrets/bindings/revisions/reset ownership in `telnyx-edge`. They only suggest API-key auth when the installed Edge CLI actually exposes it; the current public upstream release is `v0.2.0`, and the docs still lead with `telnyx-edge auth login`.
 
 ```bash
 telnyx-agent edge-doctor --json
@@ -124,11 +124,13 @@ telnyx-agent setup-edge-webhook --name my-webhook --json
 
 What they do:
 - validate that `telnyx-edge` is available
+- verify the installed CLI with `telnyx-edge --version`
 - check whether Edge auth is already configured
 - use `telnyx-edge auth login` as the safe default when capability detection is unavailable
 - prefer `telnyx-edge auth api-key set <your-api-key>` for agents only when the installed CLI supports it
 - point you at a real Edge example or the upstream `new-func --language=js|ts|python|go|quarkus` scaffold paths
 - surface readiness and discovery commands such as `telnyx-edge status`, zero-arg `telnyx-edge bindings create`, `telnyx-edge bindings get`, and `telnyx-edge revisions list`
+- surface the upstream failed-function recovery path via `telnyx-edge reset-func <function-name>`
 - give you the concrete next deploy command
 - preserve an honest handoff instead of pretending `telnyx-agent` owns Edge lifecycle
 
@@ -174,6 +176,17 @@ The CLI looks for an API key in this order:
 
 1. `TELNYX_API_KEY` environment variable
 2. `~/.config/telnyx/config.json` (same as `@telnyx/api-cli`)
+
+## Agent-Access Contract
+
+Use the same access contract here that the repo publishes at the top level:
+
+- Start auth discovery at `https://telnyx.com/auth.md` and the machine-readable walkthrough at `https://telnyx.com/.well-known/agent-access.json`.
+- For bearer metadata, use `https://api.telnyx.com/.well-known/oauth-protected-resource` for the generic REST surface and `https://api.telnyx.com/.well-known/oauth-protected-resource/v2/mcp` for the hosted MCP surface. If an unauthenticated MCP probe returns `WWW-Authenticate` with `resource_metadata`, follow that hint first.
+- Treat `https://telnyx.com/ai/rate-limits.json` as the canonical machine-readable rate-limit and async polling contract. Honor `Retry-After` and retain request-scoped audit identifiers such as `X-Request-Id`.
+- For side-effecting CLI flows, send a fresh `Idempotency-Key` on each covered `POST`, `PUT`, `PATCH`, or `DELETE`, and reuse that same key only for the exact same retried write after a timeout, transport failure, or ambiguous client-side result. Treat `202 Accepted` as in progress rather than complete.
+- Use `telnyx-agent capabilities` to inspect the published governance fields for each command: `risk_class`, `approval_expectation`, `approval_path`, `memory_scope`, `model_behavior`, and `audit_identifiers`.
+- This README documents the repo-owned contract and CLI behavior. Live API behavior remains host-owned and should be verified against the protected-resource metadata, rate-limit contract, and the runtime response you actually receive.
 
 ## Global Flags
 

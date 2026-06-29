@@ -103,6 +103,17 @@ The example directories show the governed pattern for OpenAI, LangChain, and Cre
 - [LangChain governed example](/tools/python/examples/langchain)
 - [CrewAI governed example](/tools/python/examples/crewai)
 
+## Agent-Access Contract
+
+This toolkit uses the same published access contract as the repo-level discovery surfaces:
+
+- Start auth discovery at `https://telnyx.com/auth.md` and `https://telnyx.com/.well-known/agent-access.json`.
+- Use `https://api.telnyx.com/.well-known/oauth-protected-resource` for the generic REST bearer metadata and `https://api.telnyx.com/.well-known/oauth-protected-resource/v2/mcp` for the hosted MCP bearer metadata when you are deciding between raw toolkit calls and a governed MCP App.
+- Treat `https://telnyx.com/ai/rate-limits.json` as the canonical machine-readable source for rate-limit headers, `429` handling, and the representative async polling pattern. Honor `Retry-After` and retain request-scoped audit identifiers.
+- For side-effecting toolkit calls, send a fresh `Idempotency-Key` on each covered `POST`, `PUT`, `PATCH`, or `DELETE`, reuse it only for the exact same retried write after a timeout, transport failure, or ambiguous client-side result, and treat `202 Accepted` as in progress until polling reaches a terminal state.
+- Approval posture is capability-specific. If you need a narrower governed surface with explicit confirmation semantics, use a focused MCP App instead of broad raw toolkit access.
+- This README describes the repo-owned contract for external agents. Runtime behavior is still host-owned and should be checked against live protected-resource metadata, rate-limit responses, and the specific endpoint family you call.
+
 ## Configuration
 
 Control which tools are available to the agent:

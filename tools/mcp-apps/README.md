@@ -82,6 +82,14 @@ The MCP Apps in this repo are meant to be consumed as policy-bearing tool surfac
 - When a governed surface accepts an idempotency field or confirmation token, keep that value stable across retries and log it in your orchestration layer.
 - If the app does not expose the mutation you want, stop at the governed boundary and hand off to a broader reviewed surface instead of inventing a second behavior model.
 
+These apps use the same top-level access terminology as the rest of the repo:
+
+- Start discovery from `https://telnyx.com/auth.md` and `https://telnyx.com/.well-known/agent-access.json`, then bind the specific app discovery document at `GET /apps/:slug`.
+- Use the published per-app `governance` block and the repo-wide terms `risk_class`, `approval_expectation`, `approval_path`, `memory_scope`, `model_behavior`, and `audit_identifiers` instead of inventing app-local synonyms.
+- Treat `https://telnyx.com/ai/rate-limits.json` as the canonical repo-owned rate-limit and async polling reference when the governed app hands off to broader Telnyx API behavior.
+- When an app accepts `Idempotency-Key` or a confirmation token, reuse it only for the exact same retried write after a timeout, transport failure, or ambiguous client-side result, and treat `202 Accepted` plus `Retry-After` as in-progress guidance rather than final success.
+- The READMEs here describe repo-owned contracts and governance intent. The deployed MCP App wrapper and live Telnyx APIs remain host-owned surfaces that must be verified against their runtime discovery documents and responses.
+
 The hosted HTTP wrapper also exposes public discovery surfaces for deploys:
 
 - `GET /apps` — public app catalog
