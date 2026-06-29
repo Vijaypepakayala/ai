@@ -132,9 +132,9 @@ function hasExpectedAgentAuth(body: Record<string, unknown>): boolean {
 export function checkWwwAuthenticate(status: number, header: string | null): DiscoveryProbe {
   const expected = 'Bearer resource_metadata="https://api.telnyx.com/.well-known/oauth-protected-resource/v2/mcp"';
   return {
-    name: "unauthenticated MCP bearer challenge",
+    name: "unauthenticated protected MCP bearer challenge",
     method: "POST",
-    url: "https://api.telnyx.com/v2/mcp",
+    url: "https://api.telnyx.com/v2/mcp (JSON-RPC method: tools/call)",
     ok: status === 401 && header === expected,
     status,
     details: header === expected ? `challenge matched ${expected}` : `received ${header ?? "<missing>"}`,
@@ -331,11 +331,10 @@ export async function verifyLiveAgentDiscovery(): Promise<DiscoveryVerificationR
     body: JSON.stringify({
       jsonrpc: JSONRPC_VERSION,
       id: 1,
-      method: "initialize",
+      method: "tools/call",
       params: {
-        protocolVersion: MCP_PROTOCOL_VERSION,
-        capabilities: {},
-        clientInfo: { name: "telnyx-ai-live-verifier", version: "0.0.0" }
+        name: "list_api_endpoints",
+        arguments: {}
       }
     })
   });

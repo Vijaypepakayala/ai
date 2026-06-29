@@ -26,7 +26,7 @@ Start with the protected resource metadata for the surface you want to call.
 - Canonical MCP server card: `https://telnyx.com/.well-known/mcp/server-card.json`
 - Agent onboarding contract: `https://telnyx.com/.well-known/agent-access.json`
 
-When an unauthenticated MCP initialize request reaches `https://api.telnyx.com/v2/mcp`, Telnyx responds with `401 Unauthorized` and a bearer challenge that includes a `resource_metadata` hint. Follow that hint first. For the generic REST API, if the response does not include a challenge header, fall back to the conventional protected-resource URL above.
+When an unauthenticated protected MCP method such as `tools/call` reaches `https://api.telnyx.com/v2/mcp`, Telnyx responds with `401 Unauthorized` and a bearer challenge that includes a `resource_metadata` hint. Public MCP discovery methods such as `initialize`, `tools/list`, and `resources/list` are readable without a bearer token. Follow the challenge hint first when you cross into a protected method. For the generic REST API, if the response does not include a challenge header, fall back to the conventional protected-resource URL above.
 
 ```http
 POST /v2/mcp HTTP/1.1
@@ -35,7 +35,7 @@ Content-Type: application/json
 Accept: application/json, text/event-stream
 MCP-Protocol-Version: 2025-06-18
 
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"example-agent","version":"0.0.0"}}}
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_api_endpoints","arguments":{}}}
 ```
 
 ```http
@@ -67,8 +67,8 @@ Then fetch the authorization-server metadata from `authorization_servers[0] + "/
 Protocol and product notes:
 
 - Protocol requirement: if a bearer challenge is present, follow the `resource_metadata` hint first and then read the protected-resource and authorization-server metadata.
-- Product convention: `https://telnyx.com/.well-known/agent-access.json` now mirrors the preferred walkthrough (`auth.md`), signup walkthrough (`agent-signup.md`), and the audited MCP bearer-challenge entrypoint so a clean-session agent can recover without guessing which document to read next.
-- Bounded adoption decision: the audited public challenge surface is `https://api.telnyx.com/v2/mcp`. If a generic REST probe does not emit `WWW-Authenticate`, use `https://api.telnyx.com/.well-known/oauth-protected-resource` directly instead of inferring hidden routes.
+- Product convention: `https://telnyx.com/.well-known/agent-access.json` now mirrors the preferred walkthrough (`auth.md`), signup walkthrough (`agent-signup.md`), and the audited MCP bearer-challenge request shape so a clean-session agent can recover without guessing which document to read next.
+- Bounded adoption decision: the audited public challenge request is a protected MCP `tools/call` against `https://api.telnyx.com/v2/mcp`. If a generic REST probe does not emit `WWW-Authenticate`, use `https://api.telnyx.com/.well-known/oauth-protected-resource` directly instead of inferring hidden routes.
 
 ## 3. Pick a Credential Path
 

@@ -96,6 +96,7 @@ describe("auth discovery artifacts", () => {
     );
     assert.equal(agentAccess.auth_discovery.mcp_server_card_uri, agentJson.discovery.mcp_server_card_url);
     assert.equal(agentAccess.auth_discovery.preferred_bearer_challenge.audited_entrypoint, agentJson.discovery.mcp_url);
+    assert.equal(agentAccess.auth_discovery.preferred_bearer_challenge.mcp_method, "tools/call");
     assert.equal(agentAccess.auth_discovery.preferred_bearer_challenge.status_code, 401);
     assert.equal(agentAccess.auth_discovery.preferred_bearer_challenge.header, "WWW-Authenticate");
     assert.equal(agentAccess.auth_discovery.preferred_bearer_challenge.scheme, "Bearer");
@@ -103,6 +104,7 @@ describe("auth discovery artifacts", () => {
       agentAccess.auth_discovery.preferred_bearer_challenge.resource_metadata_uri,
       agentJson.discovery.mcp_resource_metadata_url
     );
+    assert.match(agentAccess.auth_discovery.preferred_bearer_challenge.probe_note, /tools\/call/);
   });
 
   it("protected-resource metadata mirrors the agent auth entrypoints", () => {

@@ -34,11 +34,13 @@
     "mcp_server_card_uri": "https://telnyx.com/.well-known/mcp/server-card.json",
     "preferred_bearer_challenge": {
       "audited_entrypoint": "https://api.telnyx.com/v2/mcp",
+      "mcp_method": "tools/call",
       "decision": "emit_resource_metadata_hint",
       "status_code": 401,
       "header": "WWW-Authenticate",
       "scheme": "Bearer",
       "resource_metadata_uri": "https://api.telnyx.com/.well-known/oauth-protected-resource/v2/mcp",
+      "probe_note": "Public MCP discovery methods such as initialize, tools/list, and resources/list are readable without a bearer token; use a protected tools/call request to verify the bearer challenge.",
       "rest_fallback_note": "If a generic REST probe does not emit a bearer challenge, fetch oauth_protected_resource_uri directly."
     }
   },
