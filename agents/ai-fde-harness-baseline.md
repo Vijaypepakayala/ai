@@ -68,6 +68,16 @@ For Telnyx AI FDE work, the first implementation pattern should be:
 
 This keeps policy, memory, and review ownership in one place while still allowing parallel work.
 
+### Protocol boundary
+
+When Telnyx needs both remote tool access and agent-to-agent delegation, use a split boundary by default:
+
+- MCP or an equivalent typed tool protocol for data and tool access
+- A2A-style delegation only for specialist-agent handoffs
+- private connectivity or customer-hosted ingress for internal systems before any public exposure
+
+This keeps tool permissions, network boundaries, and delegation semantics separate instead of collapsing them into one opaque runtime path.
+
 ## 2. Memory Baseline
 
 ### Memory tiers
@@ -174,6 +184,7 @@ These events should be queryable alongside cost and tool traces so a reviewer ca
 
 - Keep the approval boundary in the parent agent. Subagents should not independently perform live or approval-sensitive actions unless the workflow explicitly delegates that authority.
 - Minimize context copies. Pass only the task packet a child needs, not the full thread by default.
+- Prefer private ingress patterns for internal tools and diagnostics. Do not expose sensitive telco or account-state systems to the public internet merely to make them agent-accessible.
 - Redact credentials, secrets, and high-risk identifiers before memory promotion or telemetry storage.
 - Prefer typed summaries over raw transcript persistence.
 - Put TTLs on operational memory so old assumptions decay instead of silently accumulating.
@@ -231,6 +242,8 @@ Concretely, the first repo changes should focus on:
 4. Surfacing a compact per-run review packet that combines changed files, verification, cost, and child-run summaries.
 
 This path fits current Telnyx AI FDE workflows because it improves the execution harness already used for repo work instead of introducing a second orchestration system.
+
+For later phases that need remote specialist services or internal tool access, prefer MCP for trusted tool surfaces and A2A-style boundaries for delegated specialists, with the private network boundary preserved by default.
 
 ## 9. Missing Primitives And Repo Changes
 
