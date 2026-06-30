@@ -144,6 +144,8 @@ Call hangs up immediately after call.initiated
 
 ```bash
 # List all your Call Control Applications and OVP link status
+# Note: the OVP link is nested under outbound.outbound_voice_profile_id.
+# A top-level outbound_voice_profile_id field will look missing even when linked.
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh \
   "https://api.telnyx.com/v2/call_control_applications" | \
   jq '.data[] | {id, application_name, active, ovp: .outbound.outbound_voice_profile_id}'

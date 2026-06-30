@@ -95,6 +95,15 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh -X PATCH \
   "https://api.telnyx.com/v2/call_control_applications/$APP_ID"
 ```
 
+When validating the link, check the nested response field:
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh \
+  "https://api.telnyx.com/v2/call_control_applications/$APP_ID" | \
+  jq -r '.data.outbound.outbound_voice_profile_id'
+```
+
+Do not check for a top-level `outbound_voice_profile_id`; Call Control Application responses store the link under `.data.outbound.outbound_voice_profile_id`.
+
 > ⚠️ `whitelisted_destinations` controls which countries you can dial. Calling a number outside this list **silently fails with SIP 403**. Add every country you need. Common codes: `US`, `CA`, `GB`, `AU`, `IN`, `LK`, `PH`, `DE`, `FR`.
 
 ### Step 3 — Buy a Voice-Enabled Phone Number
@@ -180,7 +189,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/skills/telnyx-first-outbound-call/scripts/validate-se
 - `references/architecture.md` — Component dependency diagrams, call flow sequences (success + failure paths)
 - `references/code-examples.md` — Python, Node.js, curl end-to-end examples including webhook handler
 - `references/troubleshooting.md` — Expanded SIP codes, webhook event reference, CDR interpretation guide, diagnostic decision tree
-- `references/friction-log.md` — 7 friction points discovered during validation (FRIC-001 to FRIC-007)
+- `references/friction-log.md` — 8 friction points discovered during validation (FRIC-001 to FRIC-008)
 
 ## Related Blueprints
 

@@ -90,7 +90,8 @@ else
 
   if [ "$APPS_WITH_OVP" -gt 0 ]; then
     pass "$APPS_WITH_OVP app(s) active with OVP linked"
-    echo "$CC_RESP" | jq -r '.data[] | select(.active == true and .outbound.outbound_voice_profile_id != null and .outbound.outbound_voice_profile_id != "") | "       → \(.application_name) (ID: \(.id))"'
+    echo "       Checking nested field: .outbound.outbound_voice_profile_id"
+    echo "$CC_RESP" | jq -r '.data[] | select(.active == true and .outbound.outbound_voice_profile_id != null and .outbound.outbound_voice_profile_id != "") | "       → \(.application_name) (ID: \(.id)) — OVP: \(.outbound.outbound_voice_profile_id)"'
   fi
 
   if [ "$APPS_NO_OVP" -gt 0 ]; then

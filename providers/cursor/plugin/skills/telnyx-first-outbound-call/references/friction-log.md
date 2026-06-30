@@ -8,7 +8,7 @@ Issues encountered during research and validation, with workarounds.
 **What you'd expect:** When an outbound call fails because no OVP is linked, the `call.hangup` webhook event should contain a meaningful error like "No outbound voice profile configured."
 **What actually happens:** `telnyx_error: null` and `sip_hangup_cause: "500"`. Zero indication that the OVP is missing.
 **Impact:** This is the #1 developer pain point — calls fail with no actionable error. The API returns 200 OK even when the call will fail.
-**Workaround:** Use the validation script or pre-flight checklist before making calls. Always verify OVP is linked.
+**Workaround:** Use the validation script or pre-flight checklist before making calls. Always verify OVP is linked at `.data.outbound.outbound_voice_profile_id` in the Call Control Application response; there is no top-level `outbound_voice_profile_id`.
 **Agent-completable:** Yes (validation script automates the check)
 
 ## FRIC-002: POST /v2/calls returns 200 even when call will fail (High Severity)
@@ -65,6 +65,15 @@ Issues encountered during research and validation, with workarounds.
 **Workaround:** Always use `-G` flag with `--data-urlencode` for filter parameters.
 **Agent-completable:** Yes (use correct curl syntax)
 
+## FRIC-008: OVP link appears missing if checked at the wrong JSON path (Medium Severity)
+
+**Service:** Call Control Applications
+**What you'd expect:** The application response would expose `outbound_voice_profile_id` at the top level, matching the field name used when patching the app.
+**What actually happens:** The link is nested under `.data.outbound.outbound_voice_profile_id`. A top-level check reports missing/empty even when the OVP is correctly linked.
+**Impact:** Developers can misdiagnose a working app as missing its OVP and waste time recreating resources or debugging routing.
+**Workaround:** Always validate the nested field: `jq -r '.data.outbound.outbound_voice_profile_id'`.
+**Agent-completable:** Yes (agent and validation script use the nested path and print it explicitly)
+
 ## Summary
 
 | ID | Severity | Service | Agent-Completable |
@@ -76,3 +85,4 @@ Issues encountered during research and validation, with workarounds.
 | FRIC-005 | High | Outbound Voice Profiles | Yes |
 | FRIC-006 | Low | Number Orders | Yes |
 | FRIC-007 | Low | Multiple | Yes |
+| FRIC-008 | Medium | Call Control Applications | Yes |

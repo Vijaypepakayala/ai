@@ -40,7 +40,7 @@ Additional reference material is available in the `telnyx-first-outbound-call` s
 - `skills/telnyx-first-outbound-call/references/architecture.md` — Component dependency diagrams, call flow sequences (success + failure paths), Mermaid diagram
 - `skills/telnyx-first-outbound-call/references/code-examples.md` — Python, Node.js, Ruby, PHP, Java, Go SDK examples + webhook handler examples + E2E smoke test
 - `skills/telnyx-first-outbound-call/references/troubleshooting.md` — Expanded SIP codes, webhook event reference, CDR interpretation guide, diagnostic decision tree, production checklist
-- `skills/telnyx-first-outbound-call/references/friction-log.md` — 7 friction points discovered during validation (FRIC-001 to FRIC-007)
+- `skills/telnyx-first-outbound-call/references/friction-log.md` — 8 friction points discovered during validation (FRIC-001 to FRIC-008)
 - `skills/telnyx-first-outbound-call/scripts/validate-setup.sh` — Infrastructure validation script (4 checks)
 
 ## Conditional: Friction Reporting Wrapper
@@ -97,6 +97,7 @@ Before asking anything, check what's already configured:
 
 - List existing Call Control Applications: `GET /v2/call_control_applications?page[size]=50`
 - Check which apps have an OVP linked (`.outbound.outbound_voice_profile_id`)
+- Do not check `outbound_voice_profile_id` at the top level. In Call Control Application responses, the OVP link is nested under `outbound.outbound_voice_profile_id`.
 - List existing Outbound Voice Profiles: `GET /v2/outbound_voice_profiles?page[size]=50`
 - List existing phone numbers with voice capability: `GET /v2/phone_numbers?page[size]=50`
 - Check account balance: `GET /v2/balance`
@@ -173,6 +174,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh \
   "https://api.telnyx.com/v2/call_control_applications/$APP_ID" | \
   jq -r '.data.outbound.outbound_voice_profile_id'
 # Must return your OVP ID — if null, the link failed
+# Important: this field is nested under .data.outbound, not top-level .data.
 ```
 
 ### Step 3 — Buy a Voice-Enabled Phone Number
@@ -287,6 +289,7 @@ These are confirmed issues. Apply the fixes proactively:
 | SIP 500 + `telnyx_error: null` gives no actionable info | Critical | Always run validation script before making calls — the API returns 200 OK even when the call will fail (FRIC-001) |
 | `POST /v2/calls` returns 200 even when call will fail | High | Never assume 200 = success. Check webhook events or CDRs for actual outcome (FRIC-002) |
 | No docs mention OVP as prerequisite for outbound calls | High | This blueprint documents the dependency — always create + link OVP before making calls (FRIC-003) |
+| OVP link appears missing if checked at the wrong JSON path | Medium | In Call Control Application responses, verify `.outbound.outbound_voice_profile_id`; there is no top-level `outbound_voice_profile_id` (FRIC-008) |
 | `is_alive: null/false` in call response causes confusion | Medium | Check for absence of `errors` field, not `is_alive` — null is normal at initiation (FRIC-004) |
 | `whitelisted_destinations` default causes silent SIP 403 | High | Add all target countries upfront, not just US/CA (FRIC-005) |
 | Number order returns "pending" before "success" | Low | Wait 3–5 seconds and verify `status: "active"` before proceeding (FRIC-006) |

@@ -258,7 +258,7 @@ Makes your first outbound call using the Telnyx Call Control API — from zero t
 | Make the Call | `POST /v2/calls` with connection_id, to, from |
 | Verify | CDR check — status, duration, SIP response |
 
-Includes 7 friction points (FRIC-001 to FRIC-007), validation script, architecture diagrams, code examples in 6 languages, webhook handler examples, and SIP troubleshooting guide.
+Includes 8 friction points (FRIC-001 to FRIC-008), validation script, architecture diagrams, code examples in 6 languages, webhook handler examples, and SIP troubleshooting guide.
 
 > **Note:** This agent requires a Telnyx account with API key and sufficient balance (~$1 for a number + <$0.01 for a test call).
 
