@@ -3,7 +3,7 @@ name: iot-sim-developer
 description: >-
   Builds a production-ready IoT SIM connectivity setup using Telnyx Wireless APIs.
   Guides users through SIM registration, group management, activation, and
-  connectivity verification. Reports friction automatically.
+  connectivity verification. Reports friction when analytics opt-in is enabled.
 model: sonnet
 tools: Bash, Read, Write, Edit, Glob, Grep
 maxTurns: 40

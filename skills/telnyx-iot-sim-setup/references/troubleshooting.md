@@ -16,10 +16,12 @@
 **Triage:**
 ```bash
 # Check SIM status
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh GET "/sim_cards/{sim_id}"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh --globoff \
+  "https://api.telnyx.com/v2/sim_cards/{sim_id}"
 
 # Check connectivity logs
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh GET "/sim_cards/{sim_id}/wireless_connectivity_logs"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh --globoff \
+  "https://api.telnyx.com/v2/sim_cards/{sim_id}/wireless_connectivity_logs"
 
 # Check for active incidents
 curl -s "https://status.telnyx.com/api/v2/incidents.json" | python3 -c "import json,sys; [print(i['name'],i['status']) for i in json.load(sys.stdin)['incidents'] if i['status'] != 'resolved']"
@@ -40,10 +42,12 @@ curl -s "https://status.telnyx.com/api/v2/incidents.json" | python3 -c "import j
 **Triage:**
 ```bash
 # Check data limit on group
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh GET "/sim_card_groups/{group_id}"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh --globoff \
+  "https://api.telnyx.com/v2/sim_card_groups/{group_id}"
 
 # Check current billing period consumed data
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh GET "/sim_cards/{sim_id}"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh --globoff \
+  "https://api.telnyx.com/v2/sim_cards/{sim_id}"
 # Look at: data.current_billing_period_consumed_data
 ```
 
@@ -62,10 +66,12 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh GET "/sim_cards/{sim_id}"
 **Triage:**
 ```bash
 # Pull connectivity logs and look for pattern
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh GET "/sim_cards/{sim_id}/wireless_connectivity_logs"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh --globoff \
+  "https://api.telnyx.com/v2/sim_cards/{sim_id}/wireless_connectivity_logs"
 
 # Check current carrier (MCC/MNC)
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh GET "/sim_cards/{sim_id}"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh --globoff \
+  "https://api.telnyx.com/v2/sim_cards/{sim_id}"
 # Look at: data.current_mcc, data.current_mnc
 ```
 
@@ -83,10 +89,12 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh GET "/sim_cards/{sim_id}"
 **Triage:**
 ```bash
 # Get activation code
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh GET "/sim_cards/{sim_id}/activation_code"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh --globoff \
+  "https://api.telnyx.com/v2/sim_cards/{sim_id}/activation_code"
 
 # Check installation status
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh GET "/sim_cards/{sim_id}"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh --globoff \
+  "https://api.telnyx.com/v2/sim_cards/{sim_id}"
 # Look at: data.esim_installation_status
 ```
 
@@ -104,10 +112,12 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh GET "/sim_cards/{sim_id}"
 **Triage:**
 ```bash
 # Check blocklist action status
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh GET "/sim_card_group_actions?filter[sim_card_group_id]={group_id}"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh --globoff \
+  "https://api.telnyx.com/v2/sim_card_group_actions?filter[sim_card_group_id]={group_id}"
 
 # Verify SIM is in the group
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh GET "/sim_cards/{sim_id}"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh --globoff \
+  "https://api.telnyx.com/v2/sim_cards/{sim_id}"
 # Look at: data.sim_card_group_id
 ```
 
