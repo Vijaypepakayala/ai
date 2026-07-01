@@ -8,9 +8,11 @@ Intelligence app instead of raw Telnyx API tools.
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from openai import OpenAI
+from telnyx_agent_toolkit import TelnyxAgentToolkit
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -21,6 +23,7 @@ def main() -> None:
     telnyx_api_key = os.environ["TELNYX_API_KEY"]
     governed_app = os.environ.get("TELNYX_GOVERNED_APP", "number-intelligence")
     openai_client = OpenAI()
+    openai_helper = TelnyxAgentToolkit(api_key=telnyx_api_key).get_openai_tool_executor()
 
     mcp_client = GovernedMcpAppClient(
         api_key=telnyx_api_key,
@@ -28,6 +31,13 @@ def main() -> None:
         client_name="telnyx-governed-openai-example",
     )
     tools = build_openai_tools(mcp_client.list_tools())
+    prompt_cache_key = openai_helper.build_prompt_cache_key(
+        namespace="telnyx-governed-mcp-example",
+        workflow=governed_app,
+        model="gpt-4o",
+        version="v1",
+        tool_names=[tool["function"]["name"] for tool in tools],
+    )
 
     messages = [
         {
@@ -52,11 +62,19 @@ def main() -> None:
     try:
         while True:
             print(f"Sending request to OpenAI with governed app '{governed_app}'...")
+            started_at = time.monotonic()
             response = openai_client.chat.completions.create(
                 model="gpt-4o",
                 messages=messages,
                 tools=tools,
+                prompt_cache_key=prompt_cache_key,
             )
+            telemetry = openai_helper.report_orchestration_telemetry(
+                response,
+                cache_key=prompt_cache_key,
+                latency_ms=int((time.monotonic() - started_at) * 1000),
+            )
+            print(f"Prompt-cache telemetry: {json.dumps(telemetry, indent=2)}")
             message = response.choices[0].message
 
             if not message.tool_calls:

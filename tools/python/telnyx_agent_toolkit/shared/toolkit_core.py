@@ -33,6 +33,10 @@ class ToolkitCore:
     def client(self) -> TelnyxAPIClient:
         return self._client
 
+    @property
+    def telemetry(self) -> TelemetryReporter:
+        return self._telemetry
+
     async def run_tool_async(self, tool_name: str, arguments: dict[str, Any]) -> str:
         """Execute a tool by name with the given arguments. Returns JSON string."""
         tool_def = TOOL_DEFINITIONS.get(tool_name)
@@ -139,6 +143,13 @@ class ToolkitCore:
                 api_path=tool_def["path"],
                 error_message=error_message,
             )
+        except Exception:
+            pass
+
+    def report_telemetry_event(self, **kwargs: Any) -> None:
+        """Report a pre-built telemetry event. Never raises."""
+        try:
+            self._telemetry.report(**kwargs)
         except Exception:
             pass
 

@@ -12,7 +12,12 @@ export type { FrictionReport } from "./shared/friction.js";
 export { TOOL_DEFINITIONS, PERMISSION_MAP } from "./shared/constants.js";
 export type { ToolDefinition, ToolParameter } from "./shared/constants.js";
 export { OpenAIToolkit } from "./openai/toolkit.js";
-export type { OpenAIToolCall } from "./openai/toolkit.js";
+export type {
+  OpenAIToolCall,
+  OpenAIPromptCacheKeyOptions,
+  OpenAIOrchestrationTelemetry,
+  ReportOpenAIOrchestrationOptions,
+} from "./openai/toolkit.js";
 export { VercelAIToolkit } from "./vercel-ai/toolkit.js";
 export { LangChainToolkit } from "./langchain/toolkit.js";
 

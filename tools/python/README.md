@@ -29,6 +29,7 @@ pip install telnyx-agent-toolkit[all]
 
 ```python
 import os
+import time
 from openai import OpenAI
 from telnyx_agent_toolkit import TelnyxAgentToolkit
 
@@ -46,18 +47,38 @@ toolkit = TelnyxAgentToolkit(
 client = OpenAI()
 tools = toolkit.get_openai_tools()
 executor = toolkit.get_openai_tool_executor()
+prompt_cache_key = executor.build_prompt_cache_key(
+    namespace="telnyx-account-assistant",
+    workflow="balance-check",
+    model="gpt-4o",
+    version="v1",
+    tool_names=[tool["function"]["name"] for tool in tools],
+)
 
+started_at = time.monotonic()
 response = client.chat.completions.create(
     model="gpt-4o",
     messages=[{"role": "user", "content": "What's my Telnyx balance?"}],
     tools=tools,
+    prompt_cache_key=prompt_cache_key,
 )
+
+orchestration_telemetry = executor.report_orchestration_telemetry(
+    response,
+    cache_key=prompt_cache_key,
+    latency_ms=int((time.monotonic() - started_at) * 1000),
+)
+print(orchestration_telemetry)
 
 # Execute tool calls
 for tool_call in response.choices[0].message.tool_calls:
     result = executor.execute(tool_call)
     print(result)
 ```
+
+The OpenAI adapter reports prompt-cache-safe telemetry through the existing telemetry reporter when `TELNYX_TELEMETRY_ENDPOINT` or `telemetry_endpoint=` is configured. The summary includes `usage.prompt_tokens_details.cached_tokens`, derived cache hit rate, uncached input tokens, and request latency without sending prompt text.
+
+For before/after cache analysis, keep `namespace`, `workflow`, and `version` stable across repeated scaffolding requests, compare `cache_hit_rate`, `cached_tokens`, `uncached_input_tokens`, and `latency_ms`, then bump `version` only when you intentionally change the scaffold shape.
 
 ### LangChain
 

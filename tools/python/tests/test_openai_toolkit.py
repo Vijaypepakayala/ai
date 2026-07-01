@@ -3,6 +3,7 @@
 import json
 from typing import Any
 from unittest.mock import MagicMock
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -127,3 +128,71 @@ class TestOpenAIToolkit:
                 assert "default" not in prop_schema, (
                     f"Tool {tool['function']['name']}.{prop_name} has 'default' in schema"
                 )
+
+    def test_build_prompt_cache_key_is_stable(self, toolkit: TelnyxAgentToolkit) -> None:
+        executor = toolkit.get_openai_tool_executor()
+        cache_key = executor.build_prompt_cache_key(
+            namespace="Telnyx Account Assistant",
+            workflow="Balance Check",
+            model="gpt-4o",
+            version="v2",
+            tool_names=["get_balance", "list_phone_numbers"],
+        )
+
+        assert cache_key == "telnyx-account-assistant:balance-check:gpt-4o:v2:tools=get_balance,list_phone_numbers"
+
+    def test_extract_orchestration_telemetry(self, toolkit: TelnyxAgentToolkit) -> None:
+        executor = toolkit.get_openai_tool_executor()
+        response = {
+            "id": "resp_123",
+            "model": "gpt-4o",
+            "usage": {
+                "prompt_tokens": 400,
+                "completion_tokens": 120,
+                "total_tokens": 520,
+                "prompt_tokens_details": {"cached_tokens": 250},
+                "completion_tokens_details": {"reasoning_tokens": 12},
+            },
+        }
+
+        telemetry = executor.extract_orchestration_telemetry(
+            response,
+            cache_key="acct:balance:gpt-4o:v1",
+            latency_ms=840,
+        )
+
+        assert telemetry["cached_tokens"] == 250
+        assert telemetry["uncached_input_tokens"] == 150
+        assert telemetry["cache_hit_rate"] == 0.625
+        assert telemetry["reasoning_tokens"] == 12
+        assert telemetry["latency_ms"] == 840
+        assert telemetry["cache_key_hash"] is not None
+
+    def test_report_orchestration_telemetry(self) -> None:
+        telemetry = MagicMock()
+        core = ToolkitCore(client=TelnyxAPIClient(api_key="test-key"), telemetry=telemetry)
+        executor = OpenAIToolkit(core=core, tools=[])
+        response = SimpleNamespace(
+            id="resp_456",
+            model="gpt-4o",
+            usage=SimpleNamespace(
+                prompt_tokens=100,
+                completion_tokens=40,
+                total_tokens=140,
+                prompt_tokens_details=SimpleNamespace(cached_tokens=60),
+                completion_tokens_details=SimpleNamespace(reasoning_tokens=4),
+            ),
+        )
+
+        summary = executor.report_orchestration_telemetry(
+            response,
+            cache_key="acct:balance:gpt-4o:v1",
+            latency_ms=320,
+        )
+
+        telemetry.report.assert_called_once()
+        payload = telemetry.report.call_args.kwargs
+        assert payload["tool"] == "openai_orchestration"
+        assert payload["context"]["cached_tokens"] == 60
+        assert payload["context"]["cache_hit_rate"] == 0.6
+        assert summary["total_tokens"] == 140

@@ -33,19 +33,38 @@ const toolkit = new TelnyxAgentToolkit("YOUR_TELNYX_API_KEY");
 const openai = new OpenAI();
 
 const tools = toolkit.getOpenAITools();
+const executor = toolkit.getOpenAIToolExecutor();
+const promptCacheKey = executor.buildPromptCacheKey({
+  namespace: "telnyx-account-assistant",
+  workflow: "balance-check",
+  model: "gpt-4",
+  version: "v1",
+  toolNames: toolkit.enabledTools.map((tool) => tool.name),
+});
+const startedAt = Date.now();
 const response = await openai.chat.completions.create({
   model: "gpt-4",
   messages: [{ role: "user", content: "Check my account balance" }],
   tools,
+  prompt_cache_key: promptCacheKey,
 });
 
+const orchestrationTelemetry = executor.reportOrchestrationTelemetry(response, {
+  cacheKey: promptCacheKey,
+  latencyMs: Date.now() - startedAt,
+});
+console.log(orchestrationTelemetry);
+
 // Execute tool calls
-const executor = toolkit.getOpenAIToolExecutor();
 for (const toolCall of response.choices[0].message.tool_calls ?? []) {
   const result = await executor.execute(toolCall);
   console.log(result);
 }
 ```
+
+The OpenAI helper keeps prompt-cache telemetry free of prompt contents. It emits `usage.prompt_tokens_details.cached_tokens`, the derived cache hit rate, uncached input tokens, and request latency through the existing telemetry reporter when `TELNYX_TELEMETRY_ENDPOINT` or `telemetryEndpoint` is configured.
+
+To compare prompt-layout changes, keep the `namespace`, `workflow`, and `version` stable for the same orchestration scaffold, then compare `cache_hit_rate`, `cached_tokens`, `uncached_input_tokens`, and `latency_ms` before and after the change. Bump `version` when you intentionally invalidate the scaffold.
 
 ### Vercel AI SDK
 

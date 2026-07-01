@@ -5,7 +5,7 @@
 import { TelnyxAPIClient } from "./api-client.js";
 import { TOOL_DEFINITIONS, type ToolDefinition } from "./constants.js";
 import { FrictionReporter } from "./friction.js";
-import { TelemetryReporter } from "./telemetry.js";
+import { TelemetryReporter, type TelemetryEvent } from "./telemetry.js";
 
 export class ToolkitCore {
   private readonly client: TelnyxAPIClient;
@@ -20,6 +20,14 @@ export class ToolkitCore {
 
   getClient(): TelnyxAPIClient {
     return this.client;
+  }
+
+  getTelemetryReporter(): TelemetryReporter {
+    return this.telemetry;
+  }
+
+  reportTelemetryEvent(event: TelemetryEvent): void {
+    this.telemetry.report(event);
   }
 
   /**
