@@ -24,6 +24,16 @@ runtime and then invokes the installer for you. It avoids the common failure
 mode where a machine's default `python3` is still 3.9.x, and it does not rely
 on your shell already exposing a `uv tool` bin directory on `PATH`.
 
+## Choose the path that matches your goal
+
+If you want to install the plugin into an existing Hermes setup, follow
+`Integration into hermes-agent` below. You do not need a local Hermes source
+checkout just to install and enable the plugin.
+
+If you want to run this repo's contributor tests, you do need a local
+`hermes-agent` checkout because the runtime and plugin-loading tests import
+Hermes `gateway.*` modules directly.
+
 ## What's inside
 
 | File | Purpose |
@@ -47,6 +57,21 @@ Requirements:
   `HERMES_AGENT_ROOT` at the parent Hermes home directory when the checkout
   lives at `.../hermes-agent`.
 - `uv` is recommended for reproducible local test dependencies.
+
+Hermes checkout contract:
+
+- `HERMES_AGENT_ROOT` must resolve to a real local `hermes-agent` repository
+  checkout, not just the Hermes data directory such as `~/.hermes`.
+- If your checkout lives at `~/.hermes/hermes-agent`, use
+  `export HERMES_AGENT_ROOT="$HOME/.hermes/hermes-agent"`.
+- If you prefer to point at the parent Hermes home directory, use
+  `export HERMES_HOME="$HOME/.hermes"` and either leave
+  `HERMES_AGENT_ROOT` unset or set `export HERMES_AGENT_ROOT="$HERMES_HOME"`.
+- A quick sanity check is:
+
+```bash
+test -d "$HERMES_AGENT_ROOT/gateway" -a -f "$HERMES_AGENT_ROOT/pyproject.toml" && echo "Hermes checkout looks valid"
+```
 
 Hermes-dependent test modules skip with an explicit setup message when that
 checkout is missing. Static tests still run without Hermes, and the bootstrap
@@ -312,6 +337,15 @@ message lifecycle webhooks so delivery receipts do not trigger agent replies.
 - Phone numbers are redacted in logs where Hermes' helpers support it.
 
 ## Running tests
+
+Contributor test reminder:
+
+- `tests/test_telnyx_sms_static.py` runs without a Hermes checkout.
+- `tests/test_telnyx_sms_runtime.py` and `tests/test_telnyx_sms_plugin_loading.py`
+  require `HERMES_AGENT_ROOT` to resolve to a local `hermes-agent` checkout.
+- If you only want to validate the installer path from issue `#3`, use the
+  one-command install flow in `Integration into hermes-agent` instead of
+  bootstrapping the contributor test environment first.
 
 ```bash
 # No credentials needed; does not send SMS

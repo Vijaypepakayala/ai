@@ -86,12 +86,20 @@ def test_skill_documents_installer_first_instead_of_manual_copy():
 
 def test_readme_documents_hermes_checkout_contract():
     readme = (ROOT / 'README.md').read_text()
+    assert 'Choose the path that matches your goal' in readme
+    assert 'You do not need a local Hermes source\ncheckout just to install and enable the plugin' in readme
+    assert "you do need a local\n`hermes-agent` checkout because the runtime and plugin-loading tests import" in readme
     assert 'Set `HERMES_AGENT_ROOT` to the checkout itself, or set `HERMES_HOME`' in readme
+    assert 'Hermes checkout contract:' in readme
+    assert 'not just the Hermes data directory such as `~/.hermes`' in readme
+    assert 'export HERMES_AGENT_ROOT="$HOME/.hermes/hermes-agent"' in readme
+    assert 'test -d "$HERMES_AGENT_ROOT/gateway" -a -f "$HERMES_AGENT_ROOT/pyproject.toml"' in readme
     assert 'or just: export HERMES_AGENT_ROOT="$HERMES_HOME"' in readme
     assert 'Hermes-dependent test modules skip with an explicit setup message' in readme
     assert 'contributors reach the skip guidance' in readme
     assert '`Path | None` annotation' in readme
     assert 'Hermes-dependent tests skip with a Python-version message' in readme
+    assert 'If you only want to validate the installer path from issue `#3`' in readme
 
 
 def test_hermes_bootstrap_defers_annotation_evaluation():
