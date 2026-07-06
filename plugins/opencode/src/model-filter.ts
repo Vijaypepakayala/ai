@@ -47,7 +47,6 @@ export function modelConfig(
   if (!id || !task || context === undefined) return undefined
   if (!TEXT_TASKS.has(task)) return undefined
   if (!isTelnyxHostedModel(model)) return undefined
-  if (knownUnsafeModelReason(id, env)) return undefined
 
   const shortId = id.includes("/") ? id.split("/").pop() ?? id : id
   const vision = model.is_vision_supported === true

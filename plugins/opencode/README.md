@@ -33,7 +33,7 @@ opencode plugin -g @telnyx/opencode
 - lets users enable additional Telnyx-hosted models through the `/telnyx` TUI command
 - registers thinking-capable models with `reasoning: true` and two variants: `thinking` (default, `enable_thinking: true`) and `no-thinking` (`enable_thinking: false`)
 - strips `maxOutputTokens` before requests so Telnyx accepts tool-enabled runs
-- excludes known-unsafe hosted models from plugin registration by default; currently `zai-org/GLM-5.2` is withheld because streamed tool-call arguments may be corrupted in OpenCode workflows
+- emits a runtime warning when using a model with a known compatibility issue (e.g. `zai-org/GLM-5.2` streamed tool-call corruption)
 
 ## Authenticate
 
@@ -125,12 +125,6 @@ Path:
 - `~/.config/opencode/telnyx-models.json`
 - override with `OPENCODE_TELNYX_MODELS_PATH`
 
-Known-unsafe models are still withheld from registration even if they appear in the saved allowlist. For internal validation only, set:
-
-```bash
-export OPENCODE_TELNYX_INCLUDE_UNSAFE_MODELS=1
-```
-
 ## TUI model manager
 
 The package also registers a `/telnyx` command (alias: `/telnyx-models`) that opens an interactive model manager in the OpenCode TUI.
@@ -204,9 +198,23 @@ or set `TELNYX_API_KEY` and retry.
 
 Some smaller models cannot fit OpenCode's full tool list and system prompt into their effective prompt budget. This is model-specific, not a plugin auth issue.
 
-### `zai-org/GLM-5.2` does not appear in `/telnyx`
+### Known issue: `zai-org/GLM-5.2` streamed tool-call arguments
 
-As of June 27, 2026, the plugin excludes `zai-org/GLM-5.2` by default because we have an open compatibility investigation for corrupted streamed tool-call arguments. Set `OPENCODE_TELNYX_INCLUDE_UNSAFE_MODELS=1` only if you are intentionally validating that failure mode.
+As of June 27, 2026, `zai-org/GLM-5.2` may produce corrupted tool-call arguments (duplicated or overlapped substrings) when used with streaming and tools in OpenCode workflows. The model remains registered and visible in `/telnyx` — plain chat and non-streaming usage are unaffected.
+
+When you start a session with a model that has a known issue, the plugin emits a warning to the OpenCode log:
+
+```
+[telnyx] ⚠ Known issue with zai-org/GLM-5.2: streamed tool-call arguments may be corrupted …
+```
+
+To suppress the warning, set:
+
+```bash
+export OPENCODE_TELNYX_INCLUDE_UNSAFE_MODELS=1
+```
+
+This also re-enables live probing of the model in `npm run test:live` (by default the harness skips models with known issues).
 
 ### How do I run the lightweight package tests?
 

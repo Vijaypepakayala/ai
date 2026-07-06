@@ -3,7 +3,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import type { Plugin } from "@opencode-ai/plugin"
 import { DEFAULT_ENABLED_MODELS, loadEnabledModels, persistEnabledModels } from "./models-config"
-import { isTelnyxHostedModel, modelConfig } from "./model-filter"
+import { isTelnyxHostedModel, modelConfig, knownUnsafeModelReason } from "./model-filter"
 
 const PROVIDER_ID = "telnyx"
 const API_BASE = "https://api.telnyx.com/v2/ai"
@@ -185,14 +185,14 @@ const TelnyxAuthPlugin: Plugin = async () => {
       }
     },
 
-    "chat.message": async (input: { sessionID: string; model?: { providerID?: string }; variant?: string }) => {
+    "chat.message": async (input: { sessionID: string; model?: { providerID?: string; modelID?: string }; variant?: string }) => {
       if (input.model?.providerID !== PROVIDER_ID) return
       if (input.variant) sessionVariants.set(input.sessionID, input.variant)
       else sessionVariants.delete(input.sessionID)
     },
 
     "chat.params": async (
-      input: { model?: { providerID?: string; options?: { enable_thinking?: boolean } }; sessionID: string },
+      input: { model?: { providerID?: string; modelID?: string; id?: string; options?: { enable_thinking?: boolean } }; sessionID: string },
       output: { maxOutputTokens?: number; options?: Record<string, unknown> },
     ) => {
       if (input.model?.providerID !== PROVIDER_ID) return
@@ -201,6 +201,17 @@ const TelnyxAuthPlugin: Plugin = async () => {
       if (variant === "no-thinking") {
         output.options ??= {}
         output.options.enable_thinking = false
+      }
+
+      const modelId = input.model?.modelID ?? input.model?.id
+      if (modelId) {
+        const issue = knownUnsafeModelReason(modelId)
+        if (issue) {
+          console.warn(
+            `[telnyx] ⚠ Known issue with ${modelId}: ${issue}. ` +
+            `If you encounter corrupted tool-call output while streaming, this is likely the cause.`,
+          )
+        }
       }
     },
   }

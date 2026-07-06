@@ -11,7 +11,7 @@ describe("model-filter", () => {
     else process.env[envVar] = originalUnsafeOverride
   })
 
-  it("filters GLM-5.2 by default because streamed tool-call arguments are known unsafe", () => {
+  it("registers GLM-5.2 normally (it is not withheld from modelConfig)", () => {
     const glmModel = {
       id: "zai-org/GLM-5.2",
       owned_by: "telnyx",
@@ -20,22 +20,7 @@ describe("model-filter", () => {
       max_output_length: 16_384,
     }
 
-    const reason = knownUnsafeModelReason(glmModel.id)
-    assert.match(reason ?? "", /streamed tool-call arguments/i)
-    assert.equal(modelConfig(glmModel), undefined)
-  })
-
-  it("allows GLM-5.2 when the explicit unsafe-model override is enabled", () => {
-    process.env[envVar] = "1"
-    const glmModel = {
-      id: "zai-org/GLM-5.2",
-      owned_by: "telnyx",
-      task: "text-generation",
-      context_length: 1_000_000,
-      max_output_length: 16_384,
-    }
-
-    assert.equal(knownUnsafeModelReason(glmModel.id), undefined)
+    // modelConfig returns a full config — GLM-5.2 is registered and visible
     assert.deepEqual(modelConfig(glmModel), [
       "zai-org/GLM-5.2",
       {
@@ -58,5 +43,20 @@ describe("model-filter", () => {
         },
       },
     ])
+  })
+
+  it("reports the known streaming issue for GLM-5.2 (for runtime warnings)", () => {
+    const reason = knownUnsafeModelReason("zai-org/GLM-5.2")
+    assert.match(reason ?? "", /streamed tool-call arguments/i)
+  })
+
+  it("suppresses the known-issue warning when the opt-in env is set", () => {
+    process.env[envVar] = "1"
+    assert.equal(knownUnsafeModelReason("zai-org/GLM-5.2"), undefined)
+  })
+
+  it("returns undefined for models with no known issues", () => {
+    assert.equal(knownUnsafeModelReason("zai-org/GLM-5.1-FP8"), undefined)
+    assert.equal(knownUnsafeModelReason("moonshotai/Kimi-K2.6"), undefined)
   })
 })
