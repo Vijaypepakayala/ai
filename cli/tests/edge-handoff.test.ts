@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI = join(__dirname, "..", "bin", "telnyx-agent.ts");
 
-function withFakeEdgeCli(mode: "none" | "oauth" | "api_key" = "api_key") {
+function withFakeEdgeCli(mode: "none" | "oauth" | "api_key" | "expired_oauth" = "api_key") {
   const tempDir = mkdtempSync(join(tmpdir(), "telnyx-edge-fake-"));
   const binDir = join(tempDir, "bin");
   mkdirSync(binDir, { recursive: true });
@@ -18,12 +18,20 @@ function withFakeEdgeCli(mode: "none" | "oauth" | "api_key" = "api_key") {
     fakeEdge,
     `#!/usr/bin/env node
 const args = process.argv.slice(2);
+if (args.includes('--version')) {
+  console.log('telnyx-edge v0.2.3');
+  process.exit(0);
+}
+if (args[0] === 'actors' && args.includes('--help')) {
+  console.log('Manage account-scoped StatefulActor types');
+  process.exit(0);
+}
 if (args[0] === 'auth' && args[1] === 'api-key' && args[2] === 'set' && args.includes('--help')) {
   console.log('Set API key for authentication. The API key must be provided as an argument.');
   process.exit(0);
 }
 if (args.includes('--help')) {
-  console.log(['telnyx-edge v0.1.0', 'Commands: auth login, auth api-key set, ship, list, secrets, bindings'].join('\\n'));
+  console.log(['Telnyx Edge CLI v0.2.3', '', 'Available Commands:', '  actors      Manage StatefulActor types', '  auth        Authentication commands', '  ship        Ship a function', '  list        List functions', '  secrets     Manage secrets', '  bindings    Manage bindings'].join('\\n'));
   process.exit(0);
 }
 if (args[0] === 'auth' && args[1] === 'status') {
@@ -31,8 +39,12 @@ if (args[0] === 'auth' && args[1] === 'status') {
     console.log(['API Endpoint: https://api.telnyx.com', '', 'Authentication Status: None', 'Status: ❌ Not authenticated', "Run 'telnyx-edge auth login' or 'telnyx-edge auth api-key set <api_key>' to authenticate"].join('\\n'));
     process.exit(0);
   }
+  if ('${mode}' === 'expired_oauth') {
+    console.log(['API Endpoint: https://api.telnyx.com', '', 'Authentication Status: OAuth 2.0', 'Token Type: Bearer', 'Scopes: admin', 'Expires: 2026-06-22 18:35:42 IST', 'Status: ⚠️ Token expired - run telnyx-edge auth login to refresh'].join('\\n'));
+    process.exit(0);
+  }
   if ('${mode}' === 'oauth') {
-    console.log(['API Endpoint: https://api.telnyx.com', '', 'Authentication Status: OAuth', 'Status: ✅ Authenticated'].join('\\n'));
+    console.log(['API Endpoint: https://api.telnyx.com', '', 'Authentication Status: OAuth 2.0', 'Token Type: Bearer', 'Scopes: admin', 'Expires: 2026-07-06 12:11:42 IST', 'Status: ✅ Authenticated'].join('\\n'));
     process.exit(0);
   }
   console.log(['API Endpoint: https://api.telnyx.com', '', 'Authentication Status: API Key', 'Status: ✅ Authenticated'].join('\\n'));
@@ -82,6 +94,17 @@ describe("CLI — Edge Compute handoff", () => {
     assert.ok(commands.some((c: string) => c.includes("setup-edge-webhook")));
   });
 
+  it("capabilities JSON includes stateful actors entry", () => {
+    const output = run(["capabilities", "--json"]);
+    const data = JSON.parse(output);
+    const category = Object.keys(data.api_capabilities || {}).find((k) => k.includes("Edge Compute"));
+    assert.ok(category);
+    const caps = data.api_capabilities[category] as Array<{ name: string; description: string }>;
+    const actorCap = caps.find((c) => c.name === "Stateful Actors");
+    assert.ok(actorCap, "Stateful Actors capability should be listed");
+    assert.ok(actorCap!.description.toLowerCase().includes("per-entity"));
+  });
+
   it("edge-doctor reports API-key auth support and readiness", () => {
     const fake = withFakeEdgeCli("api_key");
     const output = run(["edge-doctor", "--json"], fake.env);
@@ -91,6 +114,7 @@ describe("CLI — Edge Compute handoff", () => {
     assert.equal(data.authenticated, true);
     assert.equal(data.auth_mode, "api_key");
     assert.equal(data.api_key_auth_supported, true);
+    assert.equal(data.stateful_actors_supported, true);
     assert.ok(Array.isArray(data.next_steps));
   });
 
@@ -102,7 +126,30 @@ describe("CLI — Edge Compute handoff", () => {
     assert.equal(data.telnyx_edge_installed, true);
     assert.equal(data.authenticated, false);
     assert.equal(data.api_key_auth_supported, true);
+    assert.equal(data.stateful_actors_supported, true);
     assert.ok(data.next_steps.some((s: string) => s.includes("auth api-key set")));
+  });
+
+  it("edge-doctor detects expired OAuth token as not authenticated", () => {
+    const fake = withFakeEdgeCli("expired_oauth");
+    const output = run(["edge-doctor", "--json"], fake.env);
+    const data = JSON.parse(output);
+    assert.equal(data.ready, false);
+    assert.equal(data.telnyx_edge_installed, true);
+    assert.equal(data.authenticated, false, "expired token should not be authenticated");
+    assert.equal(data.auth_mode, "oauth");
+    assert.equal(data.stateful_actors_supported, true);
+  });
+
+  it("edge-doctor suggests stateful actors when supported and authenticated", () => {
+    const fake = withFakeEdgeCli("api_key");
+    const output = run(["edge-doctor", "--json"], fake.env);
+    const data = JSON.parse(output);
+    assert.equal(data.ready, true);
+    assert.ok(
+      data.next_steps.some((s: string) => s.includes("--actor")),
+      "next_steps should mention --actor when stateful actors are supported",
+    );
   });
 
   it("setup-edge-mcp returns API-key auth handoff when unauthenticated", () => {
@@ -111,6 +158,7 @@ describe("CLI — Edge Compute handoff", () => {
     const data = JSON.parse(output);
     assert.equal(data.ready, false);
     assert.equal(data.api_key_auth_supported, true);
+    assert.equal(data.stateful_actors_supported, true);
     assert.equal(data.auth_command, "telnyx-edge auth api-key set <your-api-key>");
     assert.equal(data.example, "examples/ts/mcp-server");
     assert.ok(data.deploy_command.includes("demo-mcp"));
@@ -122,7 +170,28 @@ describe("CLI — Edge Compute handoff", () => {
     const data = JSON.parse(output);
     assert.equal(data.ready, true);
     assert.equal(data.auth_mode, "api_key");
+    assert.equal(data.stateful_actors_supported, true);
     assert.equal(data.example, "examples/js/webhook-receiver");
     assert.ok(data.deploy_command.includes("demo-webhook"));
+  });
+
+  it("setup-edge-mcp notes mention stateful actors when supported", () => {
+    const fake = withFakeEdgeCli("api_key");
+    const output = run(["setup-edge-mcp", "--json"], fake.env);
+    const data = JSON.parse(output);
+    assert.ok(
+      data.notes.some((n: string) => n.includes("--actor")),
+      "notes should mention --actor when stateful actors are supported",
+    );
+  });
+
+  it("setup-edge-webhook notes mention stateful actors when supported", () => {
+    const fake = withFakeEdgeCli("api_key");
+    const output = run(["setup-edge-webhook", "--json"], fake.env);
+    const data = JSON.parse(output);
+    assert.ok(
+      data.notes.some((n: string) => n.includes("--actor")),
+      "notes should mention --actor when stateful actors are supported",
+    );
   });
 });

@@ -3,13 +3,14 @@
  */
 
 import { outputJson, printError, printSuccess, printWarning } from "../utils/output.ts";
-import { getEdgeAuthStatus, hasEdgeCli, supportsApiKeyAuth } from "../edge-cli.ts";
+import { getEdgeAuthStatus, hasEdgeCli, supportsApiKeyAuth, supportsStatefulActors } from "../edge-cli.ts";
 
 interface SetupEdgeMcpResult {
   ready: boolean;
   authenticated: boolean;
   auth_mode: "api_key" | "oauth" | "none" | "unknown";
   api_key_auth_supported: boolean;
+  stateful_actors_supported: boolean;
   example: string;
   auth_command: string;
   deploy_command: string;
@@ -25,17 +26,28 @@ export async function setupEdgeMcpCommand(flags: Record<string, string | boolean
 
   const hasEdge = hasEdgeCli();
   const apiKeyAuthSupported = hasEdge ? supportsApiKeyAuth() : false;
+  const statefulActorsSupported = hasEdge ? supportsStatefulActors() : false;
   const authStatus = hasEdge ? safeAuthStatus() : { authenticated: false, mode: "none" as const };
   const authCommand = apiKeyAuthSupported
     ? "telnyx-edge auth api-key set <your-api-key>"
     : "telnyx-edge auth login";
   const deployCommand = `telnyx-edge new-func --from-dir=${MCP_EXAMPLE} --name=${name} && cd ${name} && telnyx-edge ship`;
 
+  const notes = [
+    "team-telnyx/ai provides the integration pattern, not the Edge lifecycle.",
+    "Use telnyx-edge for auth, deploy, secrets, bindings, and lifecycle management.",
+    "After deploy, connect the exposed MCP or HTTP boundary back into your AI workflow.",
+  ];
+  if (statefulActorsSupported) {
+    notes.push("For stateful MCP/webhook scenarios (per-user sessions, connection state): consider telnyx-edge new-func --actor --language ts");
+  }
+
   const result: SetupEdgeMcpResult = {
     ready: hasEdge && authStatus.authenticated,
     authenticated: authStatus.authenticated,
     auth_mode: authStatus.mode,
     api_key_auth_supported: apiKeyAuthSupported,
+    stateful_actors_supported: statefulActorsSupported,
     example: MCP_EXAMPLE,
     auth_command: authCommand,
     deploy_command: deployCommand,
@@ -44,11 +56,7 @@ export async function setupEdgeMcpCommand(flags: Record<string, string | boolean
       `Authenticate with ${authCommand}`,
       "Use a real Edge Compute example as the starting point",
     ],
-    notes: [
-      "team-telnyx/ai provides the integration pattern, not the Edge lifecycle.",
-      "Use telnyx-edge for auth, deploy, secrets, bindings, and lifecycle management.",
-      "After deploy, connect the exposed MCP or HTTP boundary back into your AI workflow.",
-    ],
+    notes,
   };
 
   if (jsonOutput) {
