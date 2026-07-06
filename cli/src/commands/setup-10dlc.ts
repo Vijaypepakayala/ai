@@ -144,6 +144,19 @@ function lintMessageFlow(flow: string): ValidationIssue[] {
   return issues;
 }
 
+/** Detect placeholder patterns ([...], <...>, sample_text, placeholder) using linear string ops. */
+function hasPlaceholderPattern(msg: string): boolean {
+  // [..] bracket placeholder
+  const bracketOpen = msg.indexOf("[");
+  if (bracketOpen !== -1 && msg.indexOf("]", bracketOpen) !== -1) return true;
+  // <..> angle placeholder
+  const angleOpen = msg.indexOf("<");
+  if (angleOpen !== -1 && msg.indexOf(">", angleOpen) !== -1) return true;
+  // Explicit placeholder words
+  const lower = msg.toLowerCase();
+  return lower.includes("sample_text") || lower.includes("placeholder");
+}
+
 /** Validate a sample message. Returns blocking + warning issues. */
 function validateSampleMessage(msg: string, brand: string, label: string): ValidationIssue[] {
   const lower = msg.toLowerCase();
@@ -156,8 +169,8 @@ function validateSampleMessage(msg: string, brand: string, label: string): Valid
     }
   }
 
-  // Warning: placeholder text (uses negated character classes to avoid ReDoS)
-  if (/\[[^\]]*\]|<[^>]*>/.test(msg) || /\bsample_text\b|\bplaceholder\b/i.test(msg)) {
+  // Warning: placeholder text (string-based checks to avoid ReDoS — no regex on uncontrolled input)
+  if (hasPlaceholderPattern(msg)) {
     issues.push({ severity: "warning", field: label, message: `${label} contains placeholder text — replace with real message content` });
   }
 
