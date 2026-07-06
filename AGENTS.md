@@ -115,7 +115,7 @@ If you are an AI agent **using** Telnyx (not modifying this repo), the entry poi
 | Use Telnyx APIs from an agent framework (OpenAI Agents SDK, LangChain, CrewAI, Vercel AI SDK) | `tools/python/` or `tools/typescript/`                                   |
 | Talk to Telnyx via MCP                                    | `https://api.telnyx.com/v2/mcp` (Bearer auth) — proxy in `tools/mcp/`   |
 | Provision Telnyx infrastructure programmatically          | `cli/` — `npm install -g @telnyx/cli`                                   |
-| Get an API key as an agent                                | `https://telnyx.com/agent-signup.md` (PoW-based programmatic signup)   |
+| Get an API key as an agent                                | `https://telnyx.com/agent-signup.md` (bot challenge signup, including email handling)   |
 
 ### Auth (for runtime consumers)
 

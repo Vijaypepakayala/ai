@@ -121,7 +121,7 @@ describe("TypeScript SDK — Read-Only API", () => {
       method: "POST",
       headers,
       body: JSON.stringify({
-        model: "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        model: "openai/gpt-4o",
         messages: [{ role: "user", content: "Say OK" }],
         max_tokens: 3,
       }),
