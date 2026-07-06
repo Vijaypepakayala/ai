@@ -50,13 +50,17 @@ export function getEdgeVersion(): string | null {
 /**
  * Feature detection for Stateful Actors (Beta, telnyx-edge v0.2.3+).
  *
- * Probes whether the installed CLI exposes the `actors` subcommand rather than
- * relying on version parsing, so canary/preview builds are detected too.
+ * Checks whether `new-func` exposes the `--actor` flag — the documented
+ * quick-start workflow (`telnyx-edge new-func --actor --name=account`).
+ * This is the actual scaffolding capability the wrapper cares about, not
+ * the account-scoped `actors` management subcommand. An actor-capable CLI
+ * that lacks `actors --help` (e.g. a canary build or the minimal surface
+ * described in the published quick start) still reports true here.
  */
 export function supportsStatefulActors(): boolean {
   try {
-    runEdge(["actors", "--help"]);
-    return true;
+    const out = runEdge(["new-func", "--help"]);
+    return /--actor\b/i.test(out);
   } catch {
     return false;
   }

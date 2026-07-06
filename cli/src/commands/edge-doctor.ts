@@ -57,8 +57,8 @@ export async function edgeDoctorCommand(flags: Record<string, string | boolean>)
       name: "Stateful actors supported",
       ok: statefulActorsSupported,
       detail: statefulActorsSupported
-        ? "actors subcommand available (v0.2.3+)"
-        : "telnyx-edge actors not available — upgrade to v0.2.3+ for stateful actors",
+        ? "new-func --actor available (v0.2.3+)"
+        : "new-func --actor not available — upgrade to v0.2.3+ for stateful actors",
     });
 
     try {

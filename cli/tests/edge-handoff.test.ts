@@ -22,8 +22,8 @@ if (args.includes('--version')) {
   console.log('telnyx-edge v0.2.3');
   process.exit(0);
 }
-if (args[0] === 'actors' && args.includes('--help')) {
-  console.log('Manage account-scoped StatefulActor types');
+if (args[0] === 'new-func' && args.includes('--help')) {
+  console.log(['Create a new edge computing function', '', 'Flags:', '      --actor             Scaffold a StatefulActor (telnyx.toml) project — TypeScript only', '      --from-dir string   Copy files from existing directory', '  -h, --help              help for new-func', '  -l, --language string   Language runtime (go, js, ts, python, quarkus)', '  -n, --name string       Name of the function to create'].join('\\n'));
   process.exit(0);
 }
 if (args[0] === 'auth' && args[1] === 'api-key' && args[2] === 'set' && args.includes('--help')) {
