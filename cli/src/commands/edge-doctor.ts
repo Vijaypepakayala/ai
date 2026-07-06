@@ -7,7 +7,7 @@
  */
 
 import { outputJson, printError, printSuccess, printWarning } from "../utils/output.ts";
-import { getEdgeAuthStatus, getEdgeHelp, hasEdgeCli, supportsApiKeyAuth } from "../edge-cli.ts";
+import { getEdgeAuthStatus, getEdgeHelp, getEdgeVersion, hasEdgeCli, supportsApiKeyAuth, supportsStatefulActors } from "../edge-cli.ts";
 
 interface EdgeDoctorResult {
   ready: boolean;
@@ -16,6 +16,7 @@ interface EdgeDoctorResult {
   authenticated: boolean;
   auth_mode: "api_key" | "oauth" | "none" | "unknown";
   api_key_auth_supported: boolean;
+  stateful_actors_supported: boolean;
   checks: Array<{ name: string; ok: boolean; detail: string }>;
   next_steps: string[];
 }
@@ -29,11 +30,12 @@ export async function edgeDoctorCommand(flags: Record<string, string | boolean>)
   let authenticated = false;
   let authMode: EdgeDoctorResult["auth_mode"] = "none";
   let apiKeyAuthSupported = false;
+  let statefulActorsSupported = false;
 
   try {
     const out = getEdgeHelp();
     installed = hasEdgeCli();
-    version = extractVersion(out) ?? "installed";
+    version = getEdgeVersion() ?? extractVersion(out) ?? "installed";
     checks.push({ name: "telnyx-edge installed", ok: true, detail: version });
   } catch (err: any) {
     const detail = err?.code === "ENOENT"
@@ -48,6 +50,15 @@ export async function edgeDoctorCommand(flags: Record<string, string | boolean>)
       name: "API-key auth supported",
       ok: apiKeyAuthSupported,
       detail: apiKeyAuthSupported ? "auth api-key set is available" : "no auth api-key set support detected",
+    });
+
+    statefulActorsSupported = supportsStatefulActors();
+    checks.push({
+      name: "Stateful actors supported",
+      ok: statefulActorsSupported,
+      detail: statefulActorsSupported
+        ? "new-func --actor available (v0.2.3+)"
+        : "new-func --actor not available — upgrade to v0.2.3+ for stateful actors",
     });
 
     try {
@@ -95,6 +106,9 @@ export async function edgeDoctorCommand(flags: Record<string, string | boolean>)
       "Deploy with: telnyx-edge ship",
       "Then connect the exposed HTTP or MCP boundary back into your AI workflow.",
     ];
+    if (statefulActorsSupported) {
+      nextSteps.push("For stateful workloads (carts, sessions, call legs): telnyx-edge new-func --actor --language ts --name my-actor");
+    }
   }
 
   const result: EdgeDoctorResult = {
@@ -104,6 +118,7 @@ export async function edgeDoctorCommand(flags: Record<string, string | boolean>)
     authenticated,
     auth_mode: authMode,
     api_key_auth_supported: apiKeyAuthSupported,
+    stateful_actors_supported: statefulActorsSupported,
     checks,
     next_steps: nextSteps,
   };

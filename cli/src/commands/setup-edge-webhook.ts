@@ -3,13 +3,14 @@
  */
 
 import { outputJson, printError, printSuccess, printWarning } from "../utils/output.ts";
-import { getEdgeAuthStatus, hasEdgeCli, supportsApiKeyAuth } from "../edge-cli.ts";
+import { getEdgeAuthStatus, hasEdgeCli, supportsApiKeyAuth, supportsStatefulActors } from "../edge-cli.ts";
 
 interface SetupEdgeWebhookResult {
   ready: boolean;
   authenticated: boolean;
   auth_mode: "api_key" | "oauth" | "none" | "unknown";
   api_key_auth_supported: boolean;
+  stateful_actors_supported: boolean;
   example: string;
   auth_command: string;
   deploy_command: string;
@@ -25,17 +26,28 @@ export async function setupEdgeWebhookCommand(flags: Record<string, string | boo
 
   const hasEdge = hasEdgeCli();
   const apiKeyAuthSupported = hasEdge ? supportsApiKeyAuth() : false;
+  const statefulActorsSupported = hasEdge ? supportsStatefulActors() : false;
   const authStatus = hasEdge ? safeAuthStatus() : { authenticated: false, mode: "none" as const };
   const authCommand = apiKeyAuthSupported
     ? "telnyx-edge auth api-key set <your-api-key>"
     : "telnyx-edge auth login";
   const deployCommand = `telnyx-edge new-func --from-dir=${WEBHOOK_EXAMPLE} --name=${name} && cd ${name} && telnyx-edge ship`;
 
+  const notes = [
+    "Use this when your AI workflow needs an HTTP ingress point at the edge.",
+    "The deployed function lifecycle is still owned by telnyx-edge.",
+    "After deploy, point your webhook-producing system at the Edge endpoint and let team-telnyx/ai handle orchestration guidance.",
+  ];
+  if (statefulActorsSupported) {
+    notes.push("For stateful MCP/webhook scenarios (per-user sessions, connection state): consider telnyx-edge new-func --actor --language ts");
+  }
+
   const result: SetupEdgeWebhookResult = {
     ready: hasEdge && authStatus.authenticated,
     authenticated: authStatus.authenticated,
     auth_mode: authStatus.mode,
     api_key_auth_supported: apiKeyAuthSupported,
+    stateful_actors_supported: statefulActorsSupported,
     example: WEBHOOK_EXAMPLE,
     auth_command: authCommand,
     deploy_command: deployCommand,
@@ -44,11 +56,7 @@ export async function setupEdgeWebhookCommand(flags: Record<string, string | boo
       `Authenticate with ${authCommand}`,
       "Start from the webhook receiver example",
     ],
-    notes: [
-      "Use this when your AI workflow needs an HTTP ingress point at the edge.",
-      "The deployed function lifecycle is still owned by telnyx-edge.",
-      "After deploy, point your webhook-producing system at the Edge endpoint and let team-telnyx/ai handle orchestration guidance.",
-    ],
+    notes,
   };
 
   if (jsonOutput) {

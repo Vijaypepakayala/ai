@@ -44,6 +44,7 @@ const CAPABILITIES: Record<string, Capability[]> = {
     { name: "Edge Functions", description: "Pair Telnyx AI workflows with Telnyx Edge Compute. telnyx-agent now provides an executable handoff and prefers API-key auth for agent use when supported by telnyx-edge.", actions: ["see_guides_edge_compute"] },
     { name: "Deployment Handoff", description: "Use team-telnyx/ai for orchestration patterns and telnyx-edge for deploy, secrets, bindings, and lifecycle management.", actions: ["telnyx_edge_ship", "telnyx_edge_secrets", "telnyx_edge_bindings"] },
     { name: "Edge CLI Bridge", description: "Thin executable handoff from telnyx-agent into telnyx-edge for real MCP and webhook starting points.", actions: ["edge_doctor", "setup_edge_mcp", "setup_edge_webhook"] },
+    { name: "Stateful Actors", description: "Per-entity stateful workloads on Edge Compute (Beta). Single-threaded, per-name, persisted. No external database needed for carts, sessions, call legs, chat rooms.", actions: ["telnyx_edge_new_func_actor", "telnyx_edge_actors_list", "telnyx_edge_types"] },
   ],
   "📋 10DLC Compliance": [
     { name: "10DLC Registration", description: "Register brands and campaigns for US A2P messaging", actions: ["create_10dlc_brand", "create_10dlc_campaign", "assign_10dlc_number"] },
