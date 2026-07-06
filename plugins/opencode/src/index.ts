@@ -204,11 +204,14 @@ const TelnyxAuthPlugin: Plugin = async () => {
       }
 
       const modelId = input.model?.modelID ?? input.model?.id
-      if (modelId) {
-        const issue = knownUnsafeModelReason(modelId)
+      const rawModelId = modelId?.startsWith(`${PROVIDER_ID}/`)
+        ? modelId.slice(PROVIDER_ID.length + 1)
+        : modelId
+      if (rawModelId) {
+        const issue = knownUnsafeModelReason(rawModelId)
         if (issue) {
           console.warn(
-            `[telnyx] ⚠ Known issue with ${modelId}: ${issue}. ` +
+            `[telnyx] ⚠ Known issue with ${rawModelId}: ${issue}. ` +
             `If you encounter corrupted tool-call output while streaming, this is likely the cause.`,
           )
         }
