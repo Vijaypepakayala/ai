@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import type { TuiPlugin, TuiPluginModule, TuiPluginApi } from "@opencode-ai/plugin/tui"
-import { loadEnabledModels, persistEnabledModels, THINKING_CAPABLE_MODELS } from "./models-config"
+import { loadEnabledModels, persistEnabledModels, THINKING_CAPABLE_MODELS } from "./models-config.ts"
+import { knownUnsafeModelReason } from "./model-filter.ts"
 
 const PROVIDER_ID = "telnyx"
 const API_BASE = "https://api.telnyx.com/v2/ai"
@@ -51,6 +52,7 @@ function normalizeModel(model: JsonObject): HostedModel | undefined {
   if (!id || !task || context === undefined) return undefined
   if (!TEXT_TASKS.has(task)) return undefined
   if (!isTelnyxHostedModel(model)) return undefined
+  if (knownUnsafeModelReason(id)) return undefined
   const name = id.includes("/") ? id.split("/").pop() ?? id : id
   const vision = model.is_vision_supported === true
   const output = typeof model.max_output_length === "number" ? model.max_output_length : 16384
@@ -84,6 +86,7 @@ function providerModels(models: HostedModel[], enabled: Set<string>) {
   return Object.fromEntries(
     models.flatMap((model) => {
       if (!enabled.has(model.id)) return []
+      if (knownUnsafeModelReason(model.id)) return []
       const entry: Record<string, unknown> = {
         name: model.name,
         limit: { context: model.context, output: model.output },
