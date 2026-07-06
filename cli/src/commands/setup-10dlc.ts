@@ -156,8 +156,8 @@ function validateSampleMessage(msg: string, brand: string, label: string): Valid
     }
   }
 
-  // Warning: placeholder text
-  if (/\[.*?\]|<.*?>/.test(msg) || /\bsample_text\b|\bplaceholder\b/i.test(msg)) {
+  // Warning: placeholder text (uses negated character classes to avoid ReDoS)
+  if (/\[[^\]]*\]|<[^>]*>/.test(msg) || /\bsample_text\b|\bplaceholder\b/i.test(msg)) {
     issues.push({ severity: "warning", field: label, message: `${label} contains placeholder text — replace with real message content` });
   }
 
