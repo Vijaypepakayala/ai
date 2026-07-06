@@ -1,3 +1,5 @@
+import { THINKING_CAPABLE_MODELS } from "./models-config.ts"
+
 const TEXT_TASKS = new Set(["text-generation", "text generation"])
 const UNSAFE_MODELS_ENV = "OPENCODE_TELNYX_INCLUDE_UNSAFE_MODELS"
 
@@ -50,23 +52,38 @@ export function modelConfig(
   const shortId = id.includes("/") ? id.split("/").pop() ?? id : id
   const vision = model.is_vision_supported === true
   const output = typeof model.max_output_length === "number" ? model.max_output_length : 16384
+  const thinking = THINKING_CAPABLE_MODELS.has(id)
 
-  return [
-    id,
-    {
-      name: shortId,
-      limit: { context, output },
-      ...(vision
-        ? {
-            attachment: true,
-            modalities: {
-              input: ["text", "image"],
-              output: ["text"],
-            },
-          }
-        : {}),
-    },
-  ]
+  const base: JsonObject = {
+    name: shortId,
+    limit: { context, output },
+    ...(vision
+      ? {
+          attachment: true,
+          modalities: {
+            input: ["text", "image"],
+            output: ["text"],
+          },
+        }
+      : {}),
+  }
+
+  if (thinking) {
+    base.reasoning = true
+    base.options = { enable_thinking: true }
+    base.variants = {
+      thinking: { enable_thinking: true },
+      "no-thinking": { enable_thinking: false },
+      max: { disabled: true },
+      high: { disabled: true },
+      medium: { disabled: true },
+      low: { disabled: true },
+      fast: { disabled: true },
+      none: { disabled: true },
+    }
+  }
+
+  return [id, base]
 }
 
 export function describeModelCompatibility(

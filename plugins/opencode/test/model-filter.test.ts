@@ -44,6 +44,18 @@ describe("model-filter", () => {
           context: 1_000_000,
           output: 16_384,
         },
+        reasoning: true,
+        options: { enable_thinking: true },
+        variants: {
+          thinking: { enable_thinking: true },
+          "no-thinking": { enable_thinking: false },
+          max: { disabled: true },
+          high: { disabled: true },
+          medium: { disabled: true },
+          low: { disabled: true },
+          fast: { disabled: true },
+          none: { disabled: true },
+        },
       },
     ])
   })
