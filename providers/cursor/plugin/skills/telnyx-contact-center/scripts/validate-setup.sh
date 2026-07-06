@@ -42,6 +42,21 @@ warn() {
   echo -e "${YELLOW}⚠ WARN${NC}: $1"
 }
 
+# Resolve telnyx-curl.sh wrapper — works inside Claude plugin or standalone
+if [ -z "${CLAUDE_PLUGIN_ROOT:-}" ]; then
+  SCRIPT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+  if [ -f "${SCRIPT_DIR}/scripts/telnyx-curl.sh" ]; then
+    CLAUDE_PLUGIN_ROOT="$SCRIPT_DIR"
+  fi
+fi
+TELNYX_CURL=""
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh" ]; then
+  TELNYX_CURL="bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh"
+else
+  # Fallback to direct curl with API key from env
+  TELNYX_CURL="curl -s -H \"Authorization: Bearer \${TELNYX_API_KEY}\""
+fi
+
 echo "============================================"
 echo "  Telnyx Contact Center — Setup Validation"
 echo "  Blueprint: AIF-273"
@@ -63,7 +78,7 @@ fi
 # --- Check 2: API connectivity (GET /v2/call_control_applications) ---
 echo ""
 echo "→ Check 2: API connectivity"
-CCA_RESPONSE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh" --globoff -s -w "\n%{http_code}" "https://api.telnyx.com/v2/call_control_applications" 2>&1) || true
+CCA_RESPONSE=$(${TELNYX_CURL} --globoff -s -w "\n%{http_code}" "https://api.telnyx.com/v2/call_control_applications" 2>&1) || true
 HTTP_CODE=$(echo "$CCA_RESPONSE" | tail -1)
 BODY=$(echo "$CCA_RESPONSE" | sed '$d')
 
@@ -93,7 +108,7 @@ fi
 # --- Check 3: Active phone numbers ---
 echo ""
 echo "→ Check 3: Active phone numbers"
-NUMBERS_RESPONSE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh" --globoff -s -w "\n%{http_code}" "https://api.telnyx.com/v2/phone_numbers?filter%5Bstatus%5D=active" 2>&1) || true
+NUMBERS_RESPONSE=$(${TELNYX_CURL} --globoff -s -w "\n%{http_code}" "https://api.telnyx.com/v2/phone_numbers?filter%5Bstatus%5D=active" 2>&1) || true
 HTTP_CODE=$(echo "$NUMBERS_RESPONSE" | tail -1)
 BODY=$(echo "$NUMBERS_RESPONSE" | sed '$d')
 
@@ -150,7 +165,7 @@ if [[ -n "${CCA_OVP:-}" && "${CCA_OVP}" != "null" && "${CCA_OVP}" != "N/A" ]]; t
   pass "OVP assigned to CCA: $CCA_OVP"
 
   # Verify OVP exists and get details
-  OVP_RESPONSE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh" --globoff -s -w "\n%{http_code}" "https://api.telnyx.com/v2/outbound_voice_profiles/${CCA_OVP}" 2>&1) || true
+  OVP_RESPONSE=$(${TELNYX_CURL} --globoff -s -w "\n%{http_code}" "https://api.telnyx.com/v2/outbound_voice_profiles/${CCA_OVP}" 2>&1) || true
   OVP_HTTP=$(echo "$OVP_RESPONSE" | tail -1)
   OVP_BODY=$(echo "$OVP_RESPONSE" | sed '$d')
 
@@ -165,7 +180,7 @@ else
   echo "  Assign with: PATCH /v2/call_control_applications/{id} with outbound_voice_profile_id"
 
   # Check if any OVPs exist that could be assigned
-  OVP_LIST=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh" --globoff -s "https://api.telnyx.com/v2/outbound_voice_profiles" 2>&1) || true
+  OVP_LIST=$(${TELNYX_CURL} --globoff -s "https://api.telnyx.com/v2/outbound_voice_profiles" 2>&1) || true
   OVP_COUNT=$(jq_count "$OVP_LIST")
   if [[ "$OVP_COUNT" -gt 0 ]]; then
     warn "Found $OVP_COUNT existing OVP(s) that could be assigned"
@@ -197,7 +212,7 @@ fi
 # --- Check 8: SIP/WebRTC credentials exist ---
 echo ""
 echo "→ Check 8: SIP/WebRTC credential connections"
-CRED_RESPONSE=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh" --globoff -s -w "\n%{http_code}" "https://api.telnyx.com/v2/credential_connections" 2>&1) || true
+CRED_RESPONSE=$(${TELNYX_CURL} --globoff -s -w "\n%{http_code}" "https://api.telnyx.com/v2/credential_connections" 2>&1) || true
 HTTP_CODE=$(echo "$CRED_RESPONSE" | tail -1)
 BODY=$(echo "$CRED_RESPONSE" | sed '$d')
 

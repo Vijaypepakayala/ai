@@ -81,13 +81,25 @@ async function handleEvent(eventType, payload) {
 
     case 'call.answered': {
       const call = callStore.get(callId);
-      if (!call) return; // Agent leg answered — handle separately
+      if (!call) {
+        // Agent leg answered — find customer leg and bridge
+        for (const [custId, entry] of callStore) {
+          if (entry.agentLeg === callId) {
+            await telnyxPost(`/calls/${custId}/actions/bridge`, {
+              call_control_id: callId,
+            });
+            break;
+          }
+        }
+        return;
+      }
       if (call.state === 'answered') return;
 
       call.state = 'answered';
-      // Start IVR gather
-      await telnyxPost(`/calls/${callId}/actions/gather_using_audio`, {
-        audio_url: 'say:Welcome to the contact center. Press 1 for Sales, 2 for Support, 3 for Billing.',
+      // Start IVR gather using speak (TTS)
+      await telnyxPost(`/calls/${callId}/actions/gather_using_speak`, {
+        payload: 'Welcome to the contact center. Press 1 for Sales, 2 for Support, 3 for Billing.',
+        voice: 'female',
         maximum_digits: 1,
         timeout: 10000,
       });
@@ -100,8 +112,9 @@ async function handleEvent(eventType, payload) {
 
       if (payload.status === 'timeout' || !payload.digits) {
         // No DTMF — replay menu
-        await telnyxPost(`/calls/${callId}/actions/gather_using_audio`, {
-          audio_url: 'say:Please press 1 for Sales, 2 for Support, 3 for Billing.',
+        await telnyxPost(`/calls/${callId}/actions/gather_using_speak`, {
+          payload: 'Please press 1 for Sales, 2 for Support, 3 for Billing.',
+          voice: 'female',
           maximum_digits: 1,
           timeout: 10000,
         });
@@ -111,8 +124,9 @@ async function handleEvent(eventType, payload) {
       const dept = DEPARTMENTS[payload.digits];
       if (!dept) {
         // Invalid DTMF — replay menu
-        await telnyxPost(`/calls/${callId}/actions/gather_using_audio`, {
-          audio_url: 'say:Invalid selection. Press 1 for Sales, 2 for Support, 3 for Billing.',
+        await telnyxPost(`/calls/${callId}/actions/gather_using_speak`, {
+          payload: 'Invalid selection. Press 1 for Sales, 2 for Support, 3 for Billing.',
+          voice: 'female',
           maximum_digits: 1,
           timeout: 10000,
         });
@@ -279,11 +293,21 @@ def handle_event(event_type, payload):
 
     elif event_type == 'call.answered':
         call = call_store.get(call_id)
-        if not call or call['state'] == 'answered':
+        if not call:
+            # Agent leg answered — find customer leg and bridge
+            for cust_id, entry in call_store.items():
+                if entry.get('agent_leg') == call_id:
+                    telnyx_post(f'/calls/{cust_id}/actions/bridge', {
+                        'call_control_id': call_id,
+                    })
+                    break
+            return
+        if call['state'] == 'answered':
             return
         call['state'] = 'answered'
-        telnyx_post(f'/calls/{call_id}/actions/gather_using_audio', {
-            'audio_url': 'say:Welcome to the contact center. Press 1 for Sales, 2 for Support, 3 for Billing.',
+        telnyx_post(f'/calls/{call_id}/actions/gather_using_speak', {
+            'payload': 'Welcome to the contact center. Press 1 for Sales, 2 for Support, 3 for Billing.',
+            'voice': 'female',
             'maximum_digits': 1,
             'timeout': 10000,
         })
@@ -293,16 +317,18 @@ def handle_event(event_type, payload):
         if not call:
             return
         if payload.get('status') == 'timeout' or not payload.get('digits'):
-            telnyx_post(f'/calls/{call_id}/actions/gather_using_audio', {
-                'audio_url': 'say:Please press 1 for Sales, 2 for Support, 3 for Billing.',
+            telnyx_post(f'/calls/{call_id}/actions/gather_using_speak', {
+                'payload': 'Please press 1 for Sales, 2 for Support, 3 for Billing.',
+                'voice': 'female',
                 'maximum_digits': 1,
                 'timeout': 10000,
             })
             return
         dept = DEPARTMENTS.get(payload.get('digits'))
         if not dept:
-            telnyx_post(f'/calls/{call_id}/actions/gather_using_audio', {
-                'audio_url': 'say:Invalid selection. Press 1 for Sales, 2 for Support, 3 for Billing.',
+            telnyx_post(f'/calls/{call_id}/actions/gather_using_speak', {
+                'payload': 'Invalid selection. Press 1 for Sales, 2 for Support, 3 for Billing.',
+                'voice': 'female',
                 'maximum_digits': 1,
                 'timeout': 10000,
             })
@@ -406,14 +432,15 @@ DEPARTMENTS = {
 }.freeze
 
 # Thread-safe call store
-CALL_STORE = ThreadSafeHash.new
-
 class ThreadSafeHash
   def initialize; @store = {}; @mutex = Mutex.new; end
   def get(key); @mutex.synchronize { @store[key] }; end
   def set(key, val); @mutex.synchronize { @store[key] = val }; end
   def delete(key); @mutex.synchronize { @store.delete(key) }; end
+  def each(&block); @mutex.synchronize { @store.each(&block) }; end
 end
+
+CALL_STORE = ThreadSafeHash.new
 
 def telnyx_post(path, body)
   uri = URI("#{TELNYX_API}#{path}")
@@ -465,11 +492,24 @@ def handle_event(event_type, payload)
 
   when 'call.answered'
     call = CALL_STORE.get(call_id)
-    return unless call && call[:state] != 'answered'
+    unless call
+      # Agent leg answered — find customer leg and bridge
+      CALL_STORE.each do |cust_id, entry|
+        if entry[:agent_leg] == call_id
+          telnyx_post("/calls/#{cust_id}/actions/bridge", {
+            call_control_id: call_id
+          })
+          break
+        end
+      end
+      return
+    end
+    return if call[:state] == 'answered'
 
     call[:state] = 'answered'
-    telnyx_post("/calls/#{call_id}/actions/gather_using_audio", {
-      audio_url: 'say:Welcome to the contact center. Press 1 for Sales, 2 for Support, 3 for Billing.',
+    telnyx_post("/calls/#{call_id}/actions/gather_using_speak", {
+      payload: 'Welcome to the contact center. Press 1 for Sales, 2 for Support, 3 for Billing.',
+      voice: 'female',
       maximum_digits: 1,
       timeout: 10000
     })
@@ -478,20 +518,20 @@ def handle_event(event_type, payload)
     call = CALL_STORE.get(call_id)
     return unless call
 
-    menu = 'say:Press 1 for Sales, 2 for Support, 3 for Billing.'
+    menu = 'Press 1 for Sales, 2 for Support, 3 for Billing.'
 
     if payload['status'] == 'timeout' || payload['digits'].to_s.empty?
-      telnyx_post("/calls/#{call_id}/actions/gather_using_audio", {
-        audio_url: menu, maximum_digits: 1, timeout: 10000
+      telnyx_post("/calls/#{call_id}/actions/gather_using_speak", {
+        payload: menu, voice: 'female', maximum_digits: 1, timeout: 10000
       })
       return
     end
 
     dept = DEPARTMENTS[payload['digits']]
     unless dept
-      telnyx_post("/calls/#{call_id}/actions/gather_using_audio", {
-        audio_url: 'say:Invalid selection. ' + menu,
-        maximum_digits: 1, timeout: 10000
+      telnyx_post("/calls/#{call_id}/actions/gather_using_speak", {
+        payload: 'Invalid selection. ' + menu,
+        voice: 'female', maximum_digits: 1, timeout: 10000
       })
       return
     end
@@ -658,11 +698,24 @@ if ($path === '/webhook' && $method === 'POST') {
 
         case 'call.answered':
             $store = loadStore();
-            if (!isset($store[$callId]) || $store[$callId]['state'] === 'answered') break;
+            if (!isset($store[$callId])) {
+                // Agent leg answered — find customer leg and bridge
+                foreach ($store as $custId => $entry) {
+                    if (isset($entry['agent_leg']) && $entry['agent_leg'] === $callId) {
+                        telnyxPost("/calls/{$custId}/actions/bridge", [
+                            'call_control_id' => $callId,
+                        ]);
+                        break;
+                    }
+                }
+                break;
+            }
+            if ($store[$callId]['state'] === 'answered') break;
             $store[$callId]['state'] = 'answered';
             saveStore($store);
-            telnyxPost("/calls/{$callId}/actions/gather_using_audio", [
-                'audio_url' => 'say:Welcome to the contact center. Press 1 for Sales, 2 for Support, 3 for Billing.',
+            telnyxPost("/calls/{$callId}/actions/gather_using_speak", [
+                'payload' => 'Welcome to the contact center. Press 1 for Sales, 2 for Support, 3 for Billing.',
+                'voice' => 'female',
                 'maximum_digits' => 1,
                 'timeout' => 10000,
             ]);
@@ -671,18 +724,18 @@ if ($path === '/webhook' && $method === 'POST') {
         case 'call.gather.ended':
             $store = loadStore();
             if (!isset($store[$callId])) break;
-            $menu = 'say:Press 1 for Sales, 2 for Support, 3 for Billing.';
+            $menu = 'Press 1 for Sales, 2 for Support, 3 for Billing.';
             if (($payload['status'] ?? '') === 'timeout' || empty($payload['digits'])) {
-                telnyxPost("/calls/{$callId}/actions/gather_using_audio", [
-                    'audio_url' => $menu, 'maximum_digits' => 1, 'timeout' => 10000,
+                telnyxPost("/calls/{$callId}/actions/gather_using_speak", [
+                    'payload' => $menu, 'voice' => 'female', 'maximum_digits' => 1, 'timeout' => 10000,
                 ]);
                 break;
             }
             $dept = $DEPARTMENTS[$payload['digits']] ?? null;
             if (!$dept) {
-                telnyxPost("/calls/{$callId}/actions/gather_using_audio", [
-                    'audio_url' => 'say:Invalid selection. ' . $menu,
-                    'maximum_digits' => 1, 'timeout' => 10000,
+                telnyxPost("/calls/{$callId}/actions/gather_using_speak", [
+                    'payload' => 'Invalid selection. ' . $menu,
+                    'voice' => 'female', 'maximum_digits' => 1, 'timeout' => 10000,
                 ]);
                 break;
             }
@@ -763,6 +816,7 @@ import org.springframework.http.*;
 import okhttp3.*;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -779,11 +833,13 @@ public class ContactCenterApplication {
     private static final Map<String, Map<String, Object>> callStore = new ConcurrentHashMap<>();
     private static final ExecutorService executor = Executors.newCachedThreadPool();
 
-    private static final Map<String, Map<String, String>> DEPARTMENTS = Map.of(
-        "1", Map.of("name", "Sales", "agent_number", System.getenv("SALES_AGENT_NUMBER")),
-        "2", Map.of("name", "Support", "agent_number", System.getenv("SUPPORT_AGENT_NUMBER")),
-        "3", Map.of("name", "Billing", "agent_number", System.getenv("BILLING_AGENT_NUMBER"))
-    );
+    private static final Map<String, Map<String, String>> DEPARTMENTS = new ConcurrentHashMap<>();
+    static {
+        java.util.function.Function<String, String> env = System::getenv;
+        DEPARTMENTS.put("1", new HashMap<>(Map.of("name", "Sales", "agent_number", env.apply("SALES_AGENT_NUMBER") != null ? env.apply("SALES_AGENT_NUMBER") : "")));
+        DEPARTMENTS.put("2", new HashMap<>(Map.of("name", "Support", "agent_number", env.apply("SUPPORT_AGENT_NUMBER") != null ? env.apply("SUPPORT_AGENT_NUMBER") : "")));
+        DEPARTMENTS.put("3", new HashMap<>(Map.of("name", "Billing", "agent_number", env.apply("BILLING_AGENT_NUMBER") != null ? env.apply("BILLING_AGENT_NUMBER") : "")));
+    }
 
     private final OkHttpClient httpClient = new OkHttpClient();
 
@@ -823,39 +879,50 @@ public class ContactCenterApplication {
                 // FRIC-001: Skip outgoing legs
                 if ("outgoing".equals(payload.get("direction"))) return;
                 System.out.println("Incoming call from " + payload.get("from"));
-                callStore.put(callId, new ConcurrentHashMap<>(Map.of(
-                    "customer_leg", callId,
-                    "agent_leg", null,
-                    "department", null,
-                    "state", "ringing",
-                    "recording", null,
-                    "from", payload.get("from"),
-                    "to", payload.get("to")
-                )));
+                ConcurrentHashMap<String, Object> entry = new ConcurrentHashMap<>();
+                entry.put("customer_leg", callId);
+                entry.put("agent_leg", null);
+                entry.put("department", null);
+                entry.put("state", "ringing");
+                entry.put("recording", null);
+                entry.put("from", payload.get("from"));
+                entry.put("to", payload.get("to"));
+                callStore.put(callId, entry);
                 telnyxPost("/calls/" + callId + "/actions/answer", "{}");
             }
             case "call.answered" -> {
                 Map<String, Object> call = callStore.get(callId);
-                if (call == null || "answered".equals(call.get("state"))) return;
+                if (call == null) {
+                    // Agent leg answered — find customer leg and bridge
+                    for (Map.Entry<String, Map<String, Object>> e : callStore.entrySet()) {
+                        if (callId.equals(e.getValue().get("agent_leg"))) {
+                            telnyxPost("/calls/" + e.getKey() + "/actions/bridge",
+                                "{\"call_control_id\":\"" + callId + "\"}");
+                            break;
+                        }
+                    }
+                    return;
+                }
+                if ("answered".equals(call.get("state"))) return;
                 call.put("state", "answered");
-                telnyxPost("/calls/" + callId + "/actions/gather_using_audio",
-                    "{\"audio_url\":\"say:Welcome to the contact center. Press 1 for Sales, 2 for Support, 3 for Billing.\",\"maximum_digits\":1,\"timeout\":10000}");
+                telnyxPost("/calls/" + callId + "/actions/gather_using_speak",
+                    "{\"payload\":\"Welcome to the contact center. Press 1 for Sales, 2 for Support, 3 for Billing.\",\"voice\":\"female\",\"maximum_digits\":1,\"timeout\":10000}");
             }
             case "call.gather.ended" -> {
                 Map<String, Object> call = callStore.get(callId);
                 if (call == null) return;
                 String status = (String) payload.get("status");
                 String digits = (String) payload.get("digits");
-                String menu = "say:Press 1 for Sales, 2 for Support, 3 for Billing.";
+                String menu = "Press 1 for Sales, 2 for Support, 3 for Billing.";
                 if ("timeout".equals(status) || digits == null || digits.isEmpty()) {
-                    telnyxPost("/calls/" + callId + "/actions/gather_using_audio",
-                        "{\"audio_url\":\"" + menu + "\",\"maximum_digits\":1,\"timeout\":10000}");
+                    telnyxPost("/calls/" + callId + "/actions/gather_using_speak",
+                        "{\"payload\":\"" + menu + "\",\"voice\":\"female\",\"maximum_digits\":1,\"timeout\":10000}");
                     return;
                 }
                 Map<String, String> dept = DEPARTMENTS.get(digits);
                 if (dept == null) {
-                    telnyxPost("/calls/" + callId + "/actions/gather_using_audio",
-                        "{\"audio_url\":\"say:Invalid selection. " + menu + "\",\"maximum_digits\":1,\"timeout\":10000}");
+                    telnyxPost("/calls/" + callId + "/actions/gather_using_speak",
+                        "{\"payload\":\"Invalid selection. " + menu + "\",\"voice\":\"female\",\"maximum_digits\":1,\"timeout\":10000}");
                     return;
                 }
                 call.put("department", dept.get("name"));
@@ -1062,7 +1129,25 @@ func handleEvent(eventType string, payload map[string]interface{}) {
 		storeMutex.RLock()
 		call, exists := callStore[callID]
 		storeMutex.RUnlock()
-		if !exists || call.State == "answered" {
+		if !exists {
+			// Agent leg answered — find customer leg and bridge
+			storeMutex.RLock()
+			var custID string
+			for id, c := range callStore {
+				if c.AgentLeg == callID {
+					custID = id
+					break
+				}
+			}
+			storeMutex.RUnlock()
+			if custID != "" {
+				go telnyxPost("/calls/"+custID+"/actions/bridge", map[string]interface{}{
+					"call_control_id": callID,
+				})
+			}
+			return
+		}
+		if call.State == "answered" {
 			return
 		}
 
@@ -1070,8 +1155,9 @@ func handleEvent(eventType string, payload map[string]interface{}) {
 		call.State = "answered"
 		storeMutex.Unlock()
 
-		go telnyxPost("/calls/"+callID+"/actions/gather_using_audio", map[string]interface{}{
-			"audio_url":      "say:Welcome to the contact center. Press 1 for Sales, 2 for Support, 3 for Billing.",
+		go telnyxPost("/calls/"+callID+"/actions/gather_using_speak", map[string]interface{}{
+			"payload":        "Welcome to the contact center. Press 1 for Sales, 2 for Support, 3 for Billing.",
+			"voice":          "female",
 			"maximum_digits": 1,
 			"timeout":        10000,
 		})
@@ -1086,19 +1172,19 @@ func handleEvent(eventType string, payload map[string]interface{}) {
 
 		status, _ := payload["status"].(string)
 		digits, _ := payload["digits"].(string)
-		menu := "say:Press 1 for Sales, 2 for Support, 3 for Billing."
+		menu := "Press 1 for Sales, 2 for Support, 3 for Billing."
 
 		if status == "timeout" || digits == "" {
-			go telnyxPost("/calls/"+callID+"/actions/gather_using_audio", map[string]interface{}{
-				"audio_url": menu, "maximum_digits": 1, "timeout": 10000,
+			go telnyxPost("/calls/"+callID+"/actions/gather_using_speak", map[string]interface{}{
+				"payload": menu, "voice": "female", "maximum_digits": 1, "timeout": 10000,
 			})
 			return
 		}
 
 		dept, ok := departments[digits]
 		if !ok {
-			go telnyxPost("/calls/"+callID+"/actions/gather_using_audio", map[string]interface{}{
-				"audio_url": "say:Invalid selection. " + menu, "maximum_digits": 1, "timeout": 10000,
+			go telnyxPost("/calls/"+callID+"/actions/gather_using_speak", map[string]interface{}{
+				"payload": "Invalid selection. " + menu, "voice": "female", "maximum_digits": 1, "timeout": 10000,
 			})
 			return
 		}
