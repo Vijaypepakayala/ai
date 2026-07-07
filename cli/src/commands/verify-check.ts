@@ -52,13 +52,18 @@ export async function verifyCheckCommand(flags: Record<string, string | boolean>
     const responseCode = data.response_code as string | undefined;
     const verified = code ? (responseCode ?? status) === "accepted" : undefined;
 
+    // Strip custom_code (the OTP) from the raw response to avoid leaking
+    // the verification code into logs or agent transcripts.
+    const safeResponse = { ...data } as Record<string, unknown>;
+    delete safeResponse.custom_code;
+
     const result: VerifyCheckResult = {
       verification_id: verificationId,
       mode,
       status,
       response_code: responseCode,
       verified,
-      response: data,
+      response: safeResponse,
     };
 
     if (jsonOutput) {
