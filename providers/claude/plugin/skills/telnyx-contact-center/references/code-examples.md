@@ -973,7 +973,7 @@ public class ContactCenterApplication {
                 call.put("state", "dialing_agent");
                 // FRIC-004: Build state before dialing
                 String dialBody = String.format(
-                    "{\"connection_id\":\"%s\",\"to\":\"%s\",\"from\":\"%s\",\"timeout_millis\":30}",
+                    "{\"connection_id\":\"%s\",\"to\":\"%s\",\"from\":\"%s\",\"timeout\":30}",
                     CCA_ID, dept.get("agent_number"), call.get("to"));
                 String res = telnyxPost("/calls", dialBody);
                 // Parse call_control_id from response (simplified)
