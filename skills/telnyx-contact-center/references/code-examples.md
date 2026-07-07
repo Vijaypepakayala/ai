@@ -101,7 +101,7 @@ async function handleEvent(eventType, payload) {
         payload: 'Welcome to the contact center. Press 1 for Sales, 2 for Support, 3 for Billing.',
         voice: 'female',
         maximum_digits: 1,
-        timeout: 10000,
+        timeout_millis: 10000,
       });
       break;
     }
@@ -116,7 +116,7 @@ async function handleEvent(eventType, payload) {
           payload: 'Please press 1 for Sales, 2 for Support, 3 for Billing.',
           voice: 'female',
           maximum_digits: 1,
-          timeout: 10000,
+          timeout_millis: 10000,
         });
         return;
       }
@@ -128,7 +128,7 @@ async function handleEvent(eventType, payload) {
           payload: 'Invalid selection. Press 1 for Sales, 2 for Support, 3 for Billing.',
           voice: 'female',
           maximum_digits: 1,
-          timeout: 10000,
+          timeout_millis: 10000,
         });
         return;
       }
@@ -309,7 +309,7 @@ def handle_event(event_type, payload):
             'payload': 'Welcome to the contact center. Press 1 for Sales, 2 for Support, 3 for Billing.',
             'voice': 'female',
             'maximum_digits': 1,
-            'timeout': 10000,
+            'timeout_millis': 10000,
         })
 
     elif event_type == 'call.gather.ended':
@@ -321,7 +321,7 @@ def handle_event(event_type, payload):
                 'payload': 'Please press 1 for Sales, 2 for Support, 3 for Billing.',
                 'voice': 'female',
                 'maximum_digits': 1,
-                'timeout': 10000,
+                'timeout_millis': 10000,
             })
             return
         dept = DEPARTMENTS.get(payload.get('digits'))
@@ -330,7 +330,7 @@ def handle_event(event_type, payload):
                 'payload': 'Invalid selection. Press 1 for Sales, 2 for Support, 3 for Billing.',
                 'voice': 'female',
                 'maximum_digits': 1,
-                'timeout': 10000,
+                'timeout_millis': 10000,
             })
             return
         call['department'] = dept['name']
@@ -511,7 +511,7 @@ def handle_event(event_type, payload)
       payload: 'Welcome to the contact center. Press 1 for Sales, 2 for Support, 3 for Billing.',
       voice: 'female',
       maximum_digits: 1,
-      timeout: 10000
+      timeout_millis: 10000
     })
 
   when 'call.gather.ended'
@@ -522,7 +522,7 @@ def handle_event(event_type, payload)
 
     if payload['status'] == 'timeout' || payload['digits'].to_s.empty?
       telnyx_post("/calls/#{call_id}/actions/gather_using_speak", {
-        payload: menu, voice: 'female', maximum_digits: 1, timeout: 10000
+        payload: menu, voice: 'female', maximum_digits: 1, timeout_millis: 10000
       })
       return
     end
@@ -531,7 +531,7 @@ def handle_event(event_type, payload)
     unless dept
       telnyx_post("/calls/#{call_id}/actions/gather_using_speak", {
         payload: 'Invalid selection. ' + menu,
-        voice: 'female', maximum_digits: 1, timeout: 10000
+        voice: 'female', maximum_digits: 1, timeout_millis: 10000
       })
       return
     end
@@ -717,7 +717,7 @@ if ($path === '/webhook' && $method === 'POST') {
                 'payload' => 'Welcome to the contact center. Press 1 for Sales, 2 for Support, 3 for Billing.',
                 'voice' => 'female',
                 'maximum_digits' => 1,
-                'timeout' => 10000,
+                'timeout_millis' => 10000,
             ]);
             break;
 
@@ -727,7 +727,7 @@ if ($path === '/webhook' && $method === 'POST') {
             $menu = 'Press 1 for Sales, 2 for Support, 3 for Billing.';
             if (($payload['status'] ?? '') === 'timeout' || empty($payload['digits'])) {
                 telnyxPost("/calls/{$callId}/actions/gather_using_speak", [
-                    'payload' => $menu, 'voice' => 'female', 'maximum_digits' => 1, 'timeout' => 10000,
+                    'payload' => $menu, 'voice' => 'female', 'maximum_digits' => 1, 'timeout_millis' => 10000,
                 ]);
                 break;
             }
@@ -735,7 +735,7 @@ if ($path === '/webhook' && $method === 'POST') {
             if (!$dept) {
                 telnyxPost("/calls/{$callId}/actions/gather_using_speak", [
                     'payload' => 'Invalid selection. ' . $menu,
-                    'voice' => 'female', 'maximum_digits' => 1, 'timeout' => 10000,
+                    'voice' => 'female', 'maximum_digits' => 1, 'timeout_millis' => 10000,
                 ]);
                 break;
             }
@@ -786,6 +786,7 @@ if ($path === '/webhook' && $method === 'POST') {
             break;
     }
 }
+```
 
 ### Installation (PHP)
 
@@ -879,7 +880,7 @@ public class ContactCenterApplication {
                 // FRIC-001: Skip outgoing legs
                 if ("outgoing".equals(payload.get("direction"))) return;
                 System.out.println("Incoming call from " + payload.get("from"));
-                ConcurrentHashMap<String, Object> entry = new ConcurrentHashMap<>();
+                HashMap<String, Object> entry = new HashMap<>();
                 entry.put("customer_leg", callId);
                 entry.put("agent_leg", null);
                 entry.put("department", null);
@@ -906,7 +907,7 @@ public class ContactCenterApplication {
                 if ("answered".equals(call.get("state"))) return;
                 call.put("state", "answered");
                 telnyxPost("/calls/" + callId + "/actions/gather_using_speak",
-                    "{\"payload\":\"Welcome to the contact center. Press 1 for Sales, 2 for Support, 3 for Billing.\",\"voice\":\"female\",\"maximum_digits\":1,\"timeout\":10000}");
+                    "{\"payload\":\"Welcome to the contact center. Press 1 for Sales, 2 for Support, 3 for Billing.\",\"voice\":\"female\",\"maximum_digits\":1,\"timeout_millis\":10000}");
             }
             case "call.gather.ended" -> {
                 Map<String, Object> call = callStore.get(callId);
@@ -916,20 +917,20 @@ public class ContactCenterApplication {
                 String menu = "Press 1 for Sales, 2 for Support, 3 for Billing.";
                 if ("timeout".equals(status) || digits == null || digits.isEmpty()) {
                     telnyxPost("/calls/" + callId + "/actions/gather_using_speak",
-                        "{\"payload\":\"" + menu + "\",\"voice\":\"female\",\"maximum_digits\":1,\"timeout\":10000}");
+                        "{\"payload\":\"" + menu + "\",\"voice\":\"female\",\"maximum_digits\":1,\"timeout_millis\":10000}");
                     return;
                 }
                 Map<String, String> dept = DEPARTMENTS.get(digits);
                 if (dept == null) {
                     telnyxPost("/calls/" + callId + "/actions/gather_using_speak",
-                        "{\"payload\":\"Invalid selection. " + menu + "\",\"voice\":\"female\",\"maximum_digits\":1,\"timeout\":10000}");
+                        "{\"payload\":\"Invalid selection. " + menu + "\",\"voice\":\"female\",\"maximum_digits\":1,\"timeout_millis\":10000}");
                     return;
                 }
                 call.put("department", dept.get("name"));
                 call.put("state", "dialing_agent");
                 // FRIC-004: Build state before dialing
                 String dialBody = String.format(
-                    "{\"connection_id\":\"%s\",\"to\":\"%s\",\"from\":\"%s\",\"timeout\":30}",
+                    "{\"connection_id\":\"%s\",\"to\":\"%s\",\"from\":\"%s\",\"timeout_millis\":30}",
                     CCA_ID, dept.get("agent_number"), call.get("to"));
                 String res = telnyxPost("/calls", dialBody);
                 // Parse call_control_id from response (simplified)
@@ -1159,7 +1160,7 @@ func handleEvent(eventType string, payload map[string]interface{}) {
 			"payload":        "Welcome to the contact center. Press 1 for Sales, 2 for Support, 3 for Billing.",
 			"voice":          "female",
 			"maximum_digits": 1,
-			"timeout":        10000,
+			"timeout_millis":        10000,
 		})
 
 	case "call.gather.ended":
@@ -1176,7 +1177,7 @@ func handleEvent(eventType string, payload map[string]interface{}) {
 
 		if status == "timeout" || digits == "" {
 			go telnyxPost("/calls/"+callID+"/actions/gather_using_speak", map[string]interface{}{
-				"payload": menu, "voice": "female", "maximum_digits": 1, "timeout": 10000,
+				"payload": menu, "voice": "female", "maximum_digits": 1, "timeout_millis": 10000,
 			})
 			return
 		}
@@ -1184,7 +1185,7 @@ func handleEvent(eventType string, payload map[string]interface{}) {
 		dept, ok := departments[digits]
 		if !ok {
 			go telnyxPost("/calls/"+callID+"/actions/gather_using_speak", map[string]interface{}{
-				"payload": "Invalid selection. " + menu, "voice": "female", "maximum_digits": 1, "timeout": 10000,
+				"payload": "Invalid selection. " + menu, "voice": "female", "maximum_digits": 1, "timeout_millis": 10000,
 			})
 			return
 		}
