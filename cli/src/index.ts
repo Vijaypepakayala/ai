@@ -53,11 +53,22 @@ Setup-specific Flags:
   --phone           Contact phone for brand (setup-10dlc, required)
   --email           Contact email for brand (setup-10dlc, required)
   --brand-name      Brand display name (setup-10dlc)
-  --company-name    Company name (setup-10dlc)
+  --company-name    Company name passed to brand create (setup-10dlc)
   --vertical        Business vertical (setup-10dlc, default: TECHNOLOGY)
   --usecase         Campaign use case (setup-10dlc, default: CUSTOMER_CARE)
+                    Valid: 2FA, ACCOUNT_NOTIFICATION, CUSTOMER_CARE, DELIVERY_NOTIFICATIONS,
+                    FRAUD_ALERT_MESSAGING, HIGHER_EDUCATION, LOW_VOLUME_MIXED, M2M,
+                    MARKETING, MIXED, POLLING_AND_VOTING, PUBLIC_SERVICE_ANNOUNCEMENT, SECURITY_ALERT
+  --opt-in-method   How consumers opt in (setup-10dlc, default: web)
+                    Valid: web, verbal, paper, inbound
+  --website         Opt-in website URL (setup-10dlc, recommended for --opt-in-method web)
   --description     Campaign description (setup-10dlc)
-  --sample-message  Sample message text (setup-10dlc)
+  --sample-message  First sample message text (setup-10dlc)
+  --sample-message-2 Second sample message (setup-10dlc, required for Marketing/Mixed/Low Volume Mixed/Polling)
+  --message-flow     Custom message flow (setup-10dlc, default: generated from --opt-in-method)
+  --help-message    HELP auto-response text (setup-10dlc, default: generated)
+  --stop-message    STOP auto-response text (setup-10dlc, default: generated)
+  --start-message   START auto-response text (setup-10dlc, default: generated)
   --phone-number-id Assign existing number to campaign (setup-10dlc)
   --phone-numbers   Comma-separated E.164 numbers to port (setup-porting, required)
   --customer-name   Customer name on the losing carrier account (setup-porting)
