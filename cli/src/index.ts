@@ -100,9 +100,10 @@ Voice Call Flags:
   --voice            TTS voice to use (call-control speak, default: female)
   --call-control-id-2 Second call-control-id to bridge with (call-control bridge)
   --sip-address      SIP address to refer to (call-control refer, e.g. sip:user@example.com)
+  --cause            Reject cause: CALL_REJECTED|USER_BUSY (call-control reject, default: CALL_REJECTED)
   --channels         Recording channels: single|dual (call-control start-recording)
   --format           Recording format: mp3|wav (call-control start-recording)
-  --answering-machine-detection  Enable answering machine detection (call-dial)
+  --answering-machine-detection [mode]  Answering machine detection (call-dial); mode: premium, detect, detect_beep, detect_words, greeting_end, disabled (default: detect)
   --deepfake-detection           Enable deepfake detection (call-dial, call-control answer)
   --record                       Record the call (call-dial, call-control answer)
   --webhook-url                  Webhook URL override (call-dial, call-control answer)
@@ -133,6 +134,7 @@ Examples:
   telnyx-agent call-control --action speak --call-control-id <id> --payload "Hello there" --voice female
   telnyx-agent call-control --action start-recording --call-control-id <id> --channels dual --format mp3
   telnyx-agent call-control --action bridge --call-control-id <id> --call-control-id-2 <id2>
+  telnyx-agent call-control --action reject --call-control-id <id> --cause USER_BUSY
   telnyx-agent call-status --call-control-id <id> --json
 `;
 

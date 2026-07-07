@@ -23,7 +23,11 @@ export async function callDialCommand(flags: Record<string, string | boolean>): 
   const connectionId = flags["connection-id"] as string | undefined;
   const from = flags["from"] as string | undefined;
   const to = flags["to"] as string | undefined;
-  const answeringMachineDetection = flags["answering-machine-detection"] === true;
+  // AMD accepts a mode value (`premium`, `detect`, `detect_beep`, `detect_words`,
+  // `greeting_end`, `disabled`). If passed as a bare boolean flag, default to `detect`.
+  const amdRaw = flags["answering-machine-detection"];
+  const answeringMachineDetection =
+    amdRaw === true ? "detect" : typeof amdRaw === "string" ? amdRaw : undefined;
   const deepfakeDetection = flags["deepfake-detection"] === true;
   const record = flags.record === true;
   const webhookUrl = flags["webhook-url"] as string | undefined;
@@ -62,7 +66,7 @@ export async function callDialCommand(flags: Record<string, string | boolean>): 
     "--from", from,
     "--to", to,
   ];
-  if (answeringMachineDetection) args.push("--answering-machine-detection");
+  if (answeringMachineDetection) args.push("--answering-machine-detection", answeringMachineDetection);
   if (deepfakeDetection) args.push("--deepfake-detection");
   if (record) args.push("--record");
   if (webhookUrl) args.push("--webhook-url", webhookUrl);
@@ -98,7 +102,7 @@ export async function callDialCommand(flags: Record<string, string | boolean>): 
         "To": to,
         "Connection ID": connectionId,
       };
-      if (answeringMachineDetection) details["AMD"] = "enabled";
+      if (answeringMachineDetection) details["AMD"] = answeringMachineDetection;
       if (deepfakeDetection) details["Deepfake Detection"] = "enabled";
       if (record) details["Recording"] = "enabled";
       printSuccess("Outbound call placed!", details);

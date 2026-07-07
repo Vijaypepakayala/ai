@@ -45,6 +45,7 @@ export async function callControlCommand(flags: Record<string, string | boolean>
   const deepfakeDetection = flags["deepfake-detection"] === true;
   const record = flags.record === true;
   const webhookUrl = flags["webhook-url"] as string | undefined;
+  const cause = flags.cause as string | undefined;
 
   if (!action) {
     printError(`--action is required. Valid actions: ${ACTIONS.join(", ")}`);
@@ -113,6 +114,7 @@ export async function callControlCommand(flags: Record<string, string | boolean>
     deepfakeDetection,
     record,
     webhookUrl,
+    cause,
   });
 
   try {
@@ -162,6 +164,7 @@ function buildActionArgs(
     deepfakeDetection: boolean;
     record: boolean;
     webhookUrl?: string;
+    cause?: string;
   },
 ): string[] {
   switch (action) {
@@ -202,13 +205,17 @@ function buildActionArgs(
     case "bridge":
       return [
         "calls:actions", "bridge",
-        "--call-control-id-to-bridge", opts.callControlId,
-        "--call-control-id-to-bridge-with", opts.callControlId2!,
+        "--call-control-id", opts.callControlId,
+        "--call-control-id-b", opts.callControlId2!,
       ];
     case "refer":
       return ["calls:actions", "refer", "--call-control-id", opts.callControlId, "--sip-address", opts.sipAddress!];
     case "reject":
-      return ["calls:actions", "reject", "--call-control-id", opts.callControlId];
+      return [
+        "calls:actions", "reject",
+        "--call-control-id", opts.callControlId,
+        "--cause", opts.cause || "CALL_REJECTED",
+      ];
   }
 }
 

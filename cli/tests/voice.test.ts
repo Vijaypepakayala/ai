@@ -120,7 +120,7 @@ describe("Voice API action commands", () => {
     const calls = readLoggedArgs(fake.logPath);
     const dialCall = calls.find((a) => a.slice(0, 2).join(" ") === "calls dial");
     assert.ok(dialCall, "should invoke `calls dial`");
-    assert.ok(dialCall!.includes("--answering-machine-detection"), "must include --answering-machine-detection");
+    assertFlagValue(dialCall!, "--answering-machine-detection", "detect");
     assert.ok(dialCall!.includes("--deepfake-detection"), "must include --deepfake-detection");
   });
 
@@ -203,7 +203,7 @@ describe("Voice API action commands", () => {
     assertFlagValue(speakCall!, "--voice", "female");
   });
 
-  it("call-control --action bridge uses --call-control-id-to-bridge / -with flags", () => {
+  it("call-control --action bridge maps user flags to Go CLI --call-control-id / --call-control-id-b", () => {
     const fake = setupFakeTelnyx();
     run(
       ["call-control", "--action", "bridge", "--call-control-id", "call-1", "--call-control-id-2", "call-2", "--json"],
@@ -213,8 +213,52 @@ describe("Voice API action commands", () => {
     const calls = readLoggedArgs(fake.logPath);
     const bridgeCall = calls.find((a) => a.slice(0, 2).join(" ") === "calls:actions bridge");
     assert.ok(bridgeCall, "should invoke `calls:actions bridge`");
-    assertFlagValue(bridgeCall!, "--call-control-id-to-bridge", "call-1");
-    assertFlagValue(bridgeCall!, "--call-control-id-to-bridge-with", "call-2");
+    assertFlagValue(bridgeCall!, "--call-control-id", "call-1");
+    assertFlagValue(bridgeCall!, "--call-control-id-b", "call-2");
+  });
+
+  it("call-dial forwards a custom --answering-machine-detection mode value", () => {
+    const fake = setupFakeTelnyx();
+    run(
+      [
+        "call-dial",
+        "--connection-id", "conn-1",
+        "--from", "+13125550000",
+        "--to", "+13125551234",
+        "--answering-machine-detection", "detect_beep",
+        "--json",
+      ],
+      fake.env,
+    );
+
+    const calls = readLoggedArgs(fake.logPath);
+    const dialCall = calls.find((a) => a.slice(0, 2).join(" ") === "calls dial");
+    assert.ok(dialCall, "should invoke `calls dial`");
+    assertFlagValue(dialCall!, "--answering-machine-detection", "detect_beep");
+  });
+
+  it("call-control --action reject defaults --cause to CALL_REJECTED", () => {
+    const fake = setupFakeTelnyx();
+    run(["call-control", "--action", "reject", "--call-control-id", "call-1", "--json"], fake.env);
+
+    const calls = readLoggedArgs(fake.logPath);
+    const rejectCall = calls.find((a) => a.slice(0, 2).join(" ") === "calls:actions reject");
+    assert.ok(rejectCall, "should invoke `calls:actions reject`");
+    assertFlagValue(rejectCall!, "--call-control-id", "call-1");
+    assertFlagValue(rejectCall!, "--cause", "CALL_REJECTED");
+  });
+
+  it("call-control --action reject forwards a custom --cause value", () => {
+    const fake = setupFakeTelnyx();
+    run(
+      ["call-control", "--action", "reject", "--call-control-id", "call-1", "--cause", "USER_BUSY", "--json"],
+      fake.env,
+    );
+
+    const calls = readLoggedArgs(fake.logPath);
+    const rejectCall = calls.find((a) => a.slice(0, 2).join(" ") === "calls:actions reject");
+    assert.ok(rejectCall, "should invoke `calls:actions reject`");
+    assertFlagValue(rejectCall!, "--cause", "USER_BUSY");
   });
 
   it("call-status calls `calls retrieve-status`", () => {
