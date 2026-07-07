@@ -36,6 +36,8 @@ function flag(f) { const i = command.indexOf(f); return i >= 0 ? command[i + 1] 
 
 if (command[0] === "messages" && command[1] === "send") {
   console.log(JSON.stringify({ data: { id: "msg-123", status: "queued", type: flag("--type"), from: flag("--from"), to: flag("--to") } }));
+} else if (command[0] === "messages" && command[1] === "send-group-mms") {
+  console.log(JSON.stringify({ data: { id: "grp-789", status: "queued", type: "MMS", from: flag("--from"), to: flag("--to") } }));
 } else if (command[0] === "messages" && command[1] === "schedule") {
   console.log(JSON.stringify({ data: { id: "sched-456", status: "scheduled", send_at: flag("--send-at") } }));
 } else if (command[0] === "messages" && command[1] === "retrieve") {
@@ -76,6 +78,20 @@ function runAgent(args: string[], env: NodeJS.ProcessEnv): string {
     env,
     timeout: 30000,
   });
+}
+
+function runAgentExpectingFailure(args: string[], env: NodeJS.ProcessEnv, expected: RegExp): void {
+  try {
+    runAgent(args, env);
+    assert.fail("expected command to fail (non-zero exit), but it succeeded");
+  } catch (err: any) {
+    assert.ok(
+      err && err.status !== undefined && err.status !== 0,
+      `expected non-zero exit, got ${err?.status}`,
+    );
+    const output = `${err.stderr ?? ""}${err.stdout ?? ""}`;
+    assert.match(output, expected);
+  }
 }
 
 function assertFlagValue(args: string[], flag: string, value: string): void {
@@ -158,6 +174,79 @@ describe("SMS action commands", () => {
     assertFlagValue(sendCall, "--subject", "Sub");
   });
 
+  it("send-group-mms constructs messages send-group-mms args with --from, --to, --text", () => {
+    const fake = setupFakeTelnyx();
+
+    const out = runAgent(
+      [
+        "send-group-mms",
+        "--from", "+131****0000",
+        "--to", "+131****0001,+131****0002,+131****0003",
+        "--text", "Group hi!",
+        "--json",
+      ],
+      fake.env,
+    );
+
+    const data = JSON.parse(out);
+    assert.equal(data.message_id, "grp-789");
+    assert.equal(data.status, "queued");
+    assert.equal(data.type, "MMS");
+    assert.deepEqual(data.to, ["+131****0001", "+131****0002", "+131****0003"]);
+
+    const calls = readLoggedArgs(fake.logPath);
+    const groupCall = calls.find((a) => a.slice(0, 2).join(" ") === "messages send-group-mms");
+    assert.ok(groupCall, "should call messages send-group-mms");
+    assertFlagValue(groupCall, "--from", "+131****0000");
+    assertFlagValue(groupCall, "--to", "+131****0001,+131****0002,+131****0003");
+    assertFlagValue(groupCall, "--text", "Group hi!");
+    assert.ok(!groupCall.includes("--media-url"), "should not include --media-url when not provided");
+  });
+
+  it("send-group-mms with --media-url passes the flag through", () => {
+    const fake = setupFakeTelnyx();
+
+    const out = runAgent(
+      [
+        "send-group-mms",
+        "--from", "+131****0000",
+        "--to", "+131****0001,+131****0002",
+        "--media-url", "https://example.com/cat.png",
+        "--json",
+      ],
+      fake.env,
+    );
+
+    const data = JSON.parse(out);
+    assert.equal(data.type, "MMS");
+
+    const calls = readLoggedArgs(fake.logPath);
+    const groupCall = calls.find((a) => a.slice(0, 2).join(" ") === "messages send-group-mms");
+    assert.ok(groupCall, "should call messages send-group-mms");
+    assertFlagValue(groupCall, "--media-url", "https://example.com/cat.png");
+    assert.ok(!groupCall.includes("--text"), "should not include --text when not provided");
+  });
+
+  it("send-group-mms fails without --from", () => {
+    const fake = setupFakeTelnyx();
+
+    runAgentExpectingFailure(
+      ["send-group-mms", "--to", "+131****0001,+131****0002", "--text", "hi", "--json"],
+      fake.env,
+      /--from is required/,
+    );
+  });
+
+  it("send-group-mms fails without --to", () => {
+    const fake = setupFakeTelnyx();
+
+    runAgentExpectingFailure(
+      ["send-group-mms", "--from", "+131****0000", "--text", "hi", "--json"],
+      fake.env,
+      /--to is required/,
+    );
+  });
+
   it("schedule-sms passes --send-at to messages schedule", () => {
     const fake = setupFakeTelnyx();
 
@@ -234,6 +323,7 @@ describe("SMS action commands", () => {
       timeout: 30000,
     });
     assert.match(out, /send-sms/);
+    assert.match(out, /send-group-mms/);
     assert.match(out, /schedule-sms/);
     assert.match(out, /sms-status/);
   });
