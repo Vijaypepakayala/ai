@@ -26,7 +26,7 @@ const CAPABILITIES: Record<string, Capability[]> = {
     { name: "Assistants", description: "Create and manage AI voice assistants", actions: ["list_ai_assistants", "create_ai_assistant"] },
   ],
   "🎤 Speech-to-Text": [
-    { name: "Transcription", description: "Transcribe audio files to text via Telnyx and third-party STT engines, with language, model, and keyword biasing options", actions: ["retrieve_transcription"] },
+    { name: "Transcription", description: "Transcribe hosted audio files to text via the OpenAI-compatible transcription endpoint, with model and language options", actions: ["ai_audio_transcribe"] },
     { name: "Providers", description: "List available speech-to-text providers and service types", actions: ["list_stt_providers"] },
   ],
   "📠 Fax": [
@@ -78,7 +78,7 @@ const COMPOSITE_COMMANDS = [
   { name: "telnyx-agent setup-verify", description: "Zero to verification: creates verify profile, buys number — outputs test command" },
   { name: "telnyx-agent setup-10dlc", description: "Zero to A2P: creates 10DLC brand, campaign, optional number assignment" },
   { name: "telnyx-agent setup-porting", description: "Zero to porting: checks portability, creates porting order, lists requirements, optionally submits" },
-  { name: "telnyx-agent stt", description: "Transcribe audio to text (speech-to-text) — accepts an audio URL and returns the transcript with optional language, model, and keyword biasing" },
+  { name: "telnyx-agent stt", description: "Transcribe audio to text (speech-to-text) — accepts a hosted audio file URL and returns the transcript with optional model and language selection" },
   { name: "telnyx-agent stt-providers", description: "List available speech-to-text providers, optionally filtered by provider name or service type" },
   { name: "telnyx-agent status", description: "Account health overview — balance, numbers, profiles, connections" },
   { name: "telnyx-agent capabilities", description: "This command — lists all available API capabilities" },

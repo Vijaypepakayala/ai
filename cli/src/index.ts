@@ -87,14 +87,9 @@ Fund-account Flags:
 
 STT Flags:
   --audio-url <url> URL of the audio file to transcribe (required)
-  --language        Language code (default: en)
-  --model           Transcription model (optional, provider-specific)
-  --transcription-engine Transcription engine (optional)
-  --input-format    Audio input format (optional, e.g., mp3, wav)
-  --interim-results Return interim partial transcriptions (boolean)
-  --endpointing     Endpointing configuration (optional)
-  --redact          Redact sensitive content from the transcript (boolean)
-  --keywords        Comma-separated keywords to bias recognition (optional)
+  --model           Transcription model (default: distil-whisper/distil-large-v2; also openai/whisper-large-v3-turbo, deepgram/nova-3)
+  --language        Language code (optional; not supported by the default model)
+  --response-format Transcript output format (optional, json or verbose_json)
 
 STT-providers Flags:
   --provider        Filter providers by name (optional)
@@ -117,7 +112,7 @@ Examples:
   telnyx-agent fund-account --amount 50.00
   telnyx-agent fund-account --amount 50.00 --wallet-key 0x... --json
   telnyx-agent stt --audio-url https://example.com/audio.mp3
-  telnyx-agent stt --audio-url https://example.com/audio.mp3 --language es --model whisper-large --json
+  telnyx-agent stt --audio-url https://example.com/audio.mp3 --model openai/whisper-large-v3-turbo --language es --json
   telnyx-agent stt-providers --json
   telnyx-agent stt-providers --provider telnyx --service-type transcription --json
 `;
