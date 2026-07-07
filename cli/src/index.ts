@@ -87,8 +87,8 @@ TTS Flags:
   --text            Text to synthesize (required)
   --voice           Voice ID/name (optional, provider-specific)
   --language        Language code (default: en)
-  --provider        TTS provider: telnyx, aws, azure, elevenlabs, minimax, resemble, rime (default: telnyx)
-  --output-type     Response format: url or base64 (default: url)
+  --provider        TTS provider: telnyx, aws, azure, elevenlabs, minimax, resemble, rime, xai (default: telnyx)
+  --output-type     Response format: base64 (base64-encoded audio JSON; default: base64)
   --text-type       Input format: text or ssml (default: text)
   --disable-cache   Skip cached audio and regenerate (boolean)
 

@@ -2,17 +2,27 @@
  * telnyx-agent tts — Text-to-speech generation.
  *
  * Shells out to the telnyx CLI's `text-to-speech generate-speech` subcommand
- * and surfaces the resulting audio URL (or base64-encoded audio data) to the
- * caller in either human-readable or JSON form.
+ * and surfaces the resulting base64-encoded audio data to the caller in
+ * either human-readable or JSON form.
  *
- * Supported providers: telnyx, aws, azure, elevenlabs, minimax, resemble, rime
+ * Supported providers: telnyx, aws, azure, elevenlabs, minimax, resemble, rime, xai
+ *
+ * The API's `output_type` enum is `binary_output | base64_output`. This
+ * wrapper only supports `base64_output` (exposed as the friendly alias
+ * `base64`) because `binary_output` returns raw audio bytes, which cannot be
+ * transported through the JSON pipeline used to parse telnyx CLI output.
  */
 
 import { telnyxCli, TelnyxCLIError } from "../telnyx-cli.ts";
 import { printSuccess, printError, outputJson } from "../utils/output.ts";
 
-const VALID_PROVIDERS = ["telnyx", "aws", "azure", "elevenlabs", "minimax", "resemble", "rime"] as const;
-const VALID_OUTPUT_TYPES = ["url", "base64"] as const;
+const VALID_PROVIDERS = ["telnyx", "aws", "azure", "elevenlabs", "minimax", "resemble", "rime", "xai"] as const;
+// Friendly alias → documented API enum value. `binary_output` is deliberately
+// unsupported: it returns raw audio bytes that would corrupt JSON parsing.
+const OUTPUT_TYPE_MAP: Record<string, string> = {
+  base64: "base64_output",
+  base64_output: "base64_output",
+};
 const VALID_TEXT_TYPES = ["text", "ssml"] as const;
 
 interface TtsResult {
@@ -20,27 +30,21 @@ interface TtsResult {
   voice: string;
   provider: string;
   output_type: string;
-  audio_url?: string;
+  audio_data?: string;
   has_audio_data: boolean;
 }
 
 /**
- * Extract the audio URL (or base64 data) from a telnyx CLI text-to-speech
- * response. The CLI wraps the API payload in a `data` envelope, but different
- * providers surface audio differently, so we check a few common field names.
+ * Extract base64 audio data from a telnyx CLI text-to-speech response. With
+ * `output_type=base64_output`, POST /text-to-speech/speech returns
+ * `{ "base64_audio": "..." }` (no `data` envelope), but we also tolerate an
+ * envelope and a few legacy field names as a safety net.
  */
-function extractAudio(response: unknown): { audioUrl?: string; audioData?: string } {
+function extractAudio(response: unknown): { audioData?: string } {
   const data = (response as Record<string, unknown> | undefined)?.data ?? response;
   const obj = (data ?? {}) as Record<string, unknown>;
 
-  // URL-shaped fields
-  for (const key of ["audio_url", "url", "audioUrl"]) {
-    const v = obj[key];
-    if (typeof v === "string" && v) return { audioUrl: v };
-  }
-
-  // Base64-shaped fields
-  for (const key of ["data", "audio_data", "audio", "base64"]) {
+  for (const key of ["base64_audio", "audio_data", "audio", "base64"]) {
     const v = obj[key];
     if (typeof v === "string" && v) return { audioData: v };
   }
@@ -54,7 +58,7 @@ export async function ttsCommand(flags: Record<string, string | boolean>): Promi
   const voice = (flags.voice as string | undefined) ?? "";
   const language = (flags.language as string) || "en";
   const provider = (flags.provider as string) || "telnyx";
-  const outputType = (flags["output-type"] as string) || "url";
+  const outputTypeFlag = (flags["output-type"] as string) || "base64";
   const textType = (flags["text-type"] as string) || "text";
   const disableCache = flags["disable-cache"] === true;
 
@@ -70,9 +74,10 @@ export async function ttsCommand(flags: Record<string, string | boolean>): Promi
     process.exit(1);
   }
 
-  if (!VALID_OUTPUT_TYPES.includes(outputType as (typeof VALID_OUTPUT_TYPES)[number])) {
+  const outputType = OUTPUT_TYPE_MAP[outputTypeFlag];
+  if (!outputType) {
     printError(
-      `Invalid --output-type "${outputType}". Valid: ${VALID_OUTPUT_TYPES.join(", ")}`,
+      `Invalid --output-type "${outputTypeFlag}". Valid: base64 (binary_output is not supported by this wrapper — it returns raw audio bytes)`,
     );
     process.exit(1);
   }
@@ -98,7 +103,7 @@ export async function ttsCommand(flags: Record<string, string | boolean>): Promi
     if (disableCache) args.push("--disable-cache");
 
     const response = await telnyxCli(args);
-    const { audioUrl, audioData } = extractAudio(response);
+    const { audioData } = extractAudio(response);
     const hasAudioData = !!audioData;
 
     const result: TtsResult = {
@@ -106,7 +111,7 @@ export async function ttsCommand(flags: Record<string, string | boolean>): Promi
       voice,
       provider,
       output_type: outputType,
-      audio_url: audioUrl,
+      audio_data: audioData,
       has_audio_data: hasAudioData,
     };
 
@@ -120,10 +125,8 @@ export async function ttsCommand(flags: Record<string, string | boolean>): Promi
         Language: language,
       };
       if (voice) details["Voice"] = voice;
-      if (audioUrl) {
-        details["Audio URL"] = audioUrl;
-      } else if (hasAudioData) {
-        details["Audio Data"] = `${audioData!.length} bytes (base64)`;
+      if (hasAudioData) {
+        details["Audio Data"] = `${audioData!.length} chars (base64)`;
       }
       printSuccess("Speech generated!", details);
     }

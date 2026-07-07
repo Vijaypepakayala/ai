@@ -16,6 +16,10 @@ const cliBin = join(cliRoot, "bin", "telnyx-agent.ts");
 /**
  * Build a fake `telnyx` binary that logs every invocation's args and returns
  * canned JSON for the `text-to-speech generate-speech` subcommand.
+ *
+ * With `output_type=base64_output`, the real API (POST /text-to-speech/speech)
+ * responds `{ "base64_audio": "..." }` with no `data` envelope, which the Go
+ * CLI prints as-is with `--format json`.
  */
 function setupFakeTelnyx(): { fakeTelnyx: string; logPath: string; env: NodeJS.ProcessEnv } {
   const tempDir = mkdtempSync(join(tmpdir(), "telnyx-agent-tts-"));
@@ -40,10 +44,14 @@ const command = args.filter((a) => a !== "--format" && a !== "json");
 
 if (command[0] === "text-to-speech" && command[1] === "generate-speech") {
   const outputType = flagValue(command, "--output-type");
-  if (outputType === "base64") {
-    console.log(JSON.stringify({ data: { data: "SGVsbG8gYXVkaW8=", format: "mp3", length: 16 } }));
+  if (outputType === "base64_output") {
+    console.log(JSON.stringify({ base64_audio: "SGVsbG8gYXVkaW8=" }));
   } else {
-    console.log(JSON.stringify({ data: { audio_url: "https://example.com/audio.mp3", format: "mp3" } }));
+    // The real API rejects anything other than binary_output/base64_output,
+    // and binary_output would be raw audio bytes — emit an error marker so a
+    // test forwarding the wrong enum fails loudly.
+    console.error("unexpected --output-type: " + outputType);
+    process.exit(1);
   }
 } else {
   console.log(JSON.stringify({ data: {} }));
@@ -97,21 +105,22 @@ function runCli(args: string[], env: NodeJS.ProcessEnv): { stdout: string; statu
 }
 
 describe("tts (text-to-speech) command", () => {
-  it("passes the --text flag through to the telnyx CLI and returns an audio URL", () => {
+  it("defaults to base64_output and surfaces the base64_audio response field", () => {
     const fake = setupFakeTelnyx();
     const { stdout, status } = runCli(["tts", "--text", "Hello world", "--json"], fake.env);
 
     assert.equal(status, 0, `expected exit 0, got ${status}`);
     const data = JSON.parse(stdout);
     assert.equal(data.text, "Hello world");
-    assert.equal(data.output_type, "url");
-    assert.equal(data.audio_url, "https://example.com/audio.mp3");
-    assert.equal(data.has_audio_data, false);
+    assert.equal(data.output_type, "base64_output");
+    assert.equal(data.audio_data, "SGVsbG8gYXVkaW8=");
+    assert.equal(data.has_audio_data, true);
 
     const calls = readLoggedArgs(fake.logPath);
     const ttsCall = calls.find((a) => a.slice(0, 2).join(" ") === "text-to-speech generate-speech");
     assert.ok(ttsCall, "expected a text-to-speech generate-speech call");
     assertFlagValue(ttsCall, "--text", "Hello world");
+    assertFlagValue(ttsCall, "--output-type", "base64_output");
   });
 
   it("forwards --provider and --voice flags when supplied", () => {
@@ -134,7 +143,25 @@ describe("tts (text-to-speech) command", () => {
     assertFlagValue(ttsCall, "--voice", "Amy");
   });
 
-  it("returns base64 audio data when --output-type is base64", () => {
+  it("accepts the xai provider", () => {
+    const fake = setupFakeTelnyx();
+    const { stdout, status } = runCli(
+      ["tts", "--text", "Hello", "--provider", "xai", "--json"],
+      fake.env,
+    );
+
+    assert.equal(status, 0, `expected exit 0, got ${status}`);
+    const data = JSON.parse(stdout);
+    assert.equal(data.provider, "xai");
+
+    const ttsCall = readLoggedArgs(fake.logPath).find(
+      (a) => a.slice(0, 2).join(" ") === "text-to-speech generate-speech",
+    );
+    assert.ok(ttsCall);
+    assertFlagValue(ttsCall, "--provider", "xai");
+  });
+
+  it("maps the friendly base64 alias to the base64_output API enum", () => {
     const fake = setupFakeTelnyx();
     const { stdout, status } = runCli(
       ["tts", "--text", "Hello", "--output-type", "base64", "--json"],
@@ -143,16 +170,26 @@ describe("tts (text-to-speech) command", () => {
 
     assert.equal(status, 0);
     const data = JSON.parse(stdout);
-    assert.equal(data.output_type, "base64");
+    assert.equal(data.output_type, "base64_output");
     assert.equal(data.has_audio_data, true);
-    assert.equal(data.audio_url, undefined);
 
     const ttsCall = readLoggedArgs(fake.logPath).find(
       (a) => a.slice(0, 2).join(" ") === "text-to-speech generate-speech",
     );
     assert.ok(ttsCall);
-    assertFlagValue(ttsCall, "--output-type", "base64");
+    assertFlagValue(ttsCall, "--output-type", "base64_output");
     assertNoFlag(ttsCall, "--disable-cache");
+  });
+
+  it("rejects unsupported output types without invoking the telnyx CLI", () => {
+    const fake = setupFakeTelnyx();
+    for (const bad of ["url", "binary_output"]) {
+      const { status } = runCli(["tts", "--text", "Hello", "--output-type", bad, "--json"], fake.env);
+      assert.notEqual(status, 0, `expected non-zero exit for --output-type ${bad}`);
+    }
+    if (existsSync(fake.logPath)) {
+      assert.equal(readLoggedArgs(fake.logPath).length, 0, "expected no telnyx CLI invocations");
+    }
   });
 
   it("fails when --text is not provided", () => {
