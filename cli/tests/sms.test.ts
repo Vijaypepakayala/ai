@@ -35,11 +35,11 @@ const command = args.filter((a) => a !== "--format" && a !== "json");
 function flag(f) { const i = command.indexOf(f); return i >= 0 ? command[i + 1] : null; }
 
 if (command[0] === "messages" && command[1] === "send") {
-  console.log(JSON.stringify({ data: { id: "msg-123", status: "queued", type: flag("--type"), from: flag("--from"), to: flag("--to") } }));
+  console.log(JSON.stringify({ data: { id: "msg-123", to: [{ status: "queued", phone_number: flag("--to") }], type: flag("--type"), from: flag("--from") } }));
 } else if (command[0] === "messages" && command[1] === "schedule") {
   console.log(JSON.stringify({ data: { id: "sched-456", status: "scheduled", send_at: flag("--send-at") } }));
 } else if (command[0] === "messages" && command[1] === "retrieve") {
-  console.log(JSON.stringify({ data: { id: flag("--id"), status: "delivered", direction: "outbound" } }));
+  console.log(JSON.stringify({ data: { id: flag("--id"), to: [{ status: "delivered" }], direction: "outbound" } }));
 } else if (command[0] === "messages" && command[1] === "cancel-scheduled") {
   console.log(JSON.stringify({ data: { id: flag("--id"), status: "cancelled" } }));
 } else {

@@ -51,7 +51,10 @@ export async function smsStatusCommand(flags: Record<string, string | boolean>):
     const res = await telnyxCli(["messages", "retrieve", "--id", id]);
     const data = (res?.data ?? res) as Record<string, unknown>;
     const messageId = String(data.id ?? id);
-    const status = String(data.status ?? data.delivery_status ?? "unknown");
+    // Telnyx returns the message status under data.to[].status; prefer it over
+    // the top-level status/delivery_status fields before falling back to "unknown".
+    const recipientStatus = Array.isArray(data.to) ? data.to[0]?.status : undefined;
+    const status = String(recipientStatus ?? data.status ?? data.delivery_status ?? "unknown");
 
     const result: SmsStatusResult = {
       message_id: messageId,

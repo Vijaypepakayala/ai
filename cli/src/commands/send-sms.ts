@@ -58,7 +58,11 @@ export async function sendSmsCommand(flags: Record<string, string | boolean>): P
     const res = await telnyxCli(args);
     const data = (res?.data ?? res) as Record<string, unknown>;
     const messageId = String(data.id ?? data.message_id ?? "");
-    const status = String(data.status ?? data.delivery_status ?? "submitted");
+    // Telnyx returns the per-recipient delivery status under data.to[].status;
+    // prefer it over the top-level status/delivery_status fields, then fall
+    // back to a sensible default.
+    const recipientStatus = Array.isArray(data.to) ? data.to[0]?.status : undefined;
+    const status = String(recipientStatus ?? data.status ?? data.delivery_status ?? "submitted");
 
     const result: SendSmsResult = {
       message_id: messageId,
