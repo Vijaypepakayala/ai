@@ -47,16 +47,14 @@ app.post('/webhook', (req, res) => {
   const { event_type, payload } = event.data || {};
 
   setImmediate(() => {
-    try {
-      handleEvent(event_type, payload);
-    } catch (err) {
+    handleEvent(event_type, payload).catch(err => {
       console.error(`Error handling ${event_type}:`, err.message);
-    }
+    });
   });
 });
 
 async function handleEvent(eventType, payload) {
-  const callId = payload.call_control_id;
+  let callId = payload.call_control_id;
 
   switch (eventType) {
     case 'call.initiated': {
@@ -144,7 +142,7 @@ async function handleEvent(eventType, payload) {
         connection_id: process.env.CALL_CONTROL_APP_ID,
         to: dept.agent_number,
         from: call.to,
-        timeout: 30,
+        timeout_secs: 30,
       });
 
       call.agentLeg = dialRes.data.data.call_control_id;
@@ -191,7 +189,14 @@ async function handleEvent(eventType, payload) {
 
       // FRIC-007: If customer was queued and agent didn't answer, offer voicemail
       if (call && call.state === 'dialing_agent' && payload.hangup_source !== 'caller') {
-        console.log('Agent no-answer — customer should have been offered voicemail');
+        console.log('Agent no-answer — offering voicemail');
+        await telnyxPost(`/calls/${callId}/actions/gather_using_speak`, {
+          payload: 'No agent is available. Press 1 to leave a voicemail, or hang up to end the call.',
+          voice: 'female',
+          maximum_digits: 1,
+          timeout_millis: 10000,
+        });
+        return;
       }
 
       if (call) {
@@ -353,7 +358,7 @@ def handle_event(event_type, payload):
             'connection_id': os.environ.get('CALL_CONTROL_APP_ID', ''),
             'to': dept['agent_number'],
             'from': call['to'],
-            'timeout': 30,
+            'timeout_secs': 30,
         })
         call['agent_leg'] = dial_res.json().get('data', {}).get('call_control_id')
         logging.info(f'Dialing agent for {dept["name"]}: {call["agent_leg"]}')
@@ -567,7 +572,7 @@ def handle_event(event_type, payload)
       connection_id: ENV['CALL_CONTROL_APP_ID'],
       to: dept[:agent_number],
       from: call[:to],
-      timeout: 30
+      timeout_secs: 30
     })
     call[:agent_leg] = JSON.parse(res.body).dig('data', 'call_control_id')
 
@@ -590,7 +595,7 @@ def handle_event(event_type, payload)
         end
       end
     end
-    break if call.nil?
+    return if call.nil?
     # FRIC-008: Cancel agent leg
     if call[:agent_leg] && call[:agent_leg] != call_id && call[:state] != 'bridged'
       begin
@@ -781,7 +786,7 @@ if ($path === '/webhook' && $method === 'POST') {
                 'connection_id' => getenv('CALL_CONTROL_APP_ID'),
                 'to' => $dept['agent_number'],
                 'from' => $store[$callId]['to'],
-                'timeout' => 30,
+                'timeout_secs' => 30,
             ]);
             $store[$callId]['agent_leg'] = $res['data']['call_control_id'] ?? null;
             saveStore($store);
@@ -973,7 +978,7 @@ public class ContactCenterApplication {
                 call.put("state", "dialing_agent");
                 // FRIC-004: Build state before dialing
                 String dialBody = String.format(
-                    "{\"connection_id\":\"%s\",\"to\":\"%s\",\"from\":\"%s\",\"timeout\":30}",
+                    "{\"connection_id\":\"%s\",\"to\":\"%s\",\"from\":\"%s\",\"timeout_secs\":30}",
                     CCA_ID, dept.get("agent_number"), call.get("to"));
                 String res = telnyxPost("/calls", dialBody);
                 // Parse call_control_id from response (simplified)
@@ -1071,12 +1076,10 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"bytes"
 )
@@ -1255,7 +1258,7 @@ func handleEvent(eventType string, payload map[string]interface{}) {
 				"connection_id": os.Getenv(ccaID),
 				"to":           dept.AgentNumber,
 				"from":          call.To,
-				"timeout":       30,
+				"timeout_secs":  30,
 			})
 			if err != nil {
 				log.Printf("Dial agent error: %v", err)
