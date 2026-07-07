@@ -12,7 +12,7 @@ import { telnyxCli, TelnyxCLIError } from "../telnyx-cli.ts";
 import { printSuccess, printError, outputJson } from "../utils/output.ts";
 
 const VALID_PROVIDERS = ["telnyx", "aws", "azure", "elevenlabs", "minimax", "resemble", "rime"] as const;
-const VALID_OUTPUT_TYPES = ["url", "base64"] as const;
+const VALID_OUTPUT_TYPES = ["url", "base64", "binary_output", "base64_output"] as const;
 const VALID_TEXT_TYPES = ["text", "ssml"] as const;
 
 interface TtsResult {
@@ -39,8 +39,8 @@ function extractAudio(response: unknown): { audioUrl?: string; audioData?: strin
     if (typeof v === "string" && v) return { audioUrl: v };
   }
 
-  // Base64-shaped fields
-  for (const key of ["data", "audio_data", "audio", "base64"]) {
+  // Base64-shaped fields (including the documented base64_audio response field)
+  for (const key of ["base64_audio", "data", "audio_data", "audio", "base64"]) {
     const v = obj[key];
     if (typeof v === "string" && v) return { audioData: v };
   }
@@ -54,7 +54,7 @@ export async function ttsCommand(flags: Record<string, string | boolean>): Promi
   const voice = (flags.voice as string | undefined) ?? "";
   const language = (flags.language as string) || "en";
   const provider = (flags.provider as string) || "telnyx";
-  const outputType = (flags["output-type"] as string) || "url";
+  const outputType = (flags["output-type"] as string) || "binary_output";
   const textType = (flags["text-type"] as string) || "text";
   const disableCache = flags["disable-cache"] === true;
 
@@ -77,6 +77,10 @@ export async function ttsCommand(flags: Record<string, string | boolean>): Promi
     process.exit(1);
   }
 
+  // Map friendly values to the documented Telnyx API output_type enums.
+  const apiOutputType =
+    outputType === "url" ? "binary_output" : outputType === "base64" ? "base64_output" : outputType;
+
   if (!VALID_TEXT_TYPES.includes(textType as (typeof VALID_TEXT_TYPES)[number])) {
     printError(
       `Invalid --text-type "${textType}". Valid: ${VALID_TEXT_TYPES.join(", ")}`,
@@ -93,7 +97,7 @@ export async function ttsCommand(flags: Record<string, string | boolean>): Promi
     if (voice) args.push("--voice", voice);
     args.push("--language", language);
     args.push("--provider", provider);
-    args.push("--output-type", outputType);
+    args.push("--output-type", apiOutputType);
     args.push("--text-type", textType);
     if (disableCache) args.push("--disable-cache");
 
@@ -105,7 +109,7 @@ export async function ttsCommand(flags: Record<string, string | boolean>): Promi
       text,
       voice,
       provider,
-      output_type: outputType,
+      output_type: apiOutputType,
       audio_url: audioUrl,
       has_audio_data: hasAudioData,
     };
@@ -115,7 +119,7 @@ export async function ttsCommand(flags: Record<string, string | boolean>): Promi
     } else {
       const details: Record<string, string | number | boolean> = {
         Provider: provider,
-        "Output Type": outputType,
+        "Output Type": apiOutputType,
         "Text Type": textType,
         Language: language,
       };

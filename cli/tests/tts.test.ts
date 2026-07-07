@@ -40,8 +40,8 @@ const command = args.filter((a) => a !== "--format" && a !== "json");
 
 if (command[0] === "text-to-speech" && command[1] === "generate-speech") {
   const outputType = flagValue(command, "--output-type");
-  if (outputType === "base64") {
-    console.log(JSON.stringify({ data: { data: "SGVsbG8gYXVkaW8=", format: "mp3", length: 16 } }));
+  if (outputType === "base64" || outputType === "base64_output") {
+    console.log(JSON.stringify({ data: { base64_audio: "SGVsbG8gYXVkaW8=", format: "mp3", length: 16 } }));
   } else {
     console.log(JSON.stringify({ data: { audio_url: "https://example.com/audio.mp3", format: "mp3" } }));
   }
@@ -104,7 +104,7 @@ describe("tts (text-to-speech) command", () => {
     assert.equal(status, 0, `expected exit 0, got ${status}`);
     const data = JSON.parse(stdout);
     assert.equal(data.text, "Hello world");
-    assert.equal(data.output_type, "url");
+    assert.equal(data.output_type, "binary_output");
     assert.equal(data.audio_url, "https://example.com/audio.mp3");
     assert.equal(data.has_audio_data, false);
 
@@ -143,7 +143,7 @@ describe("tts (text-to-speech) command", () => {
 
     assert.equal(status, 0);
     const data = JSON.parse(stdout);
-    assert.equal(data.output_type, "base64");
+    assert.equal(data.output_type, "base64_output");
     assert.equal(data.has_audio_data, true);
     assert.equal(data.audio_url, undefined);
 
@@ -151,7 +151,7 @@ describe("tts (text-to-speech) command", () => {
       (a) => a.slice(0, 2).join(" ") === "text-to-speech generate-speech",
     );
     assert.ok(ttsCall);
-    assertFlagValue(ttsCall, "--output-type", "base64");
+    assertFlagValue(ttsCall, "--output-type", "base64_output");
     assertNoFlag(ttsCall, "--disable-cache");
   });
 

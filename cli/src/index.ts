@@ -88,7 +88,7 @@ TTS Flags:
   --voice           Voice ID/name (optional, provider-specific)
   --language        Language code (default: en)
   --provider        TTS provider: telnyx, aws, azure, elevenlabs, minimax, resemble, rime (default: telnyx)
-  --output-type     Response format: url or base64 (default: url)
+  --output-type     Response format: url, base64, binary_output, or base64_output (default: binary_output)
   --text-type       Input format: text or ssml (default: text)
   --disable-cache   Skip cached audio and regenerate (boolean)
 
