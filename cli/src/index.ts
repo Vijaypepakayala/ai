@@ -16,6 +16,8 @@ import { setupEdgeWebhookCommand } from "./commands/setup-edge-webhook.ts";
 import { capabilitiesCommand } from "./commands/capabilities.ts";
 import { statusCommand } from "./commands/status.ts";
 import { fundAccountCommand } from "./commands/fund-account.ts";
+import { sttCommand } from "./commands/stt.ts";
+import { sttProvidersCommand } from "./commands/stt-providers.ts";
 import { parseFlags } from "./utils/output.ts";
 
 const HELP = `
@@ -39,6 +41,8 @@ Commands:
   status            Account health overview
   capabilities      List all available API capabilities
   fund-account      Fund account via x402 USDC payment (EIP-712 signing)
+  stt               Transcribe audio to text (speech-to-text)
+  stt-providers     List available speech-to-text providers
 
 Global Flags:
   --json            Output structured JSON instead of human-readable text
@@ -81,6 +85,21 @@ Fund-account Flags:
   --amount <usd>    Amount to fund in USD (required, e.g., 50.00)
   --wallet-key <0x> Private key for signing (optional, outputs payment requirements if omitted)
 
+STT Flags:
+  --audio-url <url> URL of the audio file to transcribe (required)
+  --language        Language code (default: en)
+  --model           Transcription model (optional, provider-specific)
+  --transcription-engine Transcription engine (optional)
+  --input-format    Audio input format (optional, e.g., mp3, wav)
+  --interim-results Return interim partial transcriptions (boolean)
+  --endpointing     Endpointing configuration (optional)
+  --redact          Redact sensitive content from the transcript (boolean)
+  --keywords        Comma-separated keywords to bias recognition (optional)
+
+STT-providers Flags:
+  --provider        Filter providers by name (optional)
+  --service-type    Filter providers by service type (optional)
+
 Environment:
   TELNYX_API_KEY    API key (or configure ~/.config/telnyx/config.json)
 
@@ -97,6 +116,10 @@ Examples:
   telnyx-agent setup-edge-webhook --name my-webhook
   telnyx-agent fund-account --amount 50.00
   telnyx-agent fund-account --amount 50.00 --wallet-key 0x... --json
+  telnyx-agent stt --audio-url https://example.com/audio.mp3
+  telnyx-agent stt --audio-url https://example.com/audio.mp3 --language es --model whisper-large --json
+  telnyx-agent stt-providers --json
+  telnyx-agent stt-providers --provider telnyx --service-type transcription --json
 `;
 
 const COMMANDS: Record<string, (flags: Record<string, string | boolean>) => Promise<void>> = {
@@ -114,6 +137,8 @@ const COMMANDS: Record<string, (flags: Record<string, string | boolean>) => Prom
   capabilities: capabilitiesCommand,
   status: statusCommand,
   "fund-account": fundAccountCommand,
+  stt: sttCommand,
+  "stt-providers": sttProvidersCommand,
 };
 
 export async function run(argv: string[]): Promise<void> {
