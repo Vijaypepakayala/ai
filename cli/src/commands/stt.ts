@@ -79,7 +79,12 @@ export async function sttCommand(flags: Record<string, string | boolean>): Promi
       ...(language ? { language } : {}),
     };
 
-    if (jsonOutput) {
+    // When verbose_json is requested, include the full API response data
+    // (timestamps, segments, etc.) alongside the normalized fields.
+    if (responseFormat === "verbose_json" && jsonOutput) {
+      const rawData = (response as Record<string, unknown>)?.data ?? response;
+      outputJson({ ...result, ...(rawData as Record<string, unknown>) });
+    } else if (jsonOutput) {
       outputJson(result);
     } else {
       const details: Record<string, string | number | boolean> = {
