@@ -261,6 +261,35 @@ describe("tts (text-to-speech) command", () => {
     assertFlagValue(voicesCall, "--provider", "aws");
   });
 
+  it("tts-voices forwards --api-key to the Go CLI for provider voice lists", () => {
+    const fake = setupFakeTelnyx();
+    const { stdout, status } = runCli(
+      ["tts-voices", "--provider", "elevenlabs", "--api-key", "sk-provider-key", "--json"],
+      fake.env,
+    );
+
+    assert.equal(status, 0, `expected exit 0, got ${status}`);
+    const data = JSON.parse(stdout);
+    assert.equal(data.provider, "elevenlabs");
+
+    const voicesCall = readLoggedArgs(fake.logPath).find(
+      (a) => a.slice(0, 2).join(" ") === "text-to-speech list-voices",
+    );
+    assert.ok(voicesCall);
+    assertFlagValue(voicesCall, "--provider", "elevenlabs");
+    assertFlagValue(voicesCall, "--api-key", "sk-provider-key");
+  });
+
+  it("tts-voices omits --api-key when not provided", () => {
+    const fake = setupFakeTelnyx();
+    runCli(["tts-voices", "--json"], fake.env);
+    const voicesCall = readLoggedArgs(fake.logPath).find(
+      (a) => a.slice(0, 2).join(" ") === "text-to-speech list-voices",
+    );
+    assert.ok(voicesCall);
+    assertNoFlag(voicesCall, "--api-key");
+  });
+
   it("tts-voices accepts the xai provider", () => {
     const fake = setupFakeTelnyx();
     const { stdout, status } = runCli(["tts-voices", "--provider", "xai", "--json"], fake.env);

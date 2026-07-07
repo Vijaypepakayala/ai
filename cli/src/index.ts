@@ -96,6 +96,7 @@ TTS Flags:
 
 TTS-voices Flags:
   --provider        Filter voices by provider: telnyx, aws, azure, elevenlabs, minimax, resemble, rime, xai (optional)
+  --api-key <key>   Provider API key forwarded to the Go CLI for provider-backed voice lists (e.g., elevenlabs, resemble)
 
 Environment:
   TELNYX_API_KEY    API key (or configure ~/.config/telnyx/config.json)

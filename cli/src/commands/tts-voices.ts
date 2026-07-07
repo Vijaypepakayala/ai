@@ -51,6 +51,7 @@ function extractVoices(response: unknown): Voice[] {
 export async function ttsVoicesCommand(flags: Record<string, string | boolean>): Promise<void> {
   const jsonOutput = flags.json === true;
   const provider = flags.provider as string | undefined;
+  const apiKey = flags["api-key"] as string | undefined;
 
   if (provider && !VALID_PROVIDERS.includes(provider as (typeof VALID_PROVIDERS)[number])) {
     printError(
@@ -66,6 +67,7 @@ export async function ttsVoicesCommand(flags: Record<string, string | boolean>):
 
     const args = ["text-to-speech", "list-voices"];
     if (provider) args.push("--provider", provider);
+    if (apiKey) args.push("--api-key", apiKey);
 
     const response = await telnyxCli(args);
     const voices = extractVoices(response);
