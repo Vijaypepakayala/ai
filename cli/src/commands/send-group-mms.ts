@@ -22,7 +22,6 @@ export async function sendGroupMmsCommand(flags: Record<string, string | boolean
   const to = flags["to"] as string | undefined;
   const text = flags["text"] as string | undefined;
   const mediaUrl = flags["media-url"] as string | undefined;
-  const messagingProfileId = flags["messaging-profile-id"] as string | undefined;
 
   if (!from) {
     printError("--from is required (E.164 format, e.g., +131****0000)");
@@ -43,13 +42,15 @@ export async function sendGroupMmsCommand(flags: Record<string, string | boolean
   ];
   if (text) args.push("--text", text);
   if (mediaUrl) args.push("--media-url", mediaUrl);
-  if (messagingProfileId) args.push("--messaging-profile-id", messagingProfileId);
 
   try {
     const res = await telnyxCli(args);
     const data = (res?.data ?? res) as Record<string, unknown>;
     const messageId = String(data.id ?? data.message_id ?? "");
-    const status = String(data.status ?? data.delivery_status ?? "submitted");
+    // Telnyx returns the per-recipient status under data.to[].status; fall back
+    // to "submitted" when the recipient status is not present.
+    const recipientStatus = Array.isArray(data.to) ? data.to[0]?.status : undefined;
+    const status = String(recipientStatus ?? "submitted");
 
     const recipients = to.split(",").map((n) => n.trim()).filter(Boolean);
 

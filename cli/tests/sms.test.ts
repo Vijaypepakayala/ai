@@ -37,7 +37,7 @@ function flag(f) { const i = command.indexOf(f); return i >= 0 ? command[i + 1] 
 if (command[0] === "messages" && command[1] === "send") {
   console.log(JSON.stringify({ data: { id: "msg-123", status: "queued", type: flag("--type"), from: flag("--from"), to: flag("--to") } }));
 } else if (command[0] === "messages" && command[1] === "send-group-mms") {
-  console.log(JSON.stringify({ data: { id: "grp-789", status: "queued", type: "MMS", from: flag("--from"), to: flag("--to") } }));
+  console.log(JSON.stringify({ data: { id: "grp-789", to: [{ status: "queued", phone_number: flag("--to") }], type: "MMS", from: flag("--from") } }));
 } else if (command[0] === "messages" && command[1] === "schedule") {
   console.log(JSON.stringify({ data: { id: "sched-456", status: "scheduled", send_at: flag("--send-at") } }));
 } else if (command[0] === "messages" && command[1] === "retrieve") {
