@@ -16,6 +16,9 @@ import { setupEdgeWebhookCommand } from "./commands/setup-edge-webhook.ts";
 import { capabilitiesCommand } from "./commands/capabilities.ts";
 import { statusCommand } from "./commands/status.ts";
 import { fundAccountCommand } from "./commands/fund-account.ts";
+import { callDialCommand } from "./commands/call-dial.ts";
+import { callControlCommand } from "./commands/call-control.ts";
+import { callStatusCommand } from "./commands/call-status.ts";
 import { parseFlags } from "./utils/output.ts";
 
 const HELP = `
@@ -39,6 +42,9 @@ Commands:
   status            Account health overview
   capabilities      List all available API capabilities
   fund-account      Fund account via x402 USDC payment (EIP-712 signing)
+  call-dial         Make an outbound call via Call Control
+  call-control      Call Control actions (answer, hangup, transfer, dtmf, record, speak, ...)
+  call-status       Get the status of a call by call-control-id
 
 Global Flags:
   --json            Output structured JSON instead of human-readable text
@@ -81,6 +87,28 @@ Fund-account Flags:
   --amount <usd>    Amount to fund in USD (required, e.g., 50.00)
   --wallet-key <0x> Private key for signing (optional, outputs payment requirements if omitted)
 
+Voice Call Flags:
+  --connection-id   Call Control connection ID (call-dial, required)
+  --from             E.164 number to call from (call-dial, required)
+  --to               E.164 destination (call-dial, call-control transfer)
+  --call-control-id Call Control ID of the call (call-control, call-status, required)
+  --action           Call Control action (call-control, required)
+                    Valid: answer, hangup, transfer, dtmf, start-recording, stop-recording,
+                    start-noise-suppression, stop-noise-suppression, speak, bridge, refer, reject
+  --digits           DTMF digits to send (call-control dtmf)
+  --payload          Text to synthesize and speak (call-control speak)
+  --voice            TTS voice to use (call-control speak, default: female)
+  --call-control-id-2 Second call-control-id to bridge with (call-control bridge)
+  --sip-address      SIP address to refer to (call-control refer, e.g. sip:user@example.com)
+  --channels         Recording channels: single|dual (call-control start-recording)
+  --format           Recording format: mp3|wav (call-control start-recording)
+  --answering-machine-detection  Enable answering machine detection (call-dial)
+  --deepfake-detection           Enable deepfake detection (call-dial, call-control answer)
+  --record                       Record the call (call-dial, call-control answer)
+  --webhook-url                  Webhook URL override (call-dial, call-control answer)
+  --audio-url                    Audio URL to play on answer (call-dial)
+  --timeout-secs                 Dial timeout in seconds (call-dial)
+
 Environment:
   TELNYX_API_KEY    API key (or configure ~/.config/telnyx/config.json)
 
@@ -97,6 +125,15 @@ Examples:
   telnyx-agent setup-edge-webhook --name my-webhook
   telnyx-agent fund-account --amount 50.00
   telnyx-agent fund-account --amount 50.00 --wallet-key 0x... --json
+  telnyx-agent call-dial --connection-id <id> --from +131****0000 --to +131****1234
+  telnyx-agent call-dial --connection-id <id> --from +131****0000 --to +131****1234 --answering-machine-detection --json
+  telnyx-agent call-control --action hangup --call-control-id <id>
+  telnyx-agent call-control --action transfer --call-control-id <id> --to +131****9999
+  telnyx-agent call-control --action dtmf --call-control-id <id> --digits 1234
+  telnyx-agent call-control --action speak --call-control-id <id> --payload "Hello there" --voice female
+  telnyx-agent call-control --action start-recording --call-control-id <id> --channels dual --format mp3
+  telnyx-agent call-control --action bridge --call-control-id <id> --call-control-id-2 <id2>
+  telnyx-agent call-status --call-control-id <id> --json
 `;
 
 const COMMANDS: Record<string, (flags: Record<string, string | boolean>) => Promise<void>> = {
@@ -114,6 +151,9 @@ const COMMANDS: Record<string, (flags: Record<string, string | boolean>) => Prom
   capabilities: capabilitiesCommand,
   status: statusCommand,
   "fund-account": fundAccountCommand,
+  "call-dial": callDialCommand,
+  "call-control": callControlCommand,
+  "call-status": callStatusCommand,
 };
 
 export async function run(argv: string[]): Promise<void> {
