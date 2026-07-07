@@ -90,7 +90,7 @@ if [[ "$HTTP_CODE" == "200" ]]; then
     pass "Found $CCA_COUNT Call Control Application(s)"
     CCA_ID=$(jq_print "$BODY" '.data[0].id')
     CCA_NAME=$(jq_print "$BODY" '.data[0].name')
-    CCA_OVP=$(jq_print "$BODY" '.data[0].outbound_voice_profile_id // empty')
+    CCA_OVP=$(jq_print "$BODY" '.data[0].outbound.outbound_voice_profile_id // empty')
     CCA_WEBHOOK=$(jq_print "$BODY" '.data[0].webhook_url // empty')
     echo "  App ID:    $CCA_ID"
     echo "  App Name:  $CCA_NAME"

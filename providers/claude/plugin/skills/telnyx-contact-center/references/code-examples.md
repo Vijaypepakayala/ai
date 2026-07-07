@@ -156,6 +156,7 @@ async function handleEvent(eventType, payload) {
       // Start recording
       await telnyxPost(`/calls/${callId}/actions/record_start`, {
         format: 'mp3',
+        channels: 'single',
         transcription: true,
       });
 
@@ -165,10 +166,22 @@ async function handleEvent(eventType, payload) {
     }
 
     case 'call.hangup': {
-      const call = callStore.get(callId);
+      let call = callStore.get(callId);
+
+      // If hangup is from agent leg, find the customer leg
+      if (!call) {
+        for (const [custId, entry] of callStore) {
+          if (entry.agentLeg === callId) {
+            call = entry;
+            callId = custId;
+            break;
+          }
+        }
+      }
+      if (!call) break;
 
       // FRIC-008: Cancel agent leg if still ringing
-      if (call && call.agentLeg && call.state !== 'bridged') {
+      if (call.agentLeg && call.agentLeg !== callId && call.state !== 'bridged') {
         try {
           await telnyxPost(`/calls/${call.agentLeg}/actions/hangup`, {});
         } catch (e) {
@@ -348,6 +361,7 @@ def handle_event(event_type, payload):
     elif event_type == 'call.bridged':
         telnyx_post(f'/calls/{call_id}/actions/record_start', {
             'format': 'mp3',
+            'channels': 'single',
             'transcription': True,
         })
         call = call_store.get(call_id)
@@ -356,8 +370,17 @@ def handle_event(event_type, payload):
 
     elif event_type == 'call.hangup':
         call = call_store.get(call_id)
+        # If hangup is from agent leg, find the customer leg
+        if not call:
+            for cust_id, entry in call_store.items():
+                if entry.get('agent_leg') == call_id:
+                    call = entry
+                    call_id = cust_id
+                    break
+        if not call:
+            return
         # FRIC-008: Cancel agent leg if still ringing
-        if call and call.get('agent_leg') and call['state'] != 'bridged':
+        if call.get('agent_leg') and call['agent_leg'] != call_id and call['state'] != 'bridged':
             try:
                 telnyx_post(f'/calls/{call["agent_leg"]}/actions/hangup', {})
             except Exception:
@@ -550,15 +573,26 @@ def handle_event(event_type, payload)
 
   when 'call.bridged'
     telnyx_post("/calls/#{call_id}/actions/record_start", {
-      format: 'mp3', transcription: true
+      format: 'mp3', channels: 'single', transcription: true
     })
     call = CALL_STORE.get(call_id)
     call[:state] = 'bridged' if call
 
   when 'call.hangup'
     call = CALL_STORE.get(call_id)
+    # If hangup is from agent leg, find the customer leg
+    if call.nil?
+      CALL_STORE.each do |cust_id, entry|
+        if entry[:agent_leg] == call_id
+          call = entry
+          call_id = cust_id
+          break
+        end
+      end
+    end
+    break if call.nil?
     # FRIC-008: Cancel agent leg
-    if call && call[:agent_leg] && call[:state] != 'bridged'
+    if call[:agent_leg] && call[:agent_leg] != call_id && call[:state] != 'bridged'
       begin
         telnyx_post("/calls/#{call[:agent_leg]}/actions/hangup", {})
       rescue
@@ -755,7 +789,7 @@ if ($path === '/webhook' && $method === 'POST') {
 
         case 'call.bridged':
             telnyxPost("/calls/{$callId}/actions/record_start", [
-                'format' => 'mp3', 'transcription' => true,
+                'format' => 'mp3', 'channels' => 'single', 'transcription' => true,
             ]);
             $store = loadStore();
             $store[$callId]['state'] = 'bridged';
@@ -764,8 +798,17 @@ if ($path === '/webhook' && $method === 'POST') {
 
         case 'call.hangup':
             $store = loadStore();
+            // If hangup is from agent leg, find the customer leg
+            if (!isset($store[$callId])) {
+                foreach ($store as $custId => $entry) {
+                    if (($entry['agent_leg'] ?? null) === $callId) {
+                        $callId = $custId;
+                        break;
+                    }
+                }
+            }
             // FRIC-008: Cancel agent leg
-            if (isset($store[$callId]) && $store[$callId]['agent_leg'] && $store[$callId]['state'] !== 'bridged') {
+            if (isset($store[$callId]) && $store[$callId]['agent_leg'] && $store[$callId]['agent_leg'] !== $callId && $store[$callId]['state'] !== 'bridged') {
                 telnyxPost("/calls/{$store[$callId]['agent_leg']}/actions/hangup", []);
             }
             if (isset($store[$callId])) {
@@ -938,14 +981,25 @@ public class ContactCenterApplication {
             }
             case "call.bridged" -> {
                 telnyxPost("/calls/" + callId + "/actions/record_start",
-                    "{\"format\":\"mp3\",\"transcription\":true}");
+                    "{\"format\":\"mp3\",\"channels\":\"single\",\"transcription\":true}");
                 Map<String, Object> call = callStore.get(callId);
                 if (call != null) call.put("state", "bridged");
             }
             case "call.hangup" -> {
                 Map<String, Object> call = callStore.get(callId);
+                // If hangup is from agent leg, find the customer leg
+                if (call == null) {
+                    for (Map.Entry<String, Map<String, Object>> entry : callStore.entrySet()) {
+                        if (callId.equals(entry.getValue().get("agent_leg"))) {
+                            call = entry.getValue();
+                            callId = entry.getKey();
+                            break;
+                        }
+                    }
+                }
+                if (call == null) break;
                 // FRIC-008: Cancel agent leg
-                if (call != null && call.get("agent_leg") != null && !"bridged".equals(call.get("state"))) {
+                if (call.get("agent_leg") != null && !callId.equals(call.get("agent_leg")) && !"bridged".equals(call.get("state"))) {
                     try {
                         telnyxPost("/calls/" + call.get("agent_leg") + "/actions/hangup", "{}");
                     } catch (Exception e) {
@@ -1219,7 +1273,7 @@ func handleEvent(eventType string, payload map[string]interface{}) {
 
 	case "call.bridged":
 		go telnyxPost("/calls/"+callID+"/actions/record_start", map[string]interface{}{
-			"format": "mp3", "transcription": true,
+			"format": "mp3", "channels": "single", "transcription": true,
 		})
 		storeMutex.Lock()
 		if call, ok := callStore[callID]; ok {
@@ -1231,8 +1285,24 @@ func handleEvent(eventType string, payload map[string]interface{}) {
 		storeMutex.RLock()
 		call, exists := callStore[callID]
 		storeMutex.RUnlock()
+		// If hangup is from agent leg, find the customer leg
+		if !exists {
+			storeMutex.RLock()
+			for custID, entry := range callStore {
+				if entry.AgentLeg == callID {
+					callID = custID
+					call = entry
+					exists = true
+					break
+				}
+			}
+			storeMutex.RUnlock()
+		}
+		if !exists {
+			return
+		}
 		// FRIC-008: Cancel agent leg if still ringing
-		if exists && call.AgentLeg != "" && call.State != "bridged" {
+		if call.AgentLeg != "" && call.AgentLeg != callID && call.State != "bridged" {
 			go func() {
 				telnyxPost("/calls/"+call.AgentLeg+"/actions/hangup", map[string]interface{}{})
 			}()
