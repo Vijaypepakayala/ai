@@ -16,6 +16,9 @@ import { setupEdgeWebhookCommand } from "./commands/setup-edge-webhook.ts";
 import { capabilitiesCommand } from "./commands/capabilities.ts";
 import { statusCommand } from "./commands/status.ts";
 import { fundAccountCommand } from "./commands/fund-account.ts";
+import { sendSmsCommand } from "./commands/send-sms.ts";
+import { scheduleSmsCommand } from "./commands/schedule-sms.ts";
+import { smsStatusCommand } from "./commands/sms-status.ts";
 import { parseFlags } from "./utils/output.ts";
 
 const HELP = `
@@ -39,6 +42,9 @@ Commands:
   status            Account health overview
   capabilities      List all available API capabilities
   fund-account      Fund account via x402 USDC payment (EIP-712 signing)
+  send-sms          Send an SMS or MMS message (--media-url sends MMS)
+  schedule-sms      Schedule an SMS for future delivery (--send-at ISO 8601)
+  sms-status        Check SMS delivery status, or cancel a scheduled message (--cancel)
 
 Global Flags:
   --json            Output structured JSON instead of human-readable text
@@ -81,6 +87,18 @@ Fund-account Flags:
   --amount <usd>    Amount to fund in USD (required, e.g., 50.00)
   --wallet-key <0x> Private key for signing (optional, outputs payment requirements if omitted)
 
+SMS Action Flags:
+  --from <e164>          Sender number, E.164 (send-sms, schedule-sms — required)
+  --to <e164>            Recipient number, E.164 (send-sms, schedule-sms — required)
+  --text <msg>           Message text (send-sms, schedule-sms — required)
+  --media-url <url>      Media URL; sends MMS instead of SMS (send-sms, schedule-sms)
+  --messaging-profile-id <id> Messaging profile to use (send-sms, schedule-sms)
+  --webhook-url <url>    Webhook for delivery status updates (send-sms)
+  --subject <text>       MMS subject line (send-sms)
+  --send-at <iso8601>    Send time, ISO 8601 (schedule-sms — required, e.g., 2024-12-31T00:00:00Z)
+  --id <message-id>      Message ID (sms-status — required)
+  --cancel               Cancel a scheduled message instead of retrieving status (sms-status)
+
 Environment:
   TELNYX_API_KEY    API key (or configure ~/.config/telnyx/config.json)
 
@@ -97,6 +115,11 @@ Examples:
   telnyx-agent setup-edge-webhook --name my-webhook
   telnyx-agent fund-account --amount 50.00
   telnyx-agent fund-account --amount 50.00 --wallet-key 0x... --json
+  telnyx-agent send-sms --from +131****0000 --to +131****0001 --text "Hello!"
+  telnyx-agent send-sms --from +131****0000 --to +131****0001 --text "See this" --media-url https://example.com/img.png --subject "Photo"
+  telnyx-agent schedule-sms --from +131****0000 --to +131****0001 --text "Later" --send-at 2024-12-31T00:00:00Z
+  telnyx-agent sms-status --id 3fa85f64-5717-4562-b3fc-2c963f66afa6
+  telnyx-agent sms-status --id 3fa85f64-5717-4562-b3fc-2c963f66afa6 --cancel
 `;
 
 const COMMANDS: Record<string, (flags: Record<string, string | boolean>) => Promise<void>> = {
@@ -114,6 +137,9 @@ const COMMANDS: Record<string, (flags: Record<string, string | boolean>) => Prom
   capabilities: capabilitiesCommand,
   status: statusCommand,
   "fund-account": fundAccountCommand,
+  "send-sms": sendSmsCommand,
+  "schedule-sms": scheduleSmsCommand,
+  "sms-status": smsStatusCommand,
 };
 
 export async function run(argv: string[]): Promise<void> {
