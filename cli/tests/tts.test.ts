@@ -45,6 +45,15 @@ if (command[0] === "text-to-speech" && command[1] === "generate-speech") {
   } else {
     console.log(JSON.stringify({ data: { audio_url: "https://example.com/audio.mp3", format: "mp3" } }));
   }
+} else if (command[0] === "text-to-speech" && command[1] === "list-voices") {
+  const provider = flagValue(command, "--provider") || "telnyx";
+  console.log(JSON.stringify({ data: [
+    { voice_id: "voice-1", name: "Voice One", language: "en-US", gender: "female", provider },
+    { voice_id: "voice-2", name: "Voice Two", language: "en-GB", gender: "male", provider },
+  ] }));
+} else if (command[0] === "text-to-speech" && command[1] === "retrieve-speech") {
+  const id = flagValue(command, "--id");
+  console.log(JSON.stringify({ data: { id, status: "completed", text: "Hello world", voice: "voice-1", provider: "telnyx", audio_url: "https://example.com/audio.mp3" } }));
 } else {
   console.log(JSON.stringify({ data: {} }));
 }
@@ -183,5 +192,78 @@ describe("tts (text-to-speech) command", () => {
     assert.match(stdout, /--text/);
     assert.match(stdout, /--output-type/);
     assert.match(stdout, /--provider/);
+  });
+
+  it("tts-voices calls text-to-speech list-voices and returns the voice list", () => {
+    const fake = setupFakeTelnyx();
+    const { stdout, status } = runCli(["tts-voices", "--json"], fake.env);
+
+    assert.equal(status, 0, `expected exit 0, got ${status}`);
+    const data = JSON.parse(stdout);
+    assert.equal(data.count, 2);
+    assert.ok(Array.isArray(data.voices));
+    assert.equal(data.voices[0].voice_id, "voice-1");
+
+    const calls = readLoggedArgs(fake.logPath);
+    const voicesCall = calls.find((a) => a.slice(0, 2).join(" ") === "text-to-speech list-voices");
+    assert.ok(voicesCall, "expected a text-to-speech list-voices call");
+    assertNoFlag(voicesCall, "--provider");
+  });
+
+  it("tts-voices forwards the --provider flag when supplied", () => {
+    const fake = setupFakeTelnyx();
+    const { stdout, status } = runCli(["tts-voices", "--provider", "aws", "--json"], fake.env);
+
+    assert.equal(status, 0);
+    const data = JSON.parse(stdout);
+    assert.equal(data.provider, "aws");
+    assert.equal(data.voices[0].provider, "aws");
+
+    const voicesCall = readLoggedArgs(fake.logPath).find(
+      (a) => a.slice(0, 2).join(" ") === "text-to-speech list-voices",
+    );
+    assert.ok(voicesCall);
+    assertFlagValue(voicesCall, "--provider", "aws");
+  });
+
+  it("tts-retrieve calls text-to-speech retrieve-speech with --id", () => {
+    const fake = setupFakeTelnyx();
+    const { stdout, status } = runCli(["tts-retrieve", "--id", "speech-123", "--json"], fake.env);
+
+    assert.equal(status, 0, `expected exit 0, got ${status}`);
+    const data = JSON.parse(stdout);
+    assert.equal(data.id, "speech-123");
+    assert.equal(data.status, "completed");
+    assert.equal(data.audio_url, "https://example.com/audio.mp3");
+    assert.equal(data.has_audio_data, false);
+
+    const calls = readLoggedArgs(fake.logPath);
+    const retrieveCall = calls.find((a) => a.slice(0, 2).join(" ") === "text-to-speech retrieve-speech");
+    assert.ok(retrieveCall, "expected a text-to-speech retrieve-speech call");
+    assertFlagValue(retrieveCall, "--id", "speech-123");
+  });
+
+  it("tts-retrieve fails when --id is not provided", () => {
+    const fake = setupFakeTelnyx();
+    const { status, stdout } = runCli(["tts-retrieve", "--json"], fake.env);
+
+    assert.notEqual(status, 0, "expected non-zero exit when --id is missing");
+    if (existsSync(fake.logPath)) {
+      const calls = readLoggedArgs(fake.logPath);
+      assert.equal(calls.length, 0, "expected no telnyx CLI invocations");
+    }
+    if (stdout.trim()) {
+      const data = JSON.parse(stdout);
+      assert.ok(data.error, "expected an error field in JSON output");
+    }
+  });
+
+  it("lists the tts-voices and tts-retrieve commands in the help text", () => {
+    const fake = setupFakeTelnyx();
+    const { stdout, status } = runCli(["help"], fake.env);
+
+    assert.equal(status, 0);
+    assert.match(stdout, /tts-voices\b/);
+    assert.match(stdout, /tts-retrieve\b/);
   });
 });
