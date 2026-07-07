@@ -54,14 +54,12 @@ if (command[0] === "text-to-speech" && command[1] === "generate-speech") {
     process.exit(1);
   }
 } else if (command[0] === "text-to-speech" && command[1] === "list-voices") {
+  // GET /text-to-speech/voices responds { "voices": [...] } with no data envelope.
   const provider = flagValue(command, "--provider") || "telnyx";
-  console.log(JSON.stringify({ data: [
+  console.log(JSON.stringify({ voices: [
     { voice_id: "voice-1", name: "Voice One", language: "en-US", gender: "female", provider },
     { voice_id: "voice-2", name: "Voice Two", language: "en-GB", gender: "male", provider },
   ] }));
-} else if (command[0] === "text-to-speech" && command[1] === "retrieve-speech") {
-  const id = flagValue(command, "--id");
-  console.log(JSON.stringify({ data: { id, status: "completed", text: "Hello world", voice: "voice-1", provider: "telnyx", audio_url: "https://example.com/audio.mp3" } }));
 } else {
   console.log(JSON.stringify({ data: {} }));
 }
@@ -263,44 +261,36 @@ describe("tts (text-to-speech) command", () => {
     assertFlagValue(voicesCall, "--provider", "aws");
   });
 
-  it("tts-retrieve calls text-to-speech retrieve-speech with --id", () => {
+  it("tts-voices accepts the xai provider", () => {
     const fake = setupFakeTelnyx();
-    const { stdout, status } = runCli(["tts-retrieve", "--id", "speech-123", "--json"], fake.env);
+    const { stdout, status } = runCli(["tts-voices", "--provider", "xai", "--json"], fake.env);
 
     assert.equal(status, 0, `expected exit 0, got ${status}`);
     const data = JSON.parse(stdout);
-    assert.equal(data.id, "speech-123");
-    assert.equal(data.status, "completed");
-    assert.equal(data.audio_url, "https://example.com/audio.mp3");
-    assert.equal(data.has_audio_data, false);
+    assert.equal(data.provider, "xai");
 
-    const calls = readLoggedArgs(fake.logPath);
-    const retrieveCall = calls.find((a) => a.slice(0, 2).join(" ") === "text-to-speech retrieve-speech");
-    assert.ok(retrieveCall, "expected a text-to-speech retrieve-speech call");
-    assertFlagValue(retrieveCall, "--id", "speech-123");
+    const voicesCall = readLoggedArgs(fake.logPath).find(
+      (a) => a.slice(0, 2).join(" ") === "text-to-speech list-voices",
+    );
+    assert.ok(voicesCall);
+    assertFlagValue(voicesCall, "--provider", "xai");
   });
 
-  it("tts-retrieve fails when --id is not provided", () => {
+  it("tts-voices rejects unknown providers without invoking the telnyx CLI", () => {
     const fake = setupFakeTelnyx();
-    const { status, stdout } = runCli(["tts-retrieve", "--json"], fake.env);
+    const { status } = runCli(["tts-voices", "--provider", "nope", "--json"], fake.env);
 
-    assert.notEqual(status, 0, "expected non-zero exit when --id is missing");
+    assert.notEqual(status, 0, "expected non-zero exit for an unknown provider");
     if (existsSync(fake.logPath)) {
-      const calls = readLoggedArgs(fake.logPath);
-      assert.equal(calls.length, 0, "expected no telnyx CLI invocations");
-    }
-    if (stdout.trim()) {
-      const data = JSON.parse(stdout);
-      assert.ok(data.error, "expected an error field in JSON output");
+      assert.equal(readLoggedArgs(fake.logPath).length, 0, "expected no telnyx CLI invocations");
     }
   });
 
-  it("lists the tts-voices and tts-retrieve commands in the help text", () => {
+  it("lists the tts-voices command in the help text", () => {
     const fake = setupFakeTelnyx();
     const { stdout, status } = runCli(["help"], fake.env);
 
     assert.equal(status, 0);
     assert.match(stdout, /tts-voices\b/);
-    assert.match(stdout, /tts-retrieve\b/);
   });
 });
