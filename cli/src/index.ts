@@ -44,7 +44,7 @@ Commands:
   fund-account      Fund account via x402 USDC payment (EIP-712 signing)
   tts               Generate speech from text (text-to-speech)
   tts-voices        List available TTS voices (optionally filter by provider)
-  tts-retrieve      Retrieve a previously generated speech record by ID
+  tts-retrieve      Retrieve a previously generated speech record by socket ID
 
 Global Flags:
   --json            Output structured JSON instead of human-readable text
@@ -97,10 +97,10 @@ TTS Flags:
   --disable-cache   Skip cached audio and regenerate (boolean)
 
 TTS-voices Flags:
-  --provider        Filter voices by provider: telnyx, aws, azure, elevenlabs, minimax, resemble, rime (optional)
+  --provider        Filter voices by provider: telnyx, aws, azure, elevenlabs, minimax, resemble, rime, xai (optional)
 
 TTS-retrieve Flags:
-  --id              Speech record ID to retrieve (required)
+  --socket-id       Socket/session ID of the speech record to retrieve (required)
 
 Environment:
   TELNYX_API_KEY    API key (or configure ~/.config/telnyx/config.json)
@@ -123,7 +123,7 @@ Examples:
   telnyx-agent tts --text "<speak>Hello</speak>" --text-type ssml --output-type base64
   telnyx-agent tts-voices --json
   telnyx-agent tts-voices --provider aws
-  telnyx-agent tts-retrieve --id <speech_id> --json
+  telnyx-agent tts-retrieve --socket-id <socket_id> --json
 `;
 
 const COMMANDS: Record<string, (flags: Record<string, string | boolean>) => Promise<void>> = {

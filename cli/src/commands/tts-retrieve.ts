@@ -2,7 +2,7 @@
  * telnyx-agent tts-retrieve — Retrieve a previously generated speech record.
  *
  * Shells out to the telnyx CLI's `text-to-speech retrieve-speech` subcommand and
- * surfaces the stored speech data (matched by speech ID) in either
+ * surfaces the stored speech data (matched by socket ID) in either
  * human-readable or JSON form.
  */
 
@@ -48,10 +48,10 @@ function extractSpeech(response: unknown): { speech?: Record<string, unknown>; a
 
 export async function ttsRetrieveCommand(flags: Record<string, string | boolean>): Promise<void> {
   const jsonOutput = flags.json === true;
-  const id = flags.id as string | undefined;
+  const socketId = flags["socket-id"] as string | undefined;
 
-  if (!id) {
-    printError("--id is required (e.g., --id <speech_id>)");
+  if (!socketId) {
+    printError("--socket-id is required (e.g., --socket-id <socket_id>)");
     process.exit(1);
   }
 
@@ -60,13 +60,13 @@ export async function ttsRetrieveCommand(flags: Record<string, string | boolean>
       console.log("\n🔊 Retrieving speech record...\n");
     }
 
-    const args = ["text-to-speech", "retrieve-speech", "--id", id];
+    const args = ["text-to-speech", "retrieve-speech", "--socket-id", socketId];
     const response = await telnyxCli(args);
     const { speech, audioUrl, audioData } = extractSpeech(response);
     const hasAudioData = !!audioData;
 
     const result: TtsSpeechResult = {
-      id,
+      id: socketId,
       status: typeof speech?.status === "string" ? (speech.status as string) : undefined,
       text: typeof speech?.text === "string" ? (speech.text as string) : undefined,
       voice: typeof speech?.voice === "string" ? (speech.voice as string) : undefined,
@@ -79,7 +79,7 @@ export async function ttsRetrieveCommand(flags: Record<string, string | boolean>
       outputJson(result);
     } else {
       const details: Record<string, string | number | boolean> = {
-        "Speech ID": id,
+        "Socket ID": socketId,
       };
       if (result.status) details["Status"] = result.status;
       if (result.provider) details["Provider"] = result.provider;
