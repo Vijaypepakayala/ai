@@ -30,17 +30,24 @@ interface OrderResult {
 export async function searchNumbers(
   country: string,
   opts?: {
-    features?: string;
+    features?: string | string[];
     type?: string;
     limit?: number;
   },
 ): Promise<Array<Record<string, unknown>>> {
   const args = ["available-phone-numbers", "list", "--filter.country-code", country];
   if (opts?.type) args.push("--filter.phone-number-type", opts.type);
-  if (opts?.limit) args.push("--page-size", String(opts.limit));
-  if (opts?.features) args.push("--filter.features", opts.features);
+  if (opts?.limit) args.push("--filter.limit", String(opts.limit));
+  // Go CLI v0.21: filter.features is InnerFlag[[]string] — expects a JSON array, not a scalar
+  if (opts?.features) {
+    const featuresArr = Array.isArray(opts.features) ? opts.features : [opts.features];
+    args.push("--filter.features", JSON.stringify(featuresArr));
+  }
 
-  const res = await telnyxCli(args);
+  // Use { format: "raw" } — v0.21 list commands output per-item JSON
+  // when --format json is used, which is not the { data: [...] } envelope
+  // the helper parses. Raw mode returns a parseable array.
+  const res = await telnyxCli(args, { format: "raw" });
   const numbers = res.data as Array<Record<string, unknown>>;
   if (!numbers?.length) {
     throw new Error(`No phone numbers available in ${country}`);
@@ -60,7 +67,9 @@ export async function orderNumber(
     billingGroupId?: string;
   },
 ): Promise<OrderResult> {
-  const args = ["number-orders", "create", "--phone-numbers", phoneNumber];
+  // Go CLI v0.21: --phone-number is Flag[[]map[string]any] with inner --phone-number.phone-number
+  // Passing a bare E.164 string is rejected; must use the inner field name
+  const args = ["number-orders", "create", "--phone-number.phone-number", phoneNumber];
   if (opts?.messagingProfileId) args.push("--messaging-profile-id", opts.messagingProfileId);
   if (opts?.connectionId) args.push("--connection-id", opts.connectionId);
   if (opts?.billingGroupId) args.push("--billing-group-id", opts.billingGroupId);
@@ -92,7 +101,7 @@ export async function orderNumber(
 export async function searchAndBuyNumber(
   country: string,
   opts?: {
-    features?: string;
+    features?: string | string[];
     type?: string;
     messagingProfileId?: string;
     connectionId?: string;
