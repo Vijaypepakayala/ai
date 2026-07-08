@@ -7,7 +7,7 @@ import { telnyxCli, TelnyxCLIError } from "../telnyx-cli.ts";
 import { outputJson, printWarning } from "../utils/output.ts";
 
 interface StatusResult {
-  balance: { amount: string; currency: string; credit_limit: string };
+  balance: { available: string; amount: string; currency: string; credit_limit: string };
   phone_numbers: { total: number; active: number };
   messaging_profiles: { total: number };
   connections: { total: number };
@@ -19,7 +19,7 @@ export async function statusCommand(flags: Record<string, string | boolean>): Pr
   const jsonOutput = flags.json === true;
 
   const results: StatusResult = {
-    balance: { amount: "0.00", currency: "USD", credit_limit: "0.00" },
+    balance: { available: "0.00", amount: "0.00", currency: "USD", credit_limit: "0.00" },
     phone_numbers: { total: 0, active: 0 },
     messaging_profiles: { total: 0 },
     connections: { total: 0 },
@@ -44,8 +44,16 @@ export async function statusCommand(flags: Record<string, string | boolean>): Pr
       results.balance.currency = String(data.currency ?? "USD");
       results.balance.credit_limit = String(data.credit_limit ?? "0.00");
     }
-    const bal = parseFloat(results.balance.amount);
-    if (bal < 5) results.warnings.push(`Low balance: $${results.balance.amount} — consider topping up`);
+    // Available balance = balance + credit_limit.
+    // Telnyx credit accounts report balance as negative (used credit) with a
+    // positive credit_limit.  Prepaid accounts report a positive balance with
+    // credit_limit = 0.  Adding the two yields the real available funds in
+    // both cases.
+    const bal = parseFloat(results.balance.amount) || 0;
+    const credit = parseFloat(results.balance.credit_limit) || 0;
+    const available = bal + credit;
+    results.balance.available = available.toFixed(2);
+    if (available < 5) results.warnings.push(`Low available balance: $${results.balance.available} — consider topping up`);
   } else {
     results.warnings.push(`Could not fetch balance: ${errorMsg(balanceRes.reason)}`);
   }
@@ -92,8 +100,9 @@ export async function statusCommand(flags: Record<string, string | boolean>): Pr
   // Human-readable output
   console.log("\n📊 Telnyx Account Status");
   console.log("========================\n");
-  console.log(`  Balance:            $${results.balance.amount} ${results.balance.currency}`);
-  console.log(`  Credit Limit:       $${results.balance.credit_limit}`);
+  console.log(`  Available Balance: $${results.balance.available} ${results.balance.currency}`);
+  console.log(`  Account Balance:    $${results.balance.amount} ${results.balance.currency}`);
+  console.log(`  Credit Limit:      $${results.balance.credit_limit}`);
   console.log(`  Phone Numbers:      ${results.phone_numbers.total}`);
   console.log(`  Messaging Profiles: ${results.messaging_profiles.total}`);
   console.log(`  Voice Connections:  ${results.connections.total}`);
