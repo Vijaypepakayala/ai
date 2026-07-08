@@ -53,6 +53,13 @@ if (command[0] === "text-to-speech" && command[1] === "generate-speech") {
     console.error("unexpected --output-type: " + outputType);
     process.exit(1);
   }
+} else if (command[0] === "text-to-speech" && command[1] === "list-voices") {
+  // GET /text-to-speech/voices responds { "voices": [...] } with no data envelope.
+  const provider = flagValue(command, "--provider") || "telnyx";
+  console.log(JSON.stringify({ voices: [
+    { voice_id: "voice-1", name: "Voice One", language: "en-US", gender: "female", provider },
+    { voice_id: "voice-2", name: "Voice Two", language: "en-GB", gender: "male", provider },
+  ] }));
 } else {
   console.log(JSON.stringify({ data: {} }));
 }
@@ -220,5 +227,99 @@ describe("tts (text-to-speech) command", () => {
     assert.match(stdout, /--text/);
     assert.match(stdout, /--output-type/);
     assert.match(stdout, /--provider/);
+  });
+
+  it("tts-voices calls text-to-speech list-voices and returns the voice list", () => {
+    const fake = setupFakeTelnyx();
+    const { stdout, status } = runCli(["tts-voices", "--json"], fake.env);
+
+    assert.equal(status, 0, `expected exit 0, got ${status}`);
+    const data = JSON.parse(stdout);
+    assert.equal(data.count, 2);
+    assert.ok(Array.isArray(data.voices));
+    assert.equal(data.voices[0].voice_id, "voice-1");
+
+    const calls = readLoggedArgs(fake.logPath);
+    const voicesCall = calls.find((a) => a.slice(0, 2).join(" ") === "text-to-speech list-voices");
+    assert.ok(voicesCall, "expected a text-to-speech list-voices call");
+    assertNoFlag(voicesCall, "--provider");
+  });
+
+  it("tts-voices forwards the --provider flag when supplied", () => {
+    const fake = setupFakeTelnyx();
+    const { stdout, status } = runCli(["tts-voices", "--provider", "aws", "--json"], fake.env);
+
+    assert.equal(status, 0);
+    const data = JSON.parse(stdout);
+    assert.equal(data.provider, "aws");
+    assert.equal(data.voices[0].provider, "aws");
+
+    const voicesCall = readLoggedArgs(fake.logPath).find(
+      (a) => a.slice(0, 2).join(" ") === "text-to-speech list-voices",
+    );
+    assert.ok(voicesCall);
+    assertFlagValue(voicesCall, "--provider", "aws");
+  });
+
+  it("tts-voices forwards --api-key to the Go CLI for provider voice lists", () => {
+    const fake = setupFakeTelnyx();
+    const { stdout, status } = runCli(
+      ["tts-voices", "--provider", "elevenlabs", "--api-key", "sk-provider-key", "--json"],
+      fake.env,
+    );
+
+    assert.equal(status, 0, `expected exit 0, got ${status}`);
+    const data = JSON.parse(stdout);
+    assert.equal(data.provider, "elevenlabs");
+
+    const voicesCall = readLoggedArgs(fake.logPath).find(
+      (a) => a.slice(0, 2).join(" ") === "text-to-speech list-voices",
+    );
+    assert.ok(voicesCall);
+    assertFlagValue(voicesCall, "--provider", "elevenlabs");
+    assertFlagValue(voicesCall, "--api-key", "sk-provider-key");
+  });
+
+  it("tts-voices omits --api-key when not provided", () => {
+    const fake = setupFakeTelnyx();
+    runCli(["tts-voices", "--json"], fake.env);
+    const voicesCall = readLoggedArgs(fake.logPath).find(
+      (a) => a.slice(0, 2).join(" ") === "text-to-speech list-voices",
+    );
+    assert.ok(voicesCall);
+    assertNoFlag(voicesCall, "--api-key");
+  });
+
+  it("tts-voices accepts the xai provider", () => {
+    const fake = setupFakeTelnyx();
+    const { stdout, status } = runCli(["tts-voices", "--provider", "xai", "--json"], fake.env);
+
+    assert.equal(status, 0, `expected exit 0, got ${status}`);
+    const data = JSON.parse(stdout);
+    assert.equal(data.provider, "xai");
+
+    const voicesCall = readLoggedArgs(fake.logPath).find(
+      (a) => a.slice(0, 2).join(" ") === "text-to-speech list-voices",
+    );
+    assert.ok(voicesCall);
+    assertFlagValue(voicesCall, "--provider", "xai");
+  });
+
+  it("tts-voices rejects unknown providers without invoking the telnyx CLI", () => {
+    const fake = setupFakeTelnyx();
+    const { status } = runCli(["tts-voices", "--provider", "nope", "--json"], fake.env);
+
+    assert.notEqual(status, 0, "expected non-zero exit for an unknown provider");
+    if (existsSync(fake.logPath)) {
+      assert.equal(readLoggedArgs(fake.logPath).length, 0, "expected no telnyx CLI invocations");
+    }
+  });
+
+  it("lists the tts-voices command in the help text", () => {
+    const fake = setupFakeTelnyx();
+    const { stdout, status } = runCli(["help"], fake.env);
+
+    assert.equal(status, 0);
+    assert.match(stdout, /tts-voices\b/);
   });
 });
