@@ -30,6 +30,8 @@ import { smsStatusCommand } from "./commands/sms-status.ts";
 import { callDialCommand } from "./commands/call-dial.ts";
 import { callControlCommand } from "./commands/call-control.ts";
 import { callStatusCommand } from "./commands/call-status.ts";
+import { sttCommand } from "./commands/stt.ts";
+import { sttProvidersCommand } from "./commands/stt-providers.ts";
 import { parseFlags } from "./utils/output.ts";
 
 const HELP = `
@@ -67,6 +69,8 @@ Commands:
   call-dial         Make an outbound call via Call Control
   call-control      Call Control actions (answer, hangup, transfer, dtmf, record, speak, ...)
   call-status       Get the status of a call by call-control-id
+  stt               Transcribe audio to text (speech-to-text)
+  stt-providers     List available speech-to-text providers
 
 Global Flags:
   --json            Output structured JSON instead of human-readable text
@@ -201,6 +205,15 @@ Voice Call Flags:
   --queue-name                   Queue to place the call into (call-control enqueue, required)
   --body                         SIP INFO body content (call-control send-sip-info, required)
   --content-type                 SIP INFO Content-Type header (call-control send-sip-info, required, e.g. application/dtmf-relay)
+STT Flags:
+  --audio-url <url> URL of the audio file to transcribe (required)
+  --model           Transcription model (default: distil-whisper/distil-large-v2; also openai/whisper-large-v3-turbo, deepgram/nova-3)
+  --language        Language code (optional; not supported by the default model)
+  --response-format Transcript output format (optional, json or verbose_json)
+
+STT-providers Flags:
+  --provider        Filter providers by name (optional)
+  --service-type    Filter providers by service type (optional)
 
 Environment:
   TELNYX_API_KEY    API key (or configure ~/.config/telnyx/config.json)
@@ -267,6 +280,10 @@ Examples:
   telnyx-agent call-control --action update-client-state --call-control-id <id> --client-state state-2
   telnyx-agent call-control --action reject --call-control-id <id> --cause USER_BUSY
   telnyx-agent call-status --call-control-id <id> --json
+  telnyx-agent stt --audio-url https://example.com/audio.mp3
+  telnyx-agent stt --audio-url https://example.com/audio.mp3 --model openai/whisper-large-v3-turbo --language es --json
+  telnyx-agent stt-providers --json
+  telnyx-agent stt-providers --provider telnyx --service-type transcription --json
 `;
 
 const COMMANDS: Record<string, (flags: Record<string, string | boolean>) => Promise<void>> = {
@@ -298,6 +315,8 @@ const COMMANDS: Record<string, (flags: Record<string, string | boolean>) => Prom
   "call-dial": callDialCommand,
   "call-control": callControlCommand,
   "call-status": callStatusCommand,
+  stt: sttCommand,
+  "stt-providers": sttProvidersCommand,
 };
 
 export async function run(argv: string[]): Promise<void> {
