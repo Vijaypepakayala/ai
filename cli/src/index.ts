@@ -16,6 +16,7 @@ import { setupEdgeWebhookCommand } from "./commands/setup-edge-webhook.ts";
 import { capabilitiesCommand } from "./commands/capabilities.ts";
 import { statusCommand } from "./commands/status.ts";
 import { fundAccountCommand } from "./commands/fund-account.ts";
+import { ttsCommand } from "./commands/tts.ts";
 import { parseFlags } from "./utils/output.ts";
 
 const HELP = `
@@ -39,6 +40,7 @@ Commands:
   status            Account health overview
   capabilities      List all available API capabilities
   fund-account      Fund account via x402 USDC payment (EIP-712 signing)
+  tts               Generate speech from text (text-to-speech)
 
 Global Flags:
   --json            Output structured JSON instead of human-readable text
@@ -81,6 +83,15 @@ Fund-account Flags:
   --amount <usd>    Amount to fund in USD (required, e.g., 50.00)
   --wallet-key <0x> Private key for signing (optional, outputs payment requirements if omitted)
 
+TTS Flags:
+  --text            Text to synthesize (required)
+  --voice           Voice ID/name (optional, provider-specific)
+  --language        Language code (default: en)
+  --provider        TTS provider: telnyx, aws, azure, elevenlabs, minimax, resemble, rime, xai (default: telnyx)
+  --output-type     Response format: base64 (base64-encoded audio JSON; default: base64)
+  --text-type       Input format: text or ssml (default: text)
+  --disable-cache   Skip cached audio and regenerate (boolean)
+
 Environment:
   TELNYX_API_KEY    API key (or configure ~/.config/telnyx/config.json)
 
@@ -97,6 +108,9 @@ Examples:
   telnyx-agent setup-edge-webhook --name my-webhook
   telnyx-agent fund-account --amount 50.00
   telnyx-agent fund-account --amount 50.00 --wallet-key 0x... --json
+  telnyx-agent tts --text "Hello world"
+  telnyx-agent tts --text "Hello world" --voice en-US-Standard-A --provider aws --json
+  telnyx-agent tts --text "<speak>Hello</speak>" --text-type ssml --output-type base64
 `;
 
 const COMMANDS: Record<string, (flags: Record<string, string | boolean>) => Promise<void>> = {
@@ -114,6 +128,7 @@ const COMMANDS: Record<string, (flags: Record<string, string | boolean>) => Prom
   capabilities: capabilitiesCommand,
   status: statusCommand,
   "fund-account": fundAccountCommand,
+  tts: ttsCommand,
 };
 
 export async function run(argv: string[]): Promise<void> {

@@ -25,6 +25,9 @@ const CAPABILITIES: Record<string, Capability[]> = {
     { name: "Embeddings", description: "Generate text embeddings", actions: ["ai_embed"] },
     { name: "Assistants", description: "Create and manage AI voice assistants", actions: ["list_ai_assistants", "create_ai_assistant"] },
   ],
+  "🔊 Text-to-Speech": [
+    { name: "Speech Synthesis", description: "Generate audio from text via Telnyx and third-party TTS providers (telnyx, aws, azure, elevenlabs, minimax, resemble, rime, xai)", actions: ["generate_speech"] },
+  ],
   "📠 Fax": [
     { name: "Fax", description: "Send faxes programmatically", actions: ["send_fax"] },
   ],
@@ -74,6 +77,7 @@ const COMPOSITE_COMMANDS = [
   { name: "telnyx-agent setup-verify", description: "Zero to verification: creates verify profile, buys number — outputs test command" },
   { name: "telnyx-agent setup-10dlc", description: "Zero to A2P: creates 10DLC brand, campaign, optional number assignment" },
   { name: "telnyx-agent setup-porting", description: "Zero to porting: checks portability, creates porting order, lists requirements, optionally submits" },
+  { name: "telnyx-agent tts", description: "Generate speech from text (text-to-speech) across multiple providers, returning base64-encoded audio data" },
   { name: "telnyx-agent status", description: "Account health overview — balance, numbers, profiles, connections" },
   { name: "telnyx-agent capabilities", description: "This command — lists all available API capabilities" },
 ];
