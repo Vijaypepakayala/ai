@@ -61,7 +61,7 @@ fi
 # Check 2: API Connectivity
 echo ""
 echo "[2/7] API Connectivity..."
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+HTTP_CODE=$(curl -s -g -o /dev/null -w "%{http_code}" \
     -H "Authorization: Bearer $TELNYX_API_KEY" \
     "https://api.telnyx.com/v2/phone_numbers?page[size]=1" 2>/dev/null || echo "000")
 
@@ -78,15 +78,17 @@ fi
 # Check 3: Phone Numbers with SMS
 echo ""
 echo "[3/7] SMS-capable Phone Numbers..."
-NUMBERS_JSON=$(curl -s \
+NUMBERS_JSON=$(curl -s -g \
     -H "Authorization: Bearer $TELNYX_API_KEY" \
     "https://api.telnyx.com/v2/phone_numbers?page[size]=50" 2>/dev/null || echo "{}")
 
-SMS_COUNT=$(jq_count "$NUMBERS_JSON" '[.data[] | select(.features[]?.name == "sms")] | length')
+# The API returns `messaging_product` (string) to indicate SMS capability,
+# not a `features` array with `name` fields.
+SMS_COUNT=$(jq_count "$NUMBERS_JSON" '[.data[] | select(.messaging_product == "SMS")] | length')
 
 if [ "$SMS_COUNT" -gt 0 ] 2>/dev/null; then
     pass "$SMS_COUNT phone number(s) with SMS capability"
-    jq_print "$NUMBERS_JSON" '.data[] | select(.features[]?.name == "sms") | "       \(.phone_number)"' | head -5
+    jq_print "$NUMBERS_JSON" '.data[] | select(.messaging_product == "SMS") | "       \(.phone_number)"' | head -5
 else
     fail "No SMS-capable phone numbers found"
     echo "       Purchase one: see SKILL.md Step 1"
@@ -95,7 +97,7 @@ fi
 # Check 4: Messaging Profiles
 echo ""
 echo "[4/7] Messaging Profiles..."
-PROFILES_JSON=$(curl -s \
+PROFILES_JSON=$(curl -s -g \
     -H "Authorization: Bearer $TELNYX_API_KEY" \
     "https://api.telnyx.com/v2/messaging_profiles?page[size]=10" 2>/dev/null || echo "{}")
 
@@ -183,8 +185,9 @@ if [ "$FAIL" -gt 0 ]; then
     echo "❌ Infrastructure incomplete — fix the failures above before using verification."
     exit 1
 elif [ "$WARN" -gt 0 ]; then
-    echo "⚠️  Infrastructure mostly ready — check warnings above."
-    exit 0
+    echo "⚠️  Infrastructure not fully ready — resolve warnings above before proceeding."
+    echo "   Pending 10DLC brand/campaign means SMS may fail silently."
+    exit 2
 else
     echo "✅ All checks passed — infrastructure is ready for phone verification!"
     exit 0

@@ -386,7 +386,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh -X POST \
   "https://api.telnyx.com/v2/verifications/call"
 ```
 
-**Validate:** Response contains `status: "accepted"` and a verification ID.
+**Validate:** Response contains `status: "pending"` and a verification ID.
 
 ### Step 8c — Runtime: Verify the Code
 
@@ -418,17 +418,17 @@ These are confirmed issues. Apply the fixes proactively:
 
 | Issue | Impact | Fix |
 |-------|--------|-----|
-| No webhook when brand vetting completes | HIGH | Poll `GET /v2/10dlc/brand/{brandId}` for `identityStatus` — no webhook event fires (FRIC-001) |
-| Verify API has no link to Messaging Profile | MEDIUM | Verify API manages number selection internally; no `messaging_profile_id` field exists (FRIC-002) |
-| 10DLC pagination differs from rest of API | MEDIUM | Use `page`/`recordsPerPage` instead of `page[number]`/`page[size]` (FRIC-003) |
-| Campaign endpoint is `/campaignBuilder` not `/campaign` | HIGH | POST to `/v2/10dlc/campaignBuilder`, not `/v2/10dlc/campaign` (FRIC-004) |
-| `+` not URL-encoded in verify-by-phone path | MEDIUM | URL-encode `+` as `%2B` in `/verifications/by_phone_number/{phone}/actions/verify` (FRIC-005) |
-| Brand $4 charge is non-refundable | LOW | Use `"mock": true` for testing (FRIC-006) |
-| 10DLC required for US Verify SMS (undocumented) | HIGH | 10DLC brand + campaign registration is required for US SMS delivery via Verify API (FRIC-007) |
-| `whitelisted_destinations` required on messaging profile | MEDIUM | Always include `"whitelisted_destinations": ["US"]` even though docs say optional (FRIC-008) |
-| Number search results expire without TTL | LOW | Purchase immediately after search — no documented expiry (FRIC-009) |
-| Raw brackets in curl silently return empty | HIGH | Always use `-G` with `--data-urlencode` for filter params (FRIC-010) |
-| Verify profile requires channel blocks | MEDIUM | Include at least `sms` or `call` block — omitting both fails (FRIC-011) |
+| No webhook when brand vetting completes | High | Poll `GET /v2/10dlc/brand/{brandId}` for `identityStatus` — no webhook event fires (FRIC-001) |
+| Verify API has no link to Messaging Profile | Medium | Verify API manages number selection internally; no `messaging_profile_id` field exists (FRIC-002) |
+| 10DLC pagination differs from rest of API | Low | Use `page`/`recordsPerPage` instead of `page[number]`/`page[size]` (FRIC-003) |
+| Campaign endpoint is `/campaignBuilder` not `/campaign` | Low | POST to `/v2/10dlc/campaignBuilder`, not `/v2/10dlc/campaign` (FRIC-004) |
+| `+` not URL-encoded in verify-by-phone path | Low | URL-encode `+` as `%2B` in `/verifications/by_phone_number/{phone}/actions/verify` (FRIC-005) |
+| Brand cannot be deleted if it has campaigns ($4 non-refundable) | Medium | Use `"mock": true` for testing (FRIC-006) |
+| 10DLC required for US Verify SMS (undocumented) | Medium | 10DLC brand + campaign registration is required for US SMS delivery via Verify API (FRIC-007) |
+| `whitelisted_destinations` required on messaging profile | High | Always include `"whitelisted_destinations": ["US"]` even though docs say optional (FRIC-008) |
+| Number search results expire without TTL | Medium | Purchase immediately after search — no documented expiry (FRIC-009) |
+| Raw brackets in curl silently return empty | Low | Always use `-G` with `--data-urlencode` for filter params (FRIC-010) |
+| Verify profile requires channel blocks | Medium | Include at least `sms` or `call` block — omitting both fails (FRIC-011) |
 
 ## Validation Script
 
