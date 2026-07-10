@@ -206,11 +206,11 @@ Wait 3–5 seconds for provisioning, then verify:
 ```bash
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh -G \
   --data-urlencode "filter[phone_number]=$MY_NUMBER" \
-  "https://api.telnyx.com/v2/phone_numbers" | jq '.data[0].status'
-# Must return "active"
+  "https://api.telnyx.com/v2/phone_numbers" | jq '{status: .data[0].status, id: .data[0].id}'
+# Must return status "active"
 ```
 
-**Save:** `MY_NUMBER`, `PHONE_NUMBER_ID`
+**Save:** `MY_NUMBER`, `PHONE_NUMBER_ID` (from `.data[0].id` above)
 
 ### Step 4 — Assign the Number to Your Application
 

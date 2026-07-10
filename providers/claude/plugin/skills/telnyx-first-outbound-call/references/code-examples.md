@@ -195,12 +195,7 @@ echo "=== Step 1: Creating Call Control Application ==="
 APP_RESPONSE=$(curl -s -X POST https://api.telnyx.com/v2/call_control_applications \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "application_name": "My First Call Control App",
-    "webhook_event_url": "${WEBHOOK_URL:?Set WEBHOOK_URL to your public webhook endpoint}",
-    "webhook_api_version": "2",
-    "active": true
-  }')
+  -d "{\"application_name\":\"My First Call Control App\",\"webhook_event_url\":\"${WEBHOOK_URL:?Set WEBHOOK_URL to your public webhook endpoint}\",\"webhook_api_version\":\"2\",\"active\":true}")
 export APP_ID=$(echo "$APP_RESPONSE" | jq -r '.data.id')
 echo "Call Control App ID: $APP_ID"
 
