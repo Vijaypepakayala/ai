@@ -176,7 +176,7 @@ Phone Number ─────────────────────► 
 | Phone Number | Call Control Application | `connection_id` assignment | Number must be assigned to CCA via `PATCH /v2/phone_numbers/{id}/voice` |
 | Call Control Application | Outbound Voice Profile | `outbound_voice_profile_id` | Without OVP, all outbound calls fail with D38 |
 | Outbound Voice Profile | Whitelisted Destinations | `whitelisted_destinations` array | Agent countries must be listed or calls fail silently with D13 |
-| Call Control Application | Webhook Server | `webhook_url` | Must be HTTPS, reachable from Telnyx |
+| Call Control Application | Webhook Server | `webhook_event_url` | Must be HTTPS, reachable from Telnyx |
 | Webhook Server | Call Recording API | `record_start` action | Called after bridge event |
 | Webhook Server | Gather API | `gather_using_audio` action | Called after call.answered event |
 | SIP Credential Connections | SIP Server | `sip.telnyx.com:5060` | Agents register softphones with these credentials |

@@ -97,13 +97,13 @@ if [[ "$HTTP_CODE" == "200" ]]; then
       CCA_ID="$SAVED_CCA_ID"
       CCA_NAME=$(jq_print "$BODY" ".data[] | select(.id==\"$SAVED_CCA_ID\") | .name" | head -1)
       CCA_OVP=$(jq_print "$BODY" ".data[] | select(.id==\"$SAVED_CCA_ID\") | .outbound.outbound_voice_profile_id // empty" | head -1)
-      CCA_WEBHOOK=$(jq_print "$BODY" ".data[] | select(.id==\"$SAVED_CCA_ID\") | .webhook_url // empty" | head -1)
+      CCA_WEBHOOK=$(jq_print "$BODY" ".data[] | select(.id==\"$SAVED_CCA_ID\") | .webhook_event_url // empty" | head -1)
       echo "  Using saved CCA ID: $CCA_ID"
     else
       CCA_ID=$(jq_print "$BODY" '.data[0].id')
       CCA_NAME=$(jq_print "$BODY" '.data[0].name')
       CCA_OVP=$(jq_print "$BODY" '.data[0].outbound.outbound_voice_profile_id // empty')
-      CCA_WEBHOOK=$(jq_print "$BODY" '.data[0].webhook_url // empty')
+      CCA_WEBHOOK=$(jq_print "$BODY" '.data[0].webhook_event_url // empty')
       echo "  Using first CCA (no saved ID found)"
     fi
     echo "  App ID:    $CCA_ID"
