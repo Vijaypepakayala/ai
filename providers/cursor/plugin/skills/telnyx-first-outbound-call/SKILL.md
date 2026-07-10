@@ -56,6 +56,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/telnyx-curl.sh -X POST \
   -d '{
     "application_name": "My First App",
     "webhook_event_url": "https://your-server.com/webhooks/telnyx",
+    "webhook_api_version": "2",
     "active": true,
     "first_command_timeout": true,
     "first_command_timeout_secs": 30
