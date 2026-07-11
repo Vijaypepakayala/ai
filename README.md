@@ -306,7 +306,7 @@ For current assistant examples, start with [AI Voice Assistants](/guides/ai-assi
 
 For the first live Telnyx voice-agent evaluation path, start with [Production Voice-Agent Onboarding](/guides/voice-agent-onboarding.md).
 
-For the canonical first-party production loop, use [Telnyx AI Voice Production Playbook](/guides/voice-ai-production-playbook.md). It covers the mandatory rollout path plus optional accelerators for assistant testing, Langfuse-style tracing, conversation insights, async tools, and controlled canary traffic increases.
+For the canonical first-party production loop, use [Telnyx AI Voice Production Playbook](/guides/voice-ai-production-playbook.md). It packages the five-phase path from narrow live setup through pre-production testing, observability, async or handoff validation, and controlled rollout, while separating mandatory steps from optional accelerators such as Langfuse-style tracing and deeper conversation review.
 
 For a production-shaped but still bounded inbound workflow, use [AI Receptionist Missed-Call Capture](/guides/ai-receptionist-missed-call.md).
 

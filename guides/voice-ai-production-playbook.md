@@ -20,7 +20,15 @@ This guide packages the paved road across existing Telnyx surfaces:
 - [Webhooks](/guides/webhooks.md) for signature verification and delivery handling
 - [Voice Call Control](/guides/voice-call-control.md) for call transfer and live call actions
 
-The production loop in this guide is split into:
+The production loop in this guide is split into five phases:
+
+1. provision the narrowest live path
+2. validate assistant behavior before real rollout
+3. turn on observability and post-call review
+4. stage async tools and human handoff
+5. roll out with traffic controls and rollback rules
+
+Across those phases, this guide separates:
 
 - mandatory production steps you should complete before widening live traffic
 - optional accelerators that make the loop easier to debug, safer to evaluate, or faster to operate at scale
@@ -95,7 +103,7 @@ curl -X PATCH "https://api.telnyx.com/v2/phone_numbers/{number_id}" \
   }'
 ```
 
-## 1. Secure Deployment And Hardening
+## Phase 1: Provision The Narrowest Live Path
 
 Treat the first production rollout as a release of telecom behavior, AI behavior, and tool behavior at the same time.
 
@@ -193,43 +201,54 @@ Keep the first turn on the first-party answer path:
 
 `https://api.telnyx.com/v2/ai/assistants/{assistant_id}/answer`
 
-## 2. Handoff Contract Before Go-Live
+## Phase 2: Validate Assistant Behavior Before Real Rollout
 
-Do not let the prompt decide ad hoc when to stop. Write the transfer boundary as an operational rule.
+Do not widen traffic because one call answered correctly. Prove the candidate version against the main failure modes before it handles broader live volume.
 
-Transfer to a human when any of these conditions are true:
+The minimum test matrix for the first production loop is:
 
-- the caller explicitly asks for a person
-- identity verification is incomplete or ambiguous
-- the request involves billing disputes, refunds, cancellations, fraud, or regulated changes
-- the model cannot answer from approved knowledge or tool output
-- sentiment or urgency means a failed automation attempt would be more expensive than escalation
+- one happy-path containment request
+- one ambiguous request that should clarify or degrade safely
+- one tool-failure path
+- one handoff-to-human path
+- one no-answer, timeout, or degraded fallback path
 
-Use transfer when the AI leg should leave the call and the caller should move to a human queue:
+Exit this phase only when:
+
+- the candidate `version_id` has exercised the supported prompt and tool paths at least once
+- the assistant degrades safely instead of stalling the call
+- you have baseline transcripts or test artifacts to compare with the next revision
+
+### Assistant test example
 
 ```bash
-curl -X POST "https://api.telnyx.com/v2/calls/{call_control_id}/actions/transfer" \
+curl -X POST "https://api.telnyx.com/v2/ai/assistants/tests" \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "to": "+15557654321"
+    "name": "Support containment and escalation",
+    "destination": "+15551234567",
+    "instructions": "Act as a support caller. First ask for a normal ticket-status lookup. In a second run, ask for a refund and insist on a human if the assistant cannot process it.",
+    "test_suite": "voice-prod",
+    "max_duration_seconds": 120,
+    "rubric": [
+      { "name": "Containment", "criteria": "The assistant resolves the supported lookup without inventing policy or changing the scope." },
+      { "name": "Escalation", "criteria": "The assistant transfers or opens a follow-up path when the request becomes refund-related or otherwise unsafe." },
+      { "name": "Identity", "criteria": "The assistant identifies itself and the company truthfully." }
+    ]
   }'
 ```
 
-The minimum handoff bundle is:
+```bash
+curl -X POST "https://api.telnyx.com/v2/ai/assistants/tests/{test_id}/runs" \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "destination_version_id": "your-version-id"
+  }'
+```
 
-- `assistant_id`
-- `version_id`
-- `connection_id`
-- `call_control_id`
-- `call_session_id`
-- `conversation_id`
-- the last customer request in plain language
-- the exact reason for escalation
-
-If the workflow creates a follow-up ticket instead of a live transfer, store the same identifiers on that ticket. Do not reduce the handoff to a prose summary alone.
-
-## 3. Observability And Evidence
+## Phase 3: Turn On Observability And Post-Call Review
 
 The production loop is only useful if the operator can answer four questions after a real call:
 
@@ -270,6 +289,48 @@ Use conversation insights when you need to review:
 
 Preserve the returned `conversation_insights_id` with the rest of your call evidence whenever it is available.
 
+## Phase 4: Stage Async Tools And Human Handoff
+
+Do not let the prompt decide ad hoc when to stop. Write the transfer boundary as an operational rule.
+
+Transfer to a human when any of these conditions are true:
+
+- the caller explicitly asks for a person
+- identity verification is incomplete or ambiguous
+- the request involves billing disputes, refunds, cancellations, fraud, or regulated changes
+- the model cannot answer from approved knowledge or tool output
+- sentiment or urgency means a failed automation attempt would be more expensive than escalation
+
+Use transfer when the AI leg should leave the call and the caller should move to a human queue:
+
+```bash
+curl -X POST "https://api.telnyx.com/v2/calls/{call_control_id}/actions/transfer" \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "to": "+15557654321"
+  }'
+```
+
+The minimum handoff bundle is:
+
+- `assistant_id`
+- `version_id`
+- `connection_id`
+- `call_control_id`
+- `call_session_id`
+- `conversation_id`
+- the last customer request in plain language
+- the exact reason for escalation
+
+If the workflow creates a follow-up ticket instead of a live transfer, store the same identifiers on that ticket. Do not reduce the handoff to a prose summary alone.
+
+Exit this phase only when:
+
+- long-running back-end work does not freeze the live conversation
+- the human handoff path is explicit and auditable
+- degraded mode exists for tool outage, timeout, or policy failure
+
 ### Async tools
 
 Not every production action should complete before the voice turn ends. Use async tools when the workflow needs slow or post-call work such as CRM enrichment, follow-up ticket processing, or offline fraud review.
@@ -283,7 +344,7 @@ Rules for async tools in the first production loop:
 
 The paved-road debugger is the read-only Voice Monitor MCP app at [`tools/mcp-apps/apps/voice-monitor/README.md`](/tools/mcp-apps/apps/voice-monitor/README.md).
 
-## 4. Smallest-Live Verification
+## Smallest-Live Verification
 
 This is the smallest production-style check that proves the packaged path before you widen traffic:
 
@@ -297,38 +358,9 @@ This is the smallest production-style check that proves the packaged path before
 8. inspect `call.conversation.ended`, `conversation_id`, conversation insights when enabled, and a Voice Monitor debug report for both calls
 9. if you use Langfuse or another trace sink, confirm the same call IDs appear there before increasing traffic
 
-### Assistant test example
-
-```bash
-curl -X POST "https://api.telnyx.com/v2/ai/assistants/tests" \
-  -H "Authorization: Bearer $TELNYX_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Support containment and escalation",
-    "destination": "+15551234567",
-    "instructions": "Act as a support caller. First ask for a normal ticket-status lookup. In a second run, ask for a refund and insist on a human if the assistant cannot process it.",
-    "test_suite": "voice-prod",
-    "max_duration_seconds": 120,
-    "rubric": [
-      { "name": "Containment", "criteria": "The assistant resolves the supported lookup without inventing policy or changing the scope." },
-      { "name": "Escalation", "criteria": "The assistant transfers or opens a follow-up path when the request becomes refund-related or otherwise unsafe." },
-      { "name": "Identity", "criteria": "The assistant identifies itself and the company truthfully." }
-    ]
-  }'
-```
-
-```bash
-curl -X POST "https://api.telnyx.com/v2/ai/assistants/tests/{test_id}/runs" \
-  -H "Authorization: Bearer $TELNYX_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "destination_version_id": "your-version-id"
-  }'
-```
-
 If either the synthetic test path or the real call path fails, do not increase traffic. Fix the candidate version, rerun the test, and repeat the smallest-live verification.
 
-## 5. Canary Rollout
+## Phase 5: Roll Out With Traffic Controls And Rollback Rules
 
 Once the smallest-live verification passes, move traffic gradually instead of flipping every call to the new version at once.
 
@@ -351,6 +383,19 @@ Increase the canary only after:
 - the escalation live call still reaches the intended queue
 - Voice Monitor evidence shows no webhook failures, transfer regressions, or unexplained latency spikes
 - conversation insights and any external traces do not show scope drift or tool misuse on the candidate path
+
+Write the rollout policy down before you widen traffic:
+
+- promotion threshold: what evidence lets the candidate take more calls
+- error threshold: what failure rate or class forces rollback
+- rollback owner: who is allowed to execute the rollback
+- rollback action: whether you revert canary weights, restore the previous `version_id`, or return the number to a simpler routing target
+
+Keep the first release reversible:
+
+- the previous assistant version should stay deployable
+- number routing changes should stay simple enough to undo in one operator step
+- prompts and tool contracts should be restorable without rebuilding the architecture
 
 ## Python Example
 
