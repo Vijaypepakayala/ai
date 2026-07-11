@@ -1,6 +1,6 @@
 # Telnyx AI Voice Production Playbook
 
-> A first-party production path for shipping a Telnyx voice assistant with support containment, human handoff, observability, and one smallest-live verification loop.
+> A first-party production loop for shipping a Telnyx voice assistant with mandatory guardrails, optional accelerators, human handoff, observability, async tools, and one smallest-live verification path.
 
 ## What This Playbook Covers
 
@@ -20,6 +20,11 @@ This guide packages the paved road across existing Telnyx surfaces:
 - [Webhooks](/guides/webhooks.md) for signature verification and delivery handling
 - [Voice Call Control](/guides/voice-call-control.md) for call transfer and live call actions
 
+The production loop in this guide is split into:
+
+- mandatory production steps you should complete before widening live traffic
+- optional accelerators that make the loop easier to debug, safer to evaluate, or faster to operate at scale
+
 ## Prerequisites
 
 - Telnyx API key ([get one free](https://telnyx.com/agent-signup.md))
@@ -36,7 +41,21 @@ The support-containment workflow is successful when all of these are true:
 - the assistant resolves only the narrow requests you explicitly allow
 - the assistant transfers cleanly when it cannot proceed safely
 - the operator can debug the call later from `assistant_id`, `version_id`, `connection_id`, `call_control_id`, `call_session_id`, and `conversation_id`
+- the operator can inspect post-call evidence from conversation insights, Voice Monitor, and any external trace sink you wire in
 - one live verification path proves both the automated and escalated branches before traffic increases
+
+## Mandatory Steps Vs Optional Accelerators
+
+Complete the mandatory path before broadening traffic. Add accelerators when you need stronger evaluation, traceability, or multi-system operations.
+
+| Area | Mandatory before wider rollout | Optional accelerator |
+| --- | --- | --- |
+| Assistant setup | Narrow assistant, explicit escalation rules, first-party answer webhook | Additional prompt variants for A/B evaluation |
+| Testing | At least one containment case and one escalation case on the candidate version | Larger rubric suites or staged regression suites |
+| Observability | Preserve core Telnyx IDs, capture `call.conversation.ended`, inspect Voice Monitor | Stream traces to Langfuse or another trace sink |
+| AI evidence | Fetch conversation and message records for every live verification call | Persist and review conversation insights for trend analysis |
+| Tools | Start with safe read-like or append-only functions | Async tools for slow or post-call workflows |
+| Rollout | Canary the candidate version and verify contained plus escalated calls | Multi-step traffic ramps with deeper scorecards |
 
 ## Quick Start
 
@@ -89,6 +108,25 @@ Treat the first production rollout as a release of telecom behavior, AI behavior
 - Restrict outbound transfer destinations and human queues to approved numbers or SIP targets.
 - Put AI disclosure, recording disclosure, and retention policy in the live call flow when policy requires it.
 - Preserve correlation IDs in every support log, warehouse record, and handoff note.
+
+### Mandatory hardening
+
+Do these before you treat the workflow as production-ready:
+
+- keep the answer webhook on the Telnyx-managed assistant path
+- define explicit escalation triggers for human transfer
+- verify webhook signatures on every custom receiver
+- restrict tools to safe operations and approved destinations
+- retain the call, assistant, and conversation identifiers needed for later triage
+
+### Optional accelerators
+
+Add these when the base loop already works and you need stronger operator leverage:
+
+- Langfuse or another trace sink for cross-system prompt, tool, and latency traces
+- AI conversation insights retention for pattern review beyond a single call
+- async tools for workflows that should continue after the caller hangs up
+- broader regression suites for canary promotion decisions
 
 ## API Reference
 
@@ -203,10 +241,45 @@ The production loop is only useful if the operator can answer four questions aft
 Capture these evidence sources on every live call:
 
 - `call.conversation.ended` webhook payload
+- `call.conversation_insights.generated` when conversation insights are enabled for the workflow
 - conversation fetch via `GET /v2/ai/conversations/{conversation_id}`
 - conversation messages via `GET /v2/ai/conversations/{conversation_id}/messages`
 - Voice Monitor debug output for the call
 - assistant test run history for the version you promoted
+
+### Langfuse or external trace sinks
+
+Langfuse is optional, not required for the first release. Add it when you need one operator view that correlates prompt behavior, tool activity, and business-side latency outside the Telnyx surfaces.
+
+If you wire Langfuse or another trace sink:
+
+- keep Telnyx-native IDs such as `conversation_id`, `call_session_id`, and `call_control_id` on every trace
+- send prompt, tool, and handoff milestones as structured spans instead of free-form logs
+- avoid putting API keys, raw secrets, or unnecessary regulated data into trace payloads
+- use the external trace as a supplement, not a replacement, for `call.conversation.ended`, conversation fetches, and Voice Monitor evidence
+
+### AI conversation insights
+
+Conversation insights are the Telnyx-native way to separate "the model chose poorly" from "the retrieved context or caller state was already weak."
+
+Use conversation insights when you need to review:
+
+- whether the assistant stayed inside the intended policy boundary
+- whether the caller asked for a human before the transfer happened
+- whether containment failures cluster around one prompt, tool, or call segment
+
+Preserve the returned `conversation_insights_id` with the rest of your call evidence whenever it is available.
+
+### Async tools
+
+Not every production action should complete before the voice turn ends. Use async tools when the workflow needs slow or post-call work such as CRM enrichment, follow-up ticket processing, or offline fraud review.
+
+Rules for async tools in the first production loop:
+
+- keep the caller-facing path deterministic; do not make the live call wait on slow backoffice work
+- return a clear status to the assistant such as queued, accepted, or unavailable
+- make the tool handler idempotent and correlate it to the same call and conversation identifiers
+- prefer async follow-up for non-urgent writes and keep urgent or policy-sensitive actions on the human escalation path
 
 The paved-road debugger is the read-only Voice Monitor MCP app at [`tools/mcp-apps/apps/voice-monitor/README.md`](/tools/mcp-apps/apps/voice-monitor/README.md).
 
@@ -221,7 +294,8 @@ This is the smallest production-style check that proves the packaged path before
 5. configure the answer webhook on a real Telnyx number
 6. place one real inbound call that should stay contained
 7. place one real inbound call that should escalate to the human queue
-8. inspect `call.conversation.ended`, `conversation_id`, and a Voice Monitor debug report for both calls
+8. inspect `call.conversation.ended`, `conversation_id`, conversation insights when enabled, and a Voice Monitor debug report for both calls
+9. if you use Langfuse or another trace sink, confirm the same call IDs appear there before increasing traffic
 
 ### Assistant test example
 
@@ -276,6 +350,7 @@ Increase the canary only after:
 - the contained live call still resolves cleanly
 - the escalation live call still reaches the intended queue
 - Voice Monitor evidence shows no webhook failures, transfer regressions, or unexplained latency spikes
+- conversation insights and any external traces do not show scope drift or tool misuse on the candidate path
 
 ## Python Example
 
