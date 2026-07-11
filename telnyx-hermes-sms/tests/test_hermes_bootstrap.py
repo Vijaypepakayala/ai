@@ -23,3 +23,22 @@ def test_find_hermes_root_accepts_hermes_home(monkeypatch, tmp_path):
     monkeypatch.delenv("HERMES_AGENT_ROOT", raising=False)
     monkeypatch.setenv("HERMES_HOME", str(checkout.parent))
     assert find_hermes_root() == checkout
+
+
+def test_find_hermes_root_prefers_package_adjacent_checkout_for_external_cwd(
+    monkeypatch,
+    tmp_path,
+):
+    checkout = _write_fake_checkout(tmp_path / "external")
+    package_root = tmp_path / "external" / "telnyx-hermes-sms"
+    fake_module = package_root / "tests" / "_hermes.py"
+    fake_module.parent.mkdir(parents=True)
+    fake_module.write_text("# fake bootstrap module\n")
+
+    unrelated_cwd = tmp_path / "somewhere-else" / "workspace"
+    unrelated_cwd.mkdir(parents=True)
+
+    monkeypatch.delenv("HERMES_AGENT_ROOT", raising=False)
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+
+    assert find_hermes_root(cwd=unrelated_cwd, module_file=fake_module) == checkout

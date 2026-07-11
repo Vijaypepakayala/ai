@@ -20,17 +20,27 @@ def _candidate_roots(root: Path) -> list[Path]:
     return candidates
 
 
-def find_hermes_root() -> Path | None:
+def _package_checkout_root(module_file: str | Path = __file__) -> Path:
+    return Path(module_file).resolve().parents[1]
+
+
+def find_hermes_root(
+    cwd: Path | None = None,
+    module_file: str | Path = __file__,
+) -> Path | None:
     """Locate a Hermes Agent checkout for tests that import gateway modules."""
     candidates = []
+    package_root = _package_checkout_root(module_file)
     env_root = os.getenv("HERMES_AGENT_ROOT")
     if env_root:
         candidates.extend(_candidate_roots(Path(env_root)))
     env_home = os.getenv("HERMES_HOME")
     if env_home:
         candidates.extend(_candidate_roots(Path(env_home)))
+    current_dir = cwd or Path.cwd()
     candidates.extend([
-        Path.cwd().parent / "hermes-agent",
+        current_dir.parent / "hermes-agent",
+        package_root.parent / "hermes-agent",
         Path.home() / ".hermes",
         Path.home() / ".hermes" / "hermes-agent",
     ])
