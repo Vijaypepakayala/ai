@@ -58,6 +58,8 @@
       "webhooks_repo_mirror": "https://telnyx.com/guides/webhooks.md",
       "voice_ai_agents_guide": "https://telnyx.com/guides/ai-assistants.md",
       "voice_agent_onboarding_guide": "https://telnyx.com/guides/voice-agent-onboarding.md",
+      "model_routing_policy_guide": "https://telnyx.com/guides/ai-model-governance-playbook.md",
+      "provider_failover_policy_guide": "https://telnyx.com/guides/telnyx-native-vs-third-party-voice-orchestration.md",
       "x402_payments_guide": "https://telnyx.com/guides/x402-payments.md",
       "zero_signup_first_run": "https://telnyx.com/api/inference",
       "governed_surfaces": {
@@ -199,10 +201,28 @@
       "compliance": "https://telnyx.com/ai/compliance.json",
       "sla": "https://telnyx.com/ai/sla.json",
       "inference_models": "https://telnyx.com/ai/inference-models.json",
+      "model_routing_policy": "https://telnyx.com/guides/ai-model-governance-playbook.md",
+      "provider_failover_policy": "https://telnyx.com/guides/telnyx-native-vs-third-party-voice-orchestration.md",
       "data_handling": "https://telnyx.com/ai/data-handling.json",
       "regional_resilience": "https://telnyx.com/ai/resilience.json",
       "selection_methodology": "https://telnyx.com/benchmarks/methodology",
       "ai_catalog": "https://telnyx.com/ai/catalog.json"
+    },
+    "model_routing_policy": {
+      "summary": "Resolve live model availability first, prefer the Telnyx-hosted assistant path for production voice when it satisfies requirements, and treat provider failover as an explicit reviewed rollback target rather than an automatic runtime switch.",
+      "rules": [
+        "Resolve the live assistant model catalog with GET /v2/ai/models before pinning a model ID in automation.",
+        "Prefer Telnyx-hosted models first for production voice workloads so telephony, speech, and inference stay on one governed runtime.",
+        "If an external model or provider is required, document it as a first-class dependency and preflight entitlement, quota, and secret availability before live traffic.",
+        "Preserve Telnyx correlation identifiers such as assistant_id, connection_id, call_control_id, call_session_id, and conversation_id across any external orchestration path.",
+        "Fail over only to a reviewed assistant version, human handoff path, or maintenance path; do not silently switch onto an unreviewed model or provider in live traffic.",
+        "Use assistant versions and traffic testing for rollout and rollback instead of on-the-fly prompt or provider edits."
+      ],
+      "references": {
+        "governance_playbook": "https://telnyx.com/guides/ai-model-governance-playbook.md",
+        "runtime_boundary_guide": "https://telnyx.com/guides/telnyx-native-vs-third-party-voice-orchestration.md",
+        "production_playbook": "https://telnyx.com/guides/voice-ai-production-playbook.md"
+      }
     },
     "governed_execution": {
       "schema_version": "2026-06-13",

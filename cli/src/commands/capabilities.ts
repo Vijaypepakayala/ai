@@ -70,6 +70,16 @@ interface RetryIdempotencyContract {
   };
 }
 
+interface ModelRoutingPolicy {
+  summary: string;
+  rules: string[];
+  references: {
+    governance_playbook: string;
+    runtime_boundary_guide: string;
+    production_playbook: string;
+  };
+}
+
 export const GOVERNANCE_PRESETS = {
   readOnlyHost: {
     risk_class: "read_only",
@@ -306,6 +316,23 @@ export const RETRY_IDEMPOTENCY_CONTRACT: RetryIdempotencyContract = {
   },
 };
 
+export const MODEL_ROUTING_POLICY: ModelRoutingPolicy = {
+  summary: "Resolve live model availability first, prefer the Telnyx-hosted assistant path for production voice when it satisfies requirements, and treat provider failover as an explicit reviewed rollback target rather than an automatic runtime switch.",
+  rules: [
+    "Resolve the live assistant model catalog with GET /v2/ai/models before pinning a model ID in automation.",
+    "Prefer Telnyx-hosted models first for production voice workloads so telephony, speech, and inference stay on one governed runtime.",
+    "If an external model or provider is required, document it as a first-class dependency and preflight entitlement, quota, and secret availability before live traffic.",
+    "Preserve Telnyx correlation identifiers such as assistant_id, connection_id, call_control_id, call_session_id, and conversation_id across any external orchestration path.",
+    "Fail over only to a reviewed assistant version, human handoff path, or maintenance path; do not silently switch onto an unreviewed model or provider in live traffic.",
+    "Use assistant versions and traffic testing for rollout and rollback instead of on-the-fly prompt or provider edits.",
+  ],
+  references: {
+    governance_playbook: "https://telnyx.com/guides/ai-model-governance-playbook.md",
+    runtime_boundary_guide: "https://telnyx.com/guides/telnyx-native-vs-third-party-voice-orchestration.md",
+    production_playbook: "https://telnyx.com/guides/voice-ai-production-playbook.md",
+  },
+};
+
 export async function capabilitiesCommand(flags: Record<string, string | boolean>): Promise<void> {
   const jsonOutput = flags.json === true;
 
@@ -315,6 +342,7 @@ export async function capabilitiesCommand(flags: Record<string, string | boolean
       composite_commands: COMPOSITE_COMMANDS,
       ai_catalog: AI_CATALOG,
       retry_idempotency_contract: RETRY_IDEMPOTENCY_CONTRACT,
+      model_routing_policy: MODEL_ROUTING_POLICY,
       total_tools: Object.values(CAPABILITIES).flat().reduce((sum, c) => sum + c.actions.length, 0),
     });
     return;
@@ -372,4 +400,14 @@ export async function capabilitiesCommand(flags: Record<string, string | boolean
   console.log(`  Malformed key: ${RETRY_IDEMPOTENCY_CONTRACT.server_behavior.malformed_key}`);
   console.log(`  Async writes: treat 202 as in-progress=${RETRY_IDEMPOTENCY_CONTRACT.async_completion.treat_202_accepted_as_in_progress}; poll=${RETRY_IDEMPOTENCY_CONTRACT.async_completion.poll_to_terminal_state}; honor Retry-After=${RETRY_IDEMPOTENCY_CONTRACT.async_completion.honor_retry_after}`);
   console.log(`  Note: ${RETRY_IDEMPOTENCY_CONTRACT.async_completion.guidance}\n`);
+
+  console.log("🧭 Model Routing & Provider Failover:\n");
+  console.log(`  Policy: ${MODEL_ROUTING_POLICY.summary}\n`);
+  for (const rule of MODEL_ROUTING_POLICY.rules) {
+    console.log(`  - ${rule}`);
+  }
+  console.log("\n  References:");
+  console.log(`  - Governance playbook: ${MODEL_ROUTING_POLICY.references.governance_playbook}`);
+  console.log(`  - Runtime boundary guide: ${MODEL_ROUTING_POLICY.references.runtime_boundary_guide}`);
+  console.log(`  - Production playbook: ${MODEL_ROUTING_POLICY.references.production_playbook}\n`);
 }

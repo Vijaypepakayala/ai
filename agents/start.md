@@ -102,6 +102,22 @@ Use this when the goal is not generic telecom discovery but a real AI assistant 
 
 Start with [`/guides/ai-assistants.md`](/guides/ai-assistants.md) for hosted assistant creation, [`/guides/voice-agent-onboarding.md`](/guides/voice-agent-onboarding.md) for the first live answer-webhook path, and [`/guides/voice-ai-production-playbook.md`](/guides/voice-ai-production-playbook.md) for the first-party production rollout path. Add [`/guides/voice-ai-fraud-alerts.md`](/guides/voice-ai-fraud-alerts.md) when the workflow is a regulated fraud alert that needs disclosure and audit hooks. For repeatable setup tasks, add [`/skills/telnyx-ai-voice-agent-bootstrap/SKILL.md`](/skills/telnyx-ai-voice-agent-bootstrap/SKILL.md), [`/skills/telnyx-ai-conversation-memory/SKILL.md`](/skills/telnyx-ai-conversation-memory/SKILL.md), or [`/skills/telnyx-ai-tts-provider-switching/SKILL.md`](/skills/telnyx-ai-tts-provider-switching/SKILL.md). These are the crawlable Telnyx-owned entrypoints for voice AI agent setup, webhook wiring, memory reuse, voice-provider changes, and Voice Monitor debugging.
 
+### Model Routing And Provider Failover
+
+Treat model routing as an explicit release policy, not an implicit runtime guess.
+
+- Resolve the live model catalog with `GET /v2/ai/models` before you pin a model ID in automation.
+- Prefer the Telnyx-hosted assistant path first for production voice workloads so telephony, speech, and inference stay on one governed runtime.
+- If you introduce an external model or provider, document it as a first-class dependency, preflight entitlement and quota before live traffic, and preserve Telnyx correlation IDs alongside the external runtime logs.
+- Provider failover should land on a reviewed assistant `version_id`, human handoff, or maintenance path. Do not silently switch a live voice workflow onto an unreviewed provider or model.
+- Use assistant versions and traffic testing for rollout and rollback rather than on-the-fly prompt or provider edits.
+
+Deeper references:
+
+- [`/guides/ai-model-governance-playbook.md`](/guides/ai-model-governance-playbook.md) for fail-closed checks, fallback targets, and release evidence
+- [`/guides/telnyx-native-vs-third-party-voice-orchestration.md`](/guides/telnyx-native-vs-third-party-voice-orchestration.md) for when to stay on the Telnyx-hosted path versus add an external runtime
+- [`/guides/voice-ai-production-playbook.md`](/guides/voice-ai-production-playbook.md) for rollout, traffic shaping, and operational fallback
+
 ### Telnyx Webhooks
 
 Start with the live guide at `https://developers.telnyx.com/development/api-fundamentals/webhooks/receiving-webhooks` and the repo-owned mirror [`/guides/webhooks.md`](/guides/webhooks.md). These are the named retrieval targets for webhook URL configuration, Ed25519 signature verification, delivery inspection, and retry behavior.

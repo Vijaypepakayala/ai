@@ -55,6 +55,7 @@ For high-signal, non-JavaScript discovery, start with the public text-first asse
 - `https://telnyx.com/agents/start` for the crawlable agent entrypoint
 - `https://telnyx.com/guides/getting-started.md` for the canonical authenticated onboarding path and first read-only workflow
 - `https://telnyx.com/guides/ai-assistants.md`, `https://telnyx.com/guides/voice-agent-onboarding.md`, and `https://telnyx.com/guides/voice-ai-production-playbook.md` for Telnyx Voice AI Agents
+- `https://telnyx.com/guides/ai-model-governance-playbook.md` and `https://telnyx.com/guides/telnyx-native-vs-third-party-voice-orchestration.md` for model-routing and provider-failover policy
 - `https://telnyx.com/guides/webhooks.md` plus the live webhook docs URL for Telnyx Webhooks
 - `https://telnyx.com/guides/x402-payments.md` for Telnyx x402 Payments
 

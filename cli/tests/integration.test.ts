@@ -32,9 +32,13 @@ describe("telnyx-agent CLI", () => {
       assert.ok(output.includes("Voice"), "Should list Voice category");
       assert.ok(output.includes("AI"), "Should list AI category");
       assert.ok(output.includes("AI Catalog"), "Should list AI catalog section");
+      assert.ok(output.includes("Retry & Idempotency"), "Should list retry and idempotency section");
+      assert.ok(output.includes("Model Routing & Provider Failover"), "Should list model routing policy section");
+      assert.ok(output.includes("reviewed assistant version"), "Should mention reviewed fallback behavior");
       assert.ok(output.includes("Governance: risk="), "Should surface governed execution metadata");
       assert.ok(output.includes("path="), "Should surface approval path metadata");
       assert.ok(output.includes("audit="), "Should surface audit identifier metadata");
+      assert.ok(output.includes("Idempotency-Key"), "Should surface idempotency key guidance");
     });
 
     it("outputs JSON capabilities", () => {
@@ -43,6 +47,8 @@ describe("telnyx-agent CLI", () => {
       assert.ok(data.api_capabilities, "Should have api_capabilities");
       assert.ok(data.composite_commands, "Should have composite_commands");
       assert.ok(data.ai_catalog, "Should have ai_catalog");
+      assert.ok(data.retry_idempotency_contract, "Should have retry_idempotency_contract");
+      assert.ok(data.model_routing_policy, "Should have model_routing_policy");
       assert.ok(typeof data.total_tools === "number", "Should have total_tools count");
       assert.ok(data.total_tools >= 18, "Should have at least 18 tools");
       const firstCategory = Object.values(data.api_capabilities)[0] as Array<Record<string, unknown>>;
@@ -54,6 +60,10 @@ describe("telnyx-agent CLI", () => {
       assert.ok(Array.isArray((((data.composite_commands[0] as Record<string, unknown>).governance as Record<string, unknown>).audit_identifiers)), "Composite command should have audit identifiers metadata");
       assert.equal((data.ai_catalog as Record<string, unknown>).canonical_url, "https://telnyx.com/ai/catalog.json");
       assert.ok(Array.isArray((data.ai_catalog as Record<string, unknown>).workloads), "AI catalog should expose workloads");
+      assert.equal((data.retry_idempotency_contract as Record<string, unknown>).mutating_requests?.idempotency_key_header, "Idempotency-Key");
+      assert.equal((data.retry_idempotency_contract as Record<string, unknown>).async_completion?.honor_retry_after, true);
+      assert.ok(Array.isArray((data.model_routing_policy as Record<string, unknown>).rules), "Model routing policy should expose rules");
+      assert.equal((data.model_routing_policy as Record<string, unknown>).references?.governance_playbook, "https://telnyx.com/guides/ai-model-governance-playbook.md");
     });
   });
 

@@ -120,6 +120,9 @@ describe("CLI — capabilities", () => {
       `Expected >= 20 tools, got ${data.total_tools}`
     );
     assert.ok(data.composite_commands, "Missing composite_commands");
+    assert.ok(data.ai_catalog, "Missing ai_catalog");
+    assert.ok(data.retry_idempotency_contract, "Missing retry_idempotency_contract");
+    assert.ok(data.model_routing_policy, "Missing model_routing_policy");
     assert.ok(
       data.composite_commands.length >= 7,
       `Expected >= 7 composite commands, got ${data.composite_commands.length}`
@@ -175,6 +178,39 @@ describe("CLI — capabilities", () => {
     }
   });
 
+  it("ai_catalog points at the canonical workload surface", () => {
+    const data = runJson("capabilities --json");
+    assert.equal(data.ai_catalog.canonical_url, "https://telnyx.com/ai/catalog.json");
+    assert.ok(Array.isArray(data.ai_catalog.workloads));
+    assert.ok(data.ai_catalog.workloads.length >= 4);
+    assert.ok(
+      data.ai_catalog.workloads.some((entry: any) => entry.id === "hosted_voice_assistants"),
+      "Expected hosted_voice_assistants workload"
+    );
+  });
+
+  it("retry_idempotency_contract exposes retry-safe write guidance", () => {
+    const data = runJson("capabilities --json");
+    assert.deepEqual(data.retry_idempotency_contract.applies_to, ["guarded_write", "live_write"]);
+    assert.equal(data.retry_idempotency_contract.mutating_requests.idempotency_key_header, "Idempotency-Key");
+    assert.equal(data.retry_idempotency_contract.async_completion.treat_202_accepted_as_in_progress, true);
+    assert.equal(data.retry_idempotency_contract.async_completion.honor_retry_after, true);
+  });
+
+  it("model_routing_policy exposes explicit routing and failover rules", () => {
+    const data = runJson("capabilities --json");
+    assert.ok(Array.isArray(data.model_routing_policy.rules));
+    assert.ok(data.model_routing_policy.rules.length >= 5);
+    assert.equal(
+      data.model_routing_policy.references.governance_playbook,
+      "https://telnyx.com/guides/ai-model-governance-playbook.md"
+    );
+    assert.equal(
+      data.model_routing_policy.references.runtime_boundary_guide,
+      "https://telnyx.com/guides/telnyx-native-vs-third-party-voice-orchestration.md"
+    );
+  });
+
   it("composite_commands includes all setup commands", () => {
     const data = runJson("capabilities --json");
     const names = data.composite_commands.map((c: any) => c.name || c.command || c);
@@ -197,9 +233,13 @@ describe("CLI — capabilities", () => {
       out.includes("Voice") || out.includes("voice"),
       "Missing voice category"
     );
+    assert.ok(out.includes("AI Catalog"), "Missing AI catalog section");
+    assert.ok(out.includes("Retry & Idempotency"), "Missing retry and idempotency section");
+    assert.ok(out.includes("Model Routing & Provider Failover"), "Missing model routing section");
     assert.ok(out.includes("Governance: risk="), "Missing governance legend in human output");
     assert.ok(out.includes("path="), "Missing approval path in human output");
     assert.ok(out.includes("audit="), "Missing audit identifiers in human output");
+    assert.ok(out.includes("Idempotency-Key"), "Missing idempotency key guidance");
   });
 });
 
