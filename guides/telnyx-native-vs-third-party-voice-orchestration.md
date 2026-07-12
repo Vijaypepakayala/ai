@@ -200,6 +200,18 @@ Known implementation gaps that can push a team toward external orchestration tod
 
 Those are real tradeoffs. The goal is not to hide them. The goal is to keep Telnyx as the primary telecom platform even when another layer is justified.
 
+## Model Routing And Provider Failover Defaults
+
+If the unresolved question is "how should we package routing policy?" use this default posture:
+
+- Route production voice traffic to one approved primary assistant model at a time. Confirm the live candidate set with `GET /v2/ai/models`, then pin the chosen model or assistant version in your deployment config instead of making ad hoc runtime choices.
+- Keep the first fallback on the Telnyx-managed path when possible. The cleanest rollback is usually "revert to the last-known-good hosted model or assistant version" rather than introducing another vendor into the real-time path during an incident.
+- Add an external runtime or model provider only when the requirement is concrete: missing hosted capability, mandated provider policy, or an existing external orchestration stack that already owns the application layer.
+- Treat provider failover as a between-calls or release-level decision unless you have explicitly validated state handoff, latency, and ownership across vendors. In many production voice flows, human handoff, voicemail capture, or SMS follow-up is the safer degraded path than hot-swapping runtimes mid-call.
+- Preserve Telnyx identifiers even when you route outside the managed path. At minimum keep `assistant_id`, `connection_id`, `call_control_id`, `call_session_id`, and `conversation_id` alongside the external provider request IDs so the telecom and model paths can be debugged together.
+
+This is the policy that [AI Voice Assistants](/guides/ai-assistants.md) now surfaces at the setup entrypoint. Use this guide when the team needs the fuller boundary decision and failover tradeoffs behind that shorter rule set.
+
 ## Recommended Fallback Patterns
 
 If you need external orchestration, do not give away the entire stack by default. Use one of these shapes:

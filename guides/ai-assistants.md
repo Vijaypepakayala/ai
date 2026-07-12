@@ -98,6 +98,18 @@ curl -X POST "https://api.telnyx.com/v2/ai/assistants" \
 - Telnyx-hosted inference is the default recommendation for real-time voice agents because the LLM stays on the same private Telnyx path as transcription, synthesis, and call media.
 - If you need a provider or routing policy outside the hosted catalog, use the custom OpenAI-compatible LLM path deliberately and document the external dependency in your deployment runbook.
 
+## Model Routing And Provider Failover Policy
+
+Use these defaults unless you have a concrete requirement that forces a different shape:
+
+- Pick one primary Telnyx-hosted assistant model for each production voice path and verify it from the live catalog before rollout. Do not treat example model IDs in this guide as a permanent routing contract.
+- Keep the first fallback simple and reviewable: a last-known-good Telnyx-hosted model or assistant version that you can promote deliberately after a failed canary, incident, or quality regression.
+- Add an external OpenAI-compatible provider only for a hard product gap such as a missing model capability, a required provider policy, or an already-approved external runtime. Do not add one only because it might be useful later.
+- Prefer failover between calls, not mid-call. If a live call degrades, the safer first fallback is usually a human transfer, voicemail capture, or SMS follow-up rather than swapping model providers while the conversation is in progress.
+- Write the routing policy down in the deployment runbook: primary model, fallback branch, trigger condition, rollback owner, and the correlation IDs you retain when you debug the path.
+
+Use [Telnyx-Native Assistants Vs Third-Party Voice Orchestration](/guides/telnyx-native-vs-third-party-voice-orchestration.md) when you need the deeper decision framework for when to stay on the Telnyx-managed assistant path, when to add an external runtime, and how to keep Telnyx as the telecom system of record if you do.
+
 ## Cost Governance Checklist
 
 Treat assistant rollout as a spend-governed release, not just a prompt release. The first production question is not only "does it work?" but also "what budget envelope does this workflow own when calls run long, tools retry, or traffic spikes?"
@@ -362,7 +374,6 @@ API_KEY = "KEY..."
 BASE_URL = "https://api.telnyx.com/v2"
 headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
 
-# Create assistant
 assistant = requests.post(
     f"{BASE_URL}/ai/assistants",
     headers=headers,
@@ -371,26 +382,15 @@ assistant = requests.post(
         "instructions": "You are a helpful customer support agent.",
         "model": "openai/gpt-5.4",
         "voice": {"provider": "telnyx", "settings": {"voice_id": "en-US-Neural2-F"}},
-        "greeting": "Hello! How can I help you today?"
+        "greeting": "Hello! How can I help you today?",
     }
 ).json()
-assistant_id = assistant["id"]
-print(f"Created: {assistant_id}")
-
-# List assistants
-assistants = requests.get(f"{BASE_URL}/ai/assistants", headers=headers).json()
-for a in assistants["data"]:
-    print(f"{a['id']}: {a['name']}")
-
-# Update
 requests.patch(
-    f"{BASE_URL}/ai/assistants/{assistant_id}",
+    f"{BASE_URL}/ai/assistants/{assistant['id']}",
     headers=headers,
-    json={"greeting": "Hi there! What can I do for you?"}
+    json={"greeting": "Hi there! What can I do for you?"},
 )
-
-# Delete
-requests.delete(f"{BASE_URL}/ai/assistants/{assistant_id}", headers=headers)
+print(requests.get(f"{BASE_URL}/ai/assistants", headers=headers).json())
 ```
 
 ## TypeScript Examples
@@ -403,7 +403,6 @@ const headers = {
   "Content-Type": "application/json",
 };
 
-// Create assistant
 const createRes = await fetch(`${BASE_URL}/ai/assistants`, {
   method: "POST",
   headers,
@@ -416,49 +415,28 @@ const createRes = await fetch(`${BASE_URL}/ai/assistants`, {
   }),
 });
 const assistant = await createRes.json();
-console.log(`Created: ${assistant.id}`);
-
-// List assistants
-const listRes = await fetch(`${BASE_URL}/ai/assistants`, { headers });
-const { data: assistants } = await listRes.json();
-assistants.forEach((a: any) => console.log(`${a.id}: ${a.name}`));
-
-// Update
 await fetch(`${BASE_URL}/ai/assistants/${assistant.id}`, {
   method: "PATCH",
   headers,
   body: JSON.stringify({ greeting: "Hi there! What can I do for you?" }),
 });
-
-// Delete
-await fetch(`${BASE_URL}/ai/assistants/${assistant.id}`, {
-  method: "DELETE",
-  headers,
-});
+console.log(await (await fetch(`${BASE_URL}/ai/assistants`, { headers })).json());
 ```
 
 ## Agent Toolkit Examples
-
 Use the `telnyx-agent-toolkit` Python package for simplified tool execution:
 
 ```python
 from telnyx_agent_toolkit import TelnyxToolkit
 
 toolkit = TelnyxToolkit(api_key="KEY...")
-
-# Create an AI assistant
 assistant = toolkit.execute("create_ai_assistant", {
     "name": "Support Bot",
     "model": "openai/gpt-5.4",
     "instructions": "You are a helpful customer support agent."
 })
-assistant_id = assistant.get("data", {}).get("id") or assistant["id"]
-print(f"Created: {assistant_id}")
-
-# List assistants
-assistants = toolkit.execute("list_ai_assistants", {"page_size": 10})
-for a in assistants["data"]:
-    print(f"{a['id']}: {a['name']}")
+print(assistant)
+print(toolkit.execute("list_ai_assistants", {"page_size": 10}))
 ```
 
 ## Wiring to a Phone Number
@@ -488,7 +466,6 @@ curl -X PATCH "https://api.telnyx.com/v2/phone_numbers/{number_id}" \
 ```
 
 ## Available Voices
-
 **Telnyx voices:**
 - `en-US-Neural2-F` (female, US)
 - `en-US-Neural2-M` (male, US)
@@ -504,7 +481,6 @@ curl -X PATCH "https://api.telnyx.com/v2/phone_numbers/{number_id}" \
 - Re-test latency and turn-taking after every model change. Moving from one hosted model to another is usually low risk; moving to a custom LLM endpoint changes the network path and failure surface.
 
 ## Pricing
-
 - **AI model:** Per-token pricing (pricing varies by model)
 - **Voice synthesis:** Per-character pricing
 - **Phone call:** Standard voice rates
@@ -518,7 +494,6 @@ curl -X PATCH "https://api.telnyx.com/v2/phone_numbers/{number_id}" \
 | `voice_not_found` | 400 | Verify voice_id |
 
 ## Resources
-
 - [AI Assistants API Reference](https://developers.telnyx.com/docs/api/v2/ai-assistants)
 - [AI Assistants Documentation](https://developers.telnyx.com/docs/ai/assistants)
 - [Voice Call Control Guide](/guides/voice-call-control.md)
