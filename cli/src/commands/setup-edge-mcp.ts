@@ -14,11 +14,13 @@ interface SetupEdgeMcpResult {
   example: string;
   auth_command: string;
   deploy_command: string;
+  setup_commands: string[];
   prerequisites: string[];
   notes: string[];
 }
 
-const MCP_EXAMPLE = "examples/ts/mcp-server";
+const EDGE_REPO = "https://github.com/team-telnyx/edge-compute.git";
+const MCP_EXAMPLE = "docs/examples/ts/mcp-server";
 
 export async function setupEdgeMcpCommand(flags: Record<string, string | boolean>): Promise<void> {
   const jsonOutput = flags.json === true;
@@ -31,15 +33,16 @@ export async function setupEdgeMcpCommand(flags: Record<string, string | boolean
   const authCommand = apiKeyAuthSupported
     ? "telnyx-edge auth api-key set <your-api-key>"
     : "telnyx-edge auth login";
-  const deployCommand = `telnyx-edge new-func --from-dir=${MCP_EXAMPLE} --name=${name} && cd ${name} && telnyx-edge ship`;
+  const deployCommand = `git clone ${EDGE_REPO} && cd edge-compute && telnyx-edge new-func --from-dir=${MCP_EXAMPLE} --name=${name} && cd ${name} && telnyx-edge ship`;
 
   const notes = [
     "team-telnyx/ai provides the integration pattern, not the Edge lifecycle.",
     "Use telnyx-edge for auth, deploy, secrets, bindings, and lifecycle management.",
+    "Set TELNYX_API_KEY and a separate SHARED_SECRET as Edge secrets before deploying; never print or commit either value.",
     "After deploy, connect the exposed MCP or HTTP boundary back into your AI workflow.",
   ];
   if (statefulActorsSupported) {
-    notes.push("For stateful MCP/webhook scenarios (per-user sessions, connection state): consider telnyx-edge new-func --actor --language ts");
+    notes.push("For stateful MCP sessions: telnyx-edge new-func --actor --language ts --name my-mcp-actor && cd my-mcp-actor && telnyx-edge types");
   }
 
   const result: SetupEdgeMcpResult = {
@@ -51,10 +54,21 @@ export async function setupEdgeMcpCommand(flags: Record<string, string | boolean
     example: MCP_EXAMPLE,
     auth_command: authCommand,
     deploy_command: deployCommand,
+    setup_commands: [
+      `git clone ${EDGE_REPO}`,
+      "cd edge-compute",
+      `telnyx-edge new-func --from-dir=${MCP_EXAMPLE} --name=${name}`,
+      `cd ${name}`,
+      "telnyx-edge secrets add TELNYX_API_KEY <telnyx-api-key>",
+      "telnyx-edge secrets add SHARED_SECRET <independent-random-secret>",
+      "telnyx-edge ship",
+    ],
     prerequisites: [
       "Install telnyx-edge",
       `Authenticate with ${authCommand}`,
-      "Use a real Edge Compute example as the starting point",
+      `Clone the example repository: git clone ${EDGE_REPO} && cd edge-compute`,
+      "Configure TELNYX_API_KEY as an Edge secret without exposing its value",
+      "Configure a separate SHARED_SECRET as an Edge secret without exposing its value",
     ],
     notes,
   };
@@ -79,7 +93,8 @@ export async function setupEdgeMcpCommand(flags: Record<string, string | boolean
 
   console.log(`  Example template: ${MCP_EXAMPLE}`);
   console.log(`  Auth step: ${authCommand}`);
-  console.log(`  Suggested flow: ${deployCommand}`);
+  console.log("  Setup steps:");
+  for (const command of result.setup_commands) console.log(`    ${command}`);
   console.log("\n  Notes:");
   for (const note of result.notes) {
     console.log(`    - ${note}`);

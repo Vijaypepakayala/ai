@@ -7,19 +7,38 @@
  */
 
 import { outputJson, printError, printSuccess, printWarning } from "../utils/output.ts";
-import { getEdgeAuthStatus, getEdgeHelp, getEdgeVersion, hasEdgeCli, supportsApiKeyAuth, supportsStatefulActors } from "../edge-cli.ts";
+import {
+  type EdgeCapabilities,
+  getEdgeAuthStatus,
+  getEdgeCapabilities,
+  getEdgeHelp,
+  getEdgeVersion,
+  supportsApiKeyAuth,
+} from "../edge-cli.ts";
 
-interface EdgeDoctorResult {
+interface EdgeDoctorResult extends EdgeCapabilities {
   ready: boolean;
   telnyx_edge_installed: boolean;
   telnyx_edge_version: string | null;
   authenticated: boolean;
   auth_mode: "api_key" | "oauth" | "none" | "unknown";
   api_key_auth_supported: boolean;
-  stateful_actors_supported: boolean;
   checks: Array<{ name: string; ok: boolean; detail: string }>;
   next_steps: string[];
 }
+
+const NO_CAPABILITIES: EdgeCapabilities = {
+  reset_func_supported: false,
+  types_supported: false,
+  storage_kv_supported: false,
+  revisions_supported: false,
+  rollback_supported: false,
+  inspect_supported: false,
+  bindings_supported: false,
+  secrets_supported: false,
+  cloud_storage_supported: false,
+  stateful_actors_supported: false,
+};
 
 export async function edgeDoctorCommand(flags: Record<string, string | boolean>): Promise<void> {
   const jsonOutput = flags.json === true;
@@ -30,13 +49,17 @@ export async function edgeDoctorCommand(flags: Record<string, string | boolean>)
   let authenticated = false;
   let authMode: EdgeDoctorResult["auth_mode"] = "none";
   let apiKeyAuthSupported = false;
-  let statefulActorsSupported = false;
+  let capabilities = { ...NO_CAPABILITIES };
 
   try {
-    const out = getEdgeHelp();
-    installed = hasEdgeCli();
-    version = getEdgeVersion() ?? extractVersion(out) ?? "installed";
-    checks.push({ name: "telnyx-edge installed", ok: true, detail: version });
+    const rootHelp = getEdgeHelp();
+    installed = true;
+    version = getEdgeVersion(rootHelp);
+    checks.push({
+      name: "telnyx-edge installed",
+      ok: true,
+      detail: version ?? "installed (version unknown)",
+    });
   } catch (err: any) {
     const detail = err?.code === "ENOENT"
       ? "telnyx-edge not found on PATH"
@@ -49,17 +72,11 @@ export async function edgeDoctorCommand(flags: Record<string, string | boolean>)
     checks.push({
       name: "API-key auth supported",
       ok: apiKeyAuthSupported,
-      detail: apiKeyAuthSupported ? "auth api-key set is available" : "no auth api-key set support detected",
+      detail: apiKeyAuthSupported ? "auth api-key set help succeeded" : "auth api-key set help failed",
     });
 
-    statefulActorsSupported = supportsStatefulActors();
-    checks.push({
-      name: "Stateful actors supported",
-      ok: statefulActorsSupported,
-      detail: statefulActorsSupported
-        ? "new-func --actor available (v0.2.3+)"
-        : "new-func --actor not available — upgrade to v0.2.3+ for stateful actors",
-    });
+    capabilities = getEdgeCapabilities();
+    addCapabilityChecks(checks, capabilities);
 
     try {
       const status = getEdgeAuthStatus();
@@ -86,28 +103,35 @@ export async function edgeDoctorCommand(flags: Record<string, string | boolean>)
     nextSteps = [
       "Install the dedicated Edge Compute CLI from team-telnyx/edge-compute releases.",
       "Then authenticate: telnyx-edge auth api-key set <your-api-key> (preferred) or telnyx-edge auth login",
-      "Then start from a real example such as examples/ts/mcp-server or examples/js/webhook-receiver.",
+      "Clone the examples: git clone https://github.com/team-telnyx/edge-compute.git && cd edge-compute",
     ];
   } else if (!authenticated) {
     nextSteps = apiKeyAuthSupported
       ? [
           "Authenticate non-interactively: telnyx-edge auth api-key set <your-api-key>",
           "Verify with: telnyx-edge auth status",
-          "Then start from a real example and deploy with telnyx-edge ship.",
+          "Then clone https://github.com/team-telnyx/edge-compute.git and use an example under docs/examples/.",
         ]
       : [
           "Authenticate with: telnyx-edge auth login",
           "Verify with: telnyx-edge auth status",
-          "Then start from a real example and deploy with telnyx-edge ship.",
+          "Then clone https://github.com/team-telnyx/edge-compute.git and use an example under docs/examples/.",
         ];
   } else {
     nextSteps = [
-      "Start from a real example: telnyx-edge new-func --from-dir=examples/ts/mcp-server --name=my-mcp-server",
-      "Deploy with: telnyx-edge ship",
+      "Clone examples: git clone https://github.com/team-telnyx/edge-compute.git && cd edge-compute",
+      "Scaffold: telnyx-edge new-func --from-dir=docs/examples/ts/mcp-server --name=my-mcp-server",
+      "Deploy: cd my-mcp-server && telnyx-edge ship",
       "Then connect the exposed HTTP or MCP boundary back into your AI workflow.",
     ];
-    if (statefulActorsSupported) {
-      nextSteps.push("For stateful workloads (carts, sessions, call legs): telnyx-edge new-func --actor --language ts --name my-actor");
+    if (capabilities.stateful_actors_supported) {
+      nextSteps.push("For stateful workloads: telnyx-edge new-func --actor --language ts --name my-actor && cd my-actor && telnyx-edge types");
+    }
+    if (capabilities.inspect_supported) {
+      nextSteps.push("Inspect a deployment (feature-detected): telnyx-edge inspect <function-name>");
+    }
+    if (capabilities.cloud_storage_supported) {
+      nextSteps.push("Cloud Storage TOML/type support was feature-detected; consult the installed CLI help before using it.");
     }
   }
 
@@ -118,7 +142,7 @@ export async function edgeDoctorCommand(flags: Record<string, string | boolean>)
     authenticated,
     auth_mode: authMode,
     api_key_auth_supported: apiKeyAuthSupported,
-    stateful_actors_supported: statefulActorsSupported,
+    ...capabilities,
     checks,
     next_steps: nextSteps,
   };
@@ -130,7 +154,7 @@ export async function edgeDoctorCommand(flags: Record<string, string | boolean>)
 
   if (ready) {
     printSuccess("Edge Compute handoff is ready", {
-      "telnyx-edge": version ?? "installed",
+      "telnyx-edge": version ?? "installed (version unknown)",
       Auth: authMode,
       Ready: "✓",
     });
@@ -156,7 +180,28 @@ export async function edgeDoctorCommand(flags: Record<string, string | boolean>)
   console.log();
 }
 
-function extractVersion(text: string): string | null {
-  const match = text.match(/v?\d+\.\d+\.\d+/);
-  return match?.[0] ?? null;
+function addCapabilityChecks(
+  checks: EdgeDoctorResult["checks"],
+  capabilities: EdgeCapabilities,
+): void {
+  const detected: Array<[keyof EdgeCapabilities, string, string]> = [
+    ["reset_func_supported", "reset-func", "reset-func --help"],
+    ["types_supported", "TypeScript binding types", "types --help"],
+    ["storage_kv_supported", "KV storage/key operations", "storage kv --help"],
+    ["revisions_supported", "revisions", "revisions --help"],
+    ["rollback_supported", "rollback", "rollback --help"],
+    ["inspect_supported", "inspect (feature-detected)", "inspect --help"],
+    ["bindings_supported", "bindings", "bindings --help"],
+    ["secrets_supported", "secrets", "secrets --help"],
+    ["cloud_storage_supported", "Cloud Storage bindings (feature-detected)", "types help advertises Cloud Storage"],
+    ["stateful_actors_supported", "Stateful actors", "new-func help advertises --actor"],
+  ];
+
+  for (const [key, name, probe] of detected) {
+    checks.push({
+      name,
+      ok: capabilities[key],
+      detail: capabilities[key] ? `${probe} succeeded` : `${probe} not detected`,
+    });
+  }
 }

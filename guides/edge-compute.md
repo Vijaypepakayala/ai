@@ -1,182 +1,189 @@
 # Edge Compute
 
-Use Telnyx Edge Compute when your AI workflow needs low-latency code execution, webhook handling, or an MCP/webhook endpoint that runs on Telnyx edge infrastructure.
+Use Telnyx Edge Compute when an AI workflow needs a low-latency HTTP/MCP boundary, webhook ingestion, durable coordination, or a small deterministic transform close to the runtime.
 
-## Important scope boundary
+## Ownership and bridge
 
-`team-telnyx/ai` does **not** manage Edge Compute lifecycle directly.
+`team-telnyx/ai` provides orchestration guidance and thin handoff commands. It does **not** reimplement the Edge lifecycle.
 
-This repo helps you discover where Edge Compute fits into an AI workflow, but the actual function lifecycle is owned by:
-
-- the `team-telnyx/edge-compute` repo
-- the `telnyx-edge` CLI
-
-That means:
-- build/deploy/delete/secrets/bindings live in `telnyx-edge`
-- agent/orchestration logic can live in `team-telnyx/ai`
-- `team-telnyx/ai` should not pretend to replace Edge Compute
-
-A useful mental model:
-- **`ai` = brain / orchestration layer**
-- **Edge Compute = low-latency hands / execution layer**
-
-## When to use Edge Compute with `ai`
-
-Good bridge use cases:
-
-1. **MCP server adapters at the edge**
-   - expose AI-adjacent tools close to the runtime
-2. **Webhook ingestion + AI routing**
-   - receive webhook traffic, normalize it, then hand off to AI logic
-3. **AI-adjacent functions**
-   - redaction, enrichment, scoring, post-processing, lightweight transforms
-
-## Quick Start
-
-```bash
-# Authenticate with the dedicated Edge CLI (preferred for agents)
-telnyx-edge auth api-key set <your-api-key>
-
-# Start from the MCP server example
-telnyx-edge new-func --from-dir=examples/ts/mcp-server --name=my-mcp-server
-cd my-mcp-server
-
-# Add required secrets and deploy
-telnyx-edge secrets add TELNYX_API_KEY <your-api-key>
-telnyx-edge ship
-```
-
-Once deployed, use `team-telnyx/ai` for orchestration and capability discovery, and use the deployed Edge endpoint for execution.
-
-## API Reference
-
-Edge Compute lifecycle is owned by the separate `telnyx-edge` CLI rather than the `team-telnyx/ai` SDK surface.
-
-Common lifecycle commands:
-
-```bash
-telnyx-edge auth status
-telnyx-edge list
-telnyx-edge secrets list
-telnyx-edge bindings get
-```
-
-| Command | Purpose |
-|---------|---------|
-| `telnyx-edge auth api-key set` | Authenticate the Edge CLI non-interactively |
-| `telnyx-edge new-func` | Scaffold a new function or clone an example |
-| `telnyx-edge ship` | Deploy the current function |
-| `telnyx-edge list` | List deployed functions |
-| `telnyx-edge secrets` | Manage runtime secrets |
-| `telnyx-edge bindings` | Manage Telnyx API key bindings |
+- [`team-telnyx/edge-compute`](https://github.com/team-telnyx/edge-compute) owns examples and runtime documentation.
+- `telnyx-edge` owns authentication, scaffolding, deployment, storage, secrets, bindings, revisions, and rollback.
+- This repo's `edge-doctor`, `setup-edge-mcp`, and `setup-edge-webhook` commands detect the installed CLI surface and point to those tools.
+- HTTP or MCP is the stable boundary back to the AI workflow.
 
 ## Prerequisites
 
-- Telnyx account
-- Access to the dedicated `telnyx-edge` CLI
-- A use case where AI workflows need a real deployed HTTP or MCP execution surface
+- A Telnyx account and API key
+- The dedicated `telnyx-edge` CLI
+- Git for cloning the canonical examples
+- A separate inbound shared secret for any protected HTTP or MCP endpoint
 
-## Prerequisite: install `telnyx-edge`
+## Quick Start
 
-Edge Compute is managed through the separate CLI:
+Run the bridge check first:
 
-```sh
-# See the edge-compute repo for install/setup details
-# https://github.com/team-telnyx/edge-compute
+```bash
+telnyx-agent edge-doctor --json
+```
 
+The doctor probes command help rather than assuming that a version string guarantees a feature.
+
+Use the current handoff helpers for the canonical examples:
+
+```bash
+telnyx-agent setup-edge-mcp --name my-mcp-server --json
+telnyx-agent setup-edge-webhook --name my-webhook --json
+```
+
+Their JSON includes ordered `setup_commands`; review them, substitute credential values locally, and run them with `telnyx-edge`.
+
+## Install and authenticate
+
+Install `telnyx-edge` from the [Edge Compute releases](https://github.com/team-telnyx/edge-compute/releases), then authenticate:
+
+```bash
+# Preferred for non-interactive agent environments when supported
 telnyx-edge auth api-key set <your-api-key>
 telnyx-edge auth status
 ```
 
-Typical lifecycle commands live there:
+OAuth remains available with `telnyx-edge auth login`. Never commit API keys or print secret values into logs.
 
-```sh
-telnyx-edge new-func
-telnyx-edge ship
-telnyx-edge list
-telnyx-edge delete-func
-telnyx-edge secrets
-telnyx-edge bindings
+## API Reference
+
+### Released v0.2.3 baseline
+
+The released v0.2.3 command surface used by this bridge includes:
+
+| Capability | Example |
+|---|---|
+| Failed-function recovery | `telnyx-edge reset-func broken-func` |
+| KV namespace and key operations | `telnyx-edge storage kv ...` and `telnyx-edge storage kv key ...` |
+| TOML bindings and TypeScript declarations | declare bindings, then run `telnyx-edge types` |
+| Immutable deploy history | `telnyx-edge revisions list my-func` |
+| Traffic rollback | `telnyx-edge rollback my-func <revision-id>` |
+| Stateful Actor scaffolding/management | `new-func --actor` and `actors` |
+| Secrets and Telnyx bindings | `secrets` and `bindings` |
+| Function inspection | `telnyx-edge inspect <function-name>` |
+
+#### Reset, revisions, and rollback
+
+```bash
+# Reset a function that is in a failed state, then ship the repaired source
+telnyx-edge reset-func broken-func
+telnyx-edge ship --from-dir=broken-func
+
+# Review immutable deploy history and retarget traffic to a healthy revision
+telnyx-edge revisions list my-func
+telnyx-edge rollback my-func <revision-id>
 ```
 
-## Reference architecture
+#### KV and generated binding types
 
-A practical pattern looks like this:
+KV supports namespace `create`, `list`, `get`, and `delete`, plus key `list`, `get`, `put`, and `delete` operations. Key writes can also use `--path` and `--ttl`.
 
-1. Use `team-telnyx/ai` for:
-   - agent workflows
-   - prompts/orchestration
-   - guides and capability discovery
-   - Telnyx API integrations
-2. Use `team-telnyx/edge-compute` for:
-   - function scaffolding
-   - deployment
-   - secrets and bindings
-   - running webhook/MCP edge endpoints
-3. Connect them with a stable boundary:
-   - HTTP webhook
-   - MCP endpoint
-   - function call into an edge-hosted adapter
+```bash
+telnyx-edge storage kv create --name session-state
+telnyx-edge storage kv list
 
-## Endgame: what a good integration looks like
+telnyx-edge storage kv key put <namespace-id> sessions/demo '{"status":"active"}' --ttl 1h
+telnyx-edge storage kv key get <namespace-id> sessions/demo
+telnyx-edge storage kv key list <namespace-id> --prefix sessions/ --limit 100
+# Continue a paginated listing with the returned cursor:
+telnyx-edge storage kv key list <namespace-id> --cursor <cursor> --limit 100
+```
 
-The end state is **not** "move Edge Compute into `team-telnyx/ai`".
+Bind the namespace in `telnyx.toml` or `func.toml`, then generate TypeScript declarations:
 
-The better endgame is a clear two-layer product:
+```toml
+[storage.kv.SESSIONS]
+id = "<namespace-id>"
+```
 
-### Layer 1 — `team-telnyx/ai`
-This layer should:
-- expose Edge Compute as a first-class capability in docs/manifests/help output
-- provide AI-oriented patterns and recipes
-- explain when an agent should reach for edge execution
-- help users connect agent workflows to deployed edge endpoints
+```bash
+telnyx-edge types
+```
 
-### Layer 2 — `team-telnyx/edge-compute`
-This layer should continue to own:
-- auth
-- function creation
-- deployment
-- secrets
-- bindings
-- runtime lifecycle and operational ergonomics
+`types` generates the environment declarations for supported TOML bindings, including KV, Telnyx, secrets, and actors.
 
-### Bridge between them
-The bridge should be explicit and boring:
-- `ai` produces orchestration guidance
-- Edge Compute provides execution endpoints
-- the contract between them is HTTP, MCP, or a documented function interface
+#### Stateful Actors
 
-That keeps ownership clear and avoids duplicating deployment tooling.
+Actors are useful for per-entity coordination such as sessions, carts, call legs, and workflow state. Probe `new-func --help` for `--actor`; do not infer actor availability from a hard-coded minimum version.
 
-## Phased rollout
+```bash
+telnyx-edge new-func --actor --language ts --name session-actor
+cd session-actor
+telnyx-edge types
+telnyx-edge ship
 
-### Phase 1 — Discoverability (this repo, now)
-- add Edge Compute capability visibility
-- add guide-level handoff and examples
-- make the README and capabilities output honest about scope
+# Account-scoped actor type views
+telnyx-edge actors list
+```
 
-### Phase 2 — Guided integration
-- add richer examples for webhook handlers, MCP adapters, and AI post-processing functions
-- add copy-paste scaffolds for how an AI app should call a deployed edge endpoint
-- document required secrets/bindings patterns
+### Feature-detected newer surface
 
-### Phase 3 — CLI bridge
-Only if ownership stays clear:
-- lightweight helper commands or docs-driven handoff from `telnyx-agent` to `telnyx-edge`
-- examples: `edge doctor`, `setup-edge-mcp`, or explicit "next command" guidance
-- these should shell out to `telnyx-edge`, not reimplement lifecycle management
+Cloud Storage TOML/type support is **not** a v0.2.3 baseline capability. It is a current-main/upcoming v0.2.4 surface for the release line targeted by this guide and must be gated by the installed CLI. The published v0.2.3 binary already exposes `inspect`, even though `RELEASE_NOTES.md` groups that command under v0.2.4.
 
-### Phase 4 — Deeper integration (optional, later)
-Only if a stable contract exists:
-- standardized templates
-- stronger config generation
-- possibly a shared library or interface contract
+```bash
+telnyx-edge inspect --help
+telnyx-agent edge-doctor --json
+```
 
-Not before.
+`edge-doctor --json` reports `inspect_supported` from command help. Because early Cloud Storage builds do not consistently mention the binding in `types --help`, the doctor runs `types --from-dir` against an isolated temporary manifest and checks the generated declaration. It never modifies the current project. Only suggest or invoke Cloud Storage when `cloud_storage_supported` is true.
 
-## Example: AI app calling an Edge endpoint
+## MCP server on Edge
 
-A simple pattern is to let your AI app call a deployed edge function for specialized execution.
+The source example lives in `docs/examples/ts/mcp-server` in `team-telnyx/edge-compute`. Clone the repository before using `--from-dir`:
+
+```bash
+git clone https://github.com/team-telnyx/edge-compute.git
+cd edge-compute
+
+telnyx-edge new-func \
+  --from-dir=docs/examples/ts/mcp-server \
+  --name=my-mcp-server
+cd my-mcp-server
+npm install
+npm run build
+```
+
+Before deployment, configure both prerequisites as Edge secrets:
+
+- `TELNYX_API_KEY`: used only for upstream Telnyx API calls.
+- `SHARED_SECRET`: a separate random bearer secret used to authenticate inbound MCP requests. Do not reuse the Telnyx API key.
+
+```bash
+# Placeholders only: do not paste secret values into source, chat, or logs.
+telnyx-edge secrets add TELNYX_API_KEY <telnyx-api-key>
+telnyx-edge secrets add SHARED_SECRET <independent-random-secret>
+telnyx-edge ship
+```
+
+Clients authenticate to the MCP endpoint with an `Authorization: Bearer` header containing the independently generated inbound token, never with `TELNYX_API_KEY`.
+
+## Webhook receiver on Edge
+
+The JavaScript example lives in `docs/examples/js/webhook-receiver`:
+
+```bash
+git clone https://github.com/team-telnyx/edge-compute.git
+cd edge-compute
+
+telnyx-edge new-func \
+  --from-dir=docs/examples/js/webhook-receiver \
+  --name=my-webhook
+cd my-webhook
+
+# Set an HMAC secret without committing or logging its value.
+telnyx-edge secrets add WEBHOOK_SECRET <webhook-signing-secret>
+telnyx-edge ship
+```
+
+`WEBHOOK_SECRET` enables HMAC verification. The example's recent-webhook buffer is process memory only; it is not durable across restarts. Use KV for durable key/value persistence or a Stateful Actor for serialized per-entity state.
+
+## Calling a protected Edge endpoint
+
+Protect your own AI-to-Edge endpoint with an independent `EDGE_SHARED_SECRET`. It is an inbound application credential and must not be the Telnyx API key used for upstream API calls.
 
 ```python
 import os
@@ -186,16 +193,12 @@ response = requests.post(
     "https://<your-edge-endpoint>",
     headers={
         "content-type": "application/json",
-        "authorization": f"Bearer {os.environ['TELNYX_API_KEY']}",
+        "authorization": f"Bearer {os.environ['EDGE_SHARED_SECRET']}",
     },
-    json={
-        "task": "redact_pii",
-        "payload": {
-            "text": "Call me at +1 555 123 4567",
-        },
-    },
+    json={"task": "redact_pii", "payload": {"text": "Call me at +1 555 123 4567"}},
+    timeout=15,
 )
-
+response.raise_for_status()
 print(response.json())
 ```
 
@@ -204,127 +207,28 @@ const response = await fetch("https://<your-edge-endpoint>", {
   method: "POST",
   headers: {
     "content-type": "application/json",
-    authorization: `Bearer ${process.env.TELNYX_API_KEY}`,
+    authorization: `Bearer ${process.env.EDGE_SHARED_SECRET}`,
   },
   body: JSON.stringify({
     task: "redact_pii",
-    payload: {
-      text: "Call me at +1 555 123 4567",
-    },
+    payload: { text: "Call me at +1 555 123 4567" },
   }),
 });
 
-const result = await response.json();
-console.log(result);
+if (!response.ok) throw new Error(`Edge request failed: ${response.status}`);
+console.log(await response.json());
 ```
-
-## Example patterns worth supporting
-
-### 1. MCP server at the edge
-Use Edge Compute to host a narrow MCP adapter close to runtime, while `team-telnyx/ai` handles the surrounding agent experience and capability discovery.
-
-### 2. Webhook receiver + AI router
-Use Edge Compute to receive inbound webhooks, normalize payloads, and forward structured requests into AI workflows.
-
-### 3. Post-processing function
-Use Edge Compute for deterministic transforms such as:
-- redaction
-- enrichment
-- scoring
-- transcript cleanup
-- lightweight policy checks
-
-These are the sweet spot: small execution units attached to larger agent workflows.
-
-## Fastest path to a real test
-
-If you want to test the end product quickly, do **one** of these first:
-
-### Option A — MCP server on Edge
-Best when you want an AI-native demo.
-
-```sh
-telnyx-edge new-func --from-dir=examples/ts/mcp-server --name=my-mcp-server
-cd my-mcp-server
-telnyx-edge secrets add TELNYX_API_KEY <your-api-key>
-telnyx-edge ship
-```
-
-Then point your MCP client or agent runtime at the deployed endpoint.
-
-### Option B — Webhook receiver on Edge
-Best when you want a simple integration seam.
-
-```sh
-telnyx-edge new-func --from-dir=examples/js/webhook-receiver --name=my-webhook
-cd my-webhook
-telnyx-edge ship
-```
-
-Then have your AI workflow call or route into that edge endpoint.
-
-### Option C — Post-processing function
-Best when you want a narrow but real AI-adjacent utility.
-
-Example use cases:
-- redact PII before storage
-- enrich messages before downstream routing
-- score or classify inbound events
-- clean transcripts before analysis
-
-You can also smoke-test a deployed edge endpoint directly:
 
 ```bash
 curl -X POST "https://<your-edge-endpoint>" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -H "Authorization: Bearer ${EDGE_SHARED_SECRET}" \
   -d '{
     "task": "redact_pii",
-    "payload": {
-      "text": "Call me at +1 555 123 4567"
-    }
+    "payload": {"text": "Call me at +1 555 123 4567"}
   }'
 ```
 
-## What this repo should and should not claim
+## Operational source of truth
 
-This repo **can**:
-- explain how Edge Compute fits into AI-agent workflows
-- provide examples and bridge guidance
-- point users to the right product surface
-
-This repo **should not** claim that it:
-- deploys edge functions directly
-- manages rollbacks or lifecycle state
-- replaces `telnyx-edge`
-- provides complete native Edge Compute support
-
-## Test recipe
-
-Here is the most practical end-to-end test loop:
-
-1. install `telnyx-edge` and authenticate with `telnyx-edge auth api-key set <your-api-key>`
-2. start from a working example in `team-telnyx/edge-compute`
-3. deploy it with `telnyx-edge ship`
-4. expose a stable HTTP or MCP boundary
-5. call that deployed endpoint from an AI workflow
-6. iterate on the boundary, not on duplicated deployment logic
-
-That gives you a real integration test without pretending `team-telnyx/ai` owns lifecycle management.
-
-## Best next step
-
-If you want to use Edge Compute from an AI workflow today:
-
-1. install `telnyx-edge` and authenticate with `telnyx-edge auth api-key set <your-api-key>`
-2. create/deploy your function in `team-telnyx/edge-compute`
-3. expose a stable HTTP or MCP boundary
-4. use `team-telnyx/ai` to orchestrate calls into that deployed endpoint
-
-For deploy/runtime specifics, use the `edge-compute` repo as the source of truth.
-
-## Source of truth
-
-- AI workflow/orchestration guidance: `team-telnyx/ai`
-- Edge lifecycle and deployment: `team-telnyx/edge-compute`
-- Runtime deploy tool: `telnyx-edge`
+Use `team-telnyx/ai` for agent workflows and integration patterns. Use `team-telnyx/edge-compute` and the installed `telnyx-edge --help` for deployment/runtime behavior. When the installed help and this bridge differ, the detected CLI surface wins.
