@@ -305,6 +305,136 @@ describe("Voice API action commands", () => {
     assertFlagValue(answerCall!, "--record", "record-from-answer");
   });
 
+  it("call-control dispatches all ten AI/Conversation Relay actions with exact Go CLI flags", () => {
+    const cases: Array<{
+      action: string;
+      flags?: string[];
+      expected: Record<string, string | true>;
+    }> = [
+      {
+        action: "add-ai-assistant-messages",
+        flags: ["--message", '[{"role":"user","content":"hello"}]'],
+        expected: { "--message": '[{"role":"user","content":"hello"}]' },
+      },
+      {
+        action: "gather-using-ai",
+        flags: [
+          "--parameters", '{"type":"object","properties":{"name":{"type":"string"}}}',
+          "--assistant.instructions", "Ask for the caller name",
+          "--assistant.model", "openai/gpt-4o-mini",
+          "--send-partial-results",
+        ],
+        expected: {
+          "--parameters": '{"type":"object","properties":{"name":{"type":"string"}}}',
+          "--assistant.instructions": "Ask for the caller name",
+          "--assistant.model": "openai/gpt-4o-mini",
+          "--send-partial-results": true,
+        },
+      },
+      {
+        action: "gather-using-audio",
+        flags: ["--audio-url", "https://example.com/menu.wav", "--maximum-digits", "4"],
+        expected: { "--audio-url": "https://example.com/menu.wav", "--maximum-digits": "4" },
+      },
+      {
+        action: "gather-using-speak",
+        flags: ["--payload", "Enter your PIN", "--voice", "Telnyx.KokoroTTS.af", "--valid-digits", "0123456789"],
+        expected: {
+          "--payload": "Enter your PIN",
+          "--voice": "Telnyx.KokoroTTS.af",
+          "--valid-digits": "0123456789",
+        },
+      },
+      {
+        action: "join-ai-assistant",
+        flags: ["--conversation-id", "conv-1", "--participant", '{"id":"call-2","role":"user"}'],
+        expected: { "--conversation-id": "conv-1", "--participant": '{"id":"call-2","role":"user"}' },
+      },
+      {
+        action: "start-ai-assistant",
+        flags: [
+          "--assistant-id", "assistant-1",
+          "--assistant-instructions", "Be concise",
+          "--message-history", '[{"role":"user","content":"context"}]',
+        ],
+        expected: {
+          "--assistant.id": "assistant-1",
+          "--assistant.instructions": "Be concise",
+          "--message-history": '[{"role":"user","content":"context"}]',
+        },
+      },
+      {
+        action: "start-conversation-relay",
+        flags: [
+          "--url", "wss://relay.example.com/ws",
+          "--custom-parameters", '{"account_id":"acct-1"}',
+          "--dtmf-detection",
+        ],
+        expected: {
+          "--url": "wss://relay.example.com/ws",
+          "--custom-parameters": '{"account_id":"acct-1"}',
+          "--dtmf-detection": true,
+        },
+      },
+      {
+        action: "stop-ai-assistant",
+        flags: ["--command-id", "cmd-stop-ai"],
+        expected: { "--command-id": "cmd-stop-ai" },
+      },
+      {
+        action: "stop-conversation-relay",
+        flags: ["--client-state", "c3RhdGU="],
+        expected: { "--client-state": "c3RhdGU=" },
+      },
+      {
+        action: "switch-supervisor-role",
+        flags: ["--role", "whisper"],
+        expected: { "--role": "whisper" },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const fake = setupFakeTelnyx();
+      run([
+        "call-control", "--action", testCase.action, "--call-control-id", "call-ai-1",
+        ...(testCase.flags ?? []), "--json",
+      ], fake.env);
+
+      const calls = readLoggedArgs(fake.logPath);
+      const invocation = calls.find((args) =>
+        args[0] === "calls:actions" && args[1] === testCase.action);
+      assert.ok(invocation, `should invoke calls:actions ${testCase.action}`);
+      assertFlagValue(invocation!, "--call-control-id", "call-ai-1");
+      for (const [flag, value] of Object.entries(testCase.expected)) {
+        if (value === true) assert.ok(invocation!.includes(flag), `expected bare ${flag}`);
+        else assertFlagValue(invocation!, flag, value);
+      }
+    }
+  });
+
+  it("call-control validates upstream-required AI action flags and supervisor roles", () => {
+    const fake = setupFakeTelnyx();
+    for (const args of [
+      ["gather-using-speak"],
+      ["join-ai-assistant"],
+      ["switch-supervisor-role", "--role", "invalid"],
+    ]) {
+      assert.throws(() => run([
+        "call-control", "--action", ...args, "--call-control-id", "call-1", "--json",
+      ], fake.env));
+    }
+  });
+
+  it("does not reject optional generated fields for AI gather and Conversation Relay", () => {
+    for (const action of ["gather-using-ai", "gather-using-audio", "start-conversation-relay"]) {
+      const fake = setupFakeTelnyx();
+      run(["call-control", "--action", action, "--call-control-id", "call-1", "--json"], fake.env);
+      const invocation = readLoggedArgs(fake.logPath).find((args) =>
+        args[0] === "calls:actions" && args[1] === action);
+      assert.ok(invocation, `should invoke calls:actions ${action}`);
+    }
+  });
+
   it("call-status calls `calls retrieve-status`", () => {
     const fake = setupFakeTelnyx();
     const output = run(["call-status", "--call-control-id", "call-1", "--json"], fake.env);
@@ -324,6 +454,17 @@ describe("Voice API action commands", () => {
     assert.ok(output.includes("call-control"), "help should list call-control");
     assert.ok(output.includes("call-status"), "help should list call-status");
     assert.ok(output.includes("--answering-machine-detection"), "help should document AMD flag");
+    for (const action of [
+      "add-ai-assistant-messages", "gather-using-ai", "gather-using-audio",
+      "gather-using-speak", "join-ai-assistant", "start-ai-assistant",
+      "start-conversation-relay", "stop-ai-assistant", "stop-conversation-relay",
+      "switch-supervisor-role",
+    ]) {
+      assert.ok(output.includes(action), `help should document ${action}`);
+    }
+    assert.ok(output.includes("--assistant-id"), "help should document agent-friendly assistant flags");
+    assert.ok(output.includes("--assistant.id"), "help should document the mapped Go assistant flag");
+    assert.ok(output.includes("raw JSON"), "help should document raw JSON inputs");
   });
 
   it("capabilities lists the voice actions and composite commands", () => {
@@ -334,7 +475,14 @@ describe("Voice API action commands", () => {
     const voice = data.api_capabilities["📞 Voice"] as Array<{ name: string; actions: string[] }>;
     assert.ok(voice, "Voice category should exist");
     const actions = voice[0].actions;
-    for (const a of ["answer_call", "hangup_call", "transfer_call", "send_dtmf", "speak_tts", "bridge_calls", "get_call_status", "deepfake_detection"]) {
+    for (const a of [
+      "answer_call", "hangup_call", "transfer_call", "send_dtmf", "speak_tts",
+      "bridge_calls", "get_call_status", "deepfake_detection",
+      "add_ai_assistant_messages", "gather_using_ai", "gather_using_audio",
+      "gather_using_speak", "join_ai_assistant", "start_ai_assistant",
+      "start_conversation_relay", "stop_ai_assistant", "stop_conversation_relay",
+      "switch_supervisor_role",
+    ]) {
       assert.ok(actions.includes(a), `Voice actions should include ${a}`);
     }
 

@@ -11,7 +11,11 @@
  *   gather, stop-gather, start-playback, stop-playback, start-transcription,
  *   stop-transcription, pause-recording, resume-recording, start-forking,
  *   stop-forking, start-siprec, stop-siprec, start-streaming, stop-streaming,
- *   enqueue, leave-queue, send-sip-info, update-client-state
+ *   enqueue, leave-queue, send-sip-info, update-client-state,
+ *   add-ai-assistant-messages, gather-using-ai, gather-using-audio,
+ *   gather-using-speak, join-ai-assistant, start-ai-assistant,
+ *   start-conversation-relay, stop-ai-assistant, stop-conversation-relay,
+ *   switch-supervisor-role
  */
 
 import { telnyxCli, TelnyxCLIError } from "../telnyx-cli.ts";
@@ -31,11 +35,18 @@ const ACTIONS = [
   "start-streaming", "stop-streaming",
   "enqueue", "leave-queue",
   "send-sip-info", "update-client-state",
+  "add-ai-assistant-messages",
+  "gather-using-ai", "gather-using-audio", "gather-using-speak",
+  "join-ai-assistant", "start-ai-assistant", "start-conversation-relay",
+  "stop-ai-assistant", "stop-conversation-relay", "switch-supervisor-role",
 ] as const;
 type Action = (typeof ACTIONS)[number];
 
 /** Valid causes for the Reject API (required by POST /calls/{id}/actions/reject). */
 const REJECT_CAUSES = ["CALL_REJECTED", "USER_BUSY"] as const;
+
+/** Valid supervisor roles for a bridged call. */
+const SUPERVISOR_ROLES = ["barge", "whisper", "monitor"] as const;
 
 /** E.164: a leading '+' then 1-15 digits, country code must not start with 0. */
 const E164_RE = /^\+[1-9]\d{1,14}$/;
@@ -75,6 +86,10 @@ export async function callControlCommand(flags: Record<string, string | boolean>
   const forkStreamType = flags["fork-stream-type"] as string | undefined;
   // --cause defaults to CALL_REJECTED, the generic rejection cause.
   const cause = (typeof flags.cause === "string" ? flags.cause : undefined) ?? "CALL_REJECTED";
+  // Voice/AI action flags. Rich object and array values remain raw JSON strings and
+  // are handed directly to the Go CLI, which owns their schemas.
+  const conversationId = flags["conversation-id"] as string | undefined;
+  const role = flags.role as string | undefined;
 
   if (!action) {
     printError(`--action is required. Valid actions: ${ACTIONS.join(", ")}`);
@@ -162,6 +177,24 @@ export async function callControlCommand(flags: Record<string, string | boolean>
     printError(`Invalid --cause: ${cause}. Must be one of: ${REJECT_CAUSES.join(", ")}`);
     process.exit(1);
   }
+  if (act === "gather-using-speak" && !payload) {
+    printError("--payload is required for gather-using-speak (text or SSML to synthesize)");
+    process.exit(1);
+  }
+  if (act === "join-ai-assistant" && !conversationId) {
+    printError("--conversation-id is required for join-ai-assistant");
+    process.exit(1);
+  }
+  if (act === "switch-supervisor-role") {
+    if (!role) {
+      printError("--role is required for switch-supervisor-role");
+      process.exit(1);
+    }
+    if (!SUPERVISOR_ROLES.includes(role as (typeof SUPERVISOR_ROLES)[number])) {
+      printError(`Invalid --role: ${role}. Must be one of: ${SUPERVISOR_ROLES.join(", ")}`);
+      process.exit(1);
+    }
+  }
 
   const args = buildActionArgs(act, {
     callControlId,
@@ -186,6 +219,7 @@ export async function callControlCommand(flags: Record<string, string | boolean>
     forkTx,
     forkStreamType,
     cause,
+    flags,
   });
 
   try {
@@ -245,6 +279,7 @@ function buildActionArgs(
     forkTx?: string;
     forkStreamType?: string;
     cause: string;
+    flags: Record<string, string | boolean>;
   },
 ): string[] {
   switch (action) {
@@ -358,7 +393,135 @@ function buildActionArgs(
         "--call-control-id", opts.callControlId,
         "--client-state", opts.clientState!,
       ];
+    case "add-ai-assistant-messages":
+      return actionArgs(action, opts.callControlId, opts.flags, [
+        "client-state", "command-id", "message",
+      ]);
+    case "gather-using-ai":
+      return actionArgs(action, opts.callControlId, opts.flags, [
+        "parameters", "assistant", "client-state", "command-id",
+        "gather-ended-speech", "greeting", "interruption-settings", "language",
+        "message-history", "send-message-history-updates", "send-partial-results",
+        "transcription", "user-response-timeout-ms", "voice", "voice-settings",
+        "assistant.instructions", "assistant.model", "assistant.openai-api-key-ref",
+        "assistant.tools", "interruption-settings.enable", "transcription.language",
+        "transcription.model",
+      ], {
+        "assistant-instructions": "assistant.instructions",
+        "assistant-model": "assistant.model",
+      });
+    case "gather-using-audio":
+      return actionArgs(action, opts.callControlId, opts.flags, [
+        "audio-url", "client-state", "command-id", "inter-digit-timeout-millis",
+        "invalid-audio-url", "invalid-media-name", "maximum-digits", "maximum-tries",
+        "media-name", "minimum-digits", "terminating-digit", "timeout-millis",
+        "valid-digits",
+      ]);
+    case "gather-using-speak":
+      return [
+        "calls:actions", action, "--call-control-id", opts.callControlId,
+        "--payload", opts.payload!,
+        "--voice", typeof opts.flags.voice === "string" ? opts.flags.voice : opts.voice,
+        ...forwardFlags(opts.flags, [
+          "client-state", "command-id", "inter-digit-timeout-millis", "invalid-payload",
+          "language", "maximum-digits", "maximum-tries", "minimum-digits",
+          "payload-type", "service-level", "terminating-digit", "timeout-millis",
+          "valid-digits", "voice-settings",
+        ]),
+      ];
+    case "join-ai-assistant":
+      return actionArgs(action, opts.callControlId, opts.flags, [
+        "conversation-id", "participant", "client-state", "command-id",
+        "participant.id", "participant.role", "participant.name", "participant.on-hangup",
+      ], {
+        "participant-id": "participant.id",
+        "participant-role": "participant.role",
+        "participant-name": "participant.name",
+        "participant-on-hangup": "participant.on-hangup",
+      });
+    case "start-ai-assistant":
+      return actionArgs(action, opts.callControlId, opts.flags, [
+        "assistant", "client-state", "command-id", "greeting", "interruption-settings",
+        "message-history", "participant", "send-message-history-updates",
+        "transcription", "voice", "voice-settings",
+        "assistant.id", "assistant.dynamic-variables", "assistant.external-llm",
+        "assistant.fallback-config", "assistant.greeting", "assistant.instructions",
+        "assistant.llm-api-key-ref", "assistant.mcp-servers", "assistant.model",
+        "assistant.name", "assistant.observability-settings", "assistant.openai-api-key-ref",
+        "assistant.tools", "interruption-settings.enable", "participant.id",
+        "participant.role", "participant.name", "participant.on-hangup",
+        "transcription.language", "transcription.model",
+      ], {
+        "assistant-id": "assistant.id",
+        "assistant-instructions": "assistant.instructions",
+        "assistant-model": "assistant.model",
+      });
+    case "start-conversation-relay":
+      return actionArgs(action, opts.callControlId, opts.flags, [
+        "assistant", "client-state", "command-id", "conversation-relay-dtmf-detection",
+        "conversation-relay-settings", "conversation-relay-url", "custom-parameters",
+        "dtmf-detection", "greeting", "interruptible", "interruptible-greeting",
+        "interruption-settings", "language", "provider", "structured-provider",
+        "transcription", "transcription-engine", "transcription-engine-config", "tts-provider", "url",
+        "voice", "voice-settings", "assistant.dynamic-variables",
+        "conversation-relay-settings.url", "conversation-relay-settings.dtmf-detection",
+        "conversation-relay-settings.interruptible",
+        "conversation-relay-settings.interruptible-greeting",
+        "conversation-relay-settings.languages", "interruption-settings.enable",
+        "interruption-settings.interruptible", "interruption-settings.interruptible-greeting",
+        "interruption-settings.welcome-greeting-interruptible", "language.language",
+        "language.speech-model", "language.transcription-engine",
+        "language.transcription-engine-config", "language.transcription-provider",
+        "language.tts-provider", "language.voice", "language.voice-settings",
+      ], { "assistant-dynamic-variables": "assistant.dynamic-variables" });
+    case "stop-ai-assistant":
+    case "stop-conversation-relay":
+      return actionArgs(action, opts.callControlId, opts.flags, ["client-state", "command-id"]);
+    case "switch-supervisor-role":
+      return actionArgs(action, opts.callControlId, opts.flags, ["role"]);
   }
+}
+
+/** Build an action invocation while preserving JSON flag values byte-for-byte. */
+function actionArgs(
+  action: Action,
+  callControlId: string,
+  flags: Record<string, string | boolean>,
+  names: string[],
+  aliases: Record<string, string> = {},
+): string[] {
+  return [
+    "calls:actions", action, "--call-control-id", callControlId,
+    ...forwardFlags(flags, names),
+    ...forwardMappedFlags(flags, aliases),
+  ];
+}
+
+/** Forward only explicitly supplied flags, using the exact names accepted by the Go CLI. */
+function forwardFlags(flags: Record<string, string | boolean>, names: string[]): string[] {
+  const args: string[] = [];
+  for (const name of names) {
+    const value = flags[name];
+    if (typeof value === "string") args.push(`--${name}`, value);
+    else if (value === true) args.push(`--${name}`);
+  }
+  return args;
+}
+
+/** Map agent-friendly aliases to the corresponding structured Go CLI flag. */
+function forwardMappedFlags(
+  flags: Record<string, string | boolean>,
+  aliases: Record<string, string>,
+): string[] {
+  const args: string[] = [];
+  for (const [alias, goName] of Object.entries(aliases)) {
+    // If both forms are supplied, the exact Go flag takes precedence.
+    if (flags[goName] !== undefined) continue;
+    const value = flags[alias];
+    if (typeof value === "string") args.push(`--${goName}`, value);
+    else if (value === true) args.push(`--${goName}`);
+  }
+  return args;
 }
 
 function errorMsg(err: unknown): string {

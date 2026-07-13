@@ -176,7 +176,11 @@ Voice Call Flags:
                     gather, stop-gather, start-playback, stop-playback, start-transcription,
                     stop-transcription, pause-recording, resume-recording, start-forking,
                     stop-forking, start-siprec, stop-siprec, start-streaming, stop-streaming,
-                    enqueue, leave-queue, send-sip-info, update-client-state
+                    enqueue, leave-queue, send-sip-info, update-client-state,
+                    add-ai-assistant-messages, gather-using-ai, gather-using-audio,
+                    gather-using-speak, join-ai-assistant, start-ai-assistant,
+                    start-conversation-relay, stop-ai-assistant, stop-conversation-relay,
+                    switch-supervisor-role
   --digits           DTMF digits to send (call-control dtmf)
   --payload          Text to synthesize and speak (call-control speak)
   --voice            TTS voice to use (call-control speak, default: female)
@@ -205,6 +209,22 @@ Voice Call Flags:
   --queue-name                   Queue to place the call into (call-control enqueue, required)
   --body                         SIP INFO body content (call-control send-sip-info, required)
   --content-type                 SIP INFO Content-Type header (call-control send-sip-info, required, e.g. application/dtmf-relay)
+  --message                      Raw JSON message array (add-ai-assistant-messages)
+  --parameters                   Raw JSON Schema object (gather-using-ai, required)
+  --assistant                    Raw JSON assistant object (gather/start AI assistant or Conversation Relay)
+  --assistant-id                 Stored assistant ID (maps to Go --assistant.id)
+  --assistant-instructions       Per-call instructions (maps to Go --assistant.instructions)
+  --assistant-model              Per-call model (maps to Go --assistant.model)
+  --message-history              Raw JSON message array (gather/start-ai-assistant)
+  --conversation-id              Existing AI conversation ID (join-ai-assistant, required)
+  --participant                  Raw JSON participant object/array (join/start-ai-assistant)
+  --participant-id               Participant call-control ID (maps to Go --participant.id)
+  --participant-role             Participant role (maps to Go --participant.role)
+  --url                          Conversation Relay WebSocket URL (start-conversation-relay, required)
+  --custom-parameters            Raw JSON key/value object (start-conversation-relay)
+  --role                         Supervisor role: barge|whisper|monitor (switch-supervisor-role)
+  Rich object/array flags are forwarded as raw JSON. Exact Go inner flags such as
+  --assistant.dynamic-variables, --participant.role, and --transcription.model are also supported.
 STT Flags:
   --audio-url <url> URL of the audio file to transcribe (required)
   --model           Transcription model (default: distil-whisper/distil-large-v2; also openai/whisper-large-v3-turbo, deepgram/nova-3)
