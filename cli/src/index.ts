@@ -24,6 +24,7 @@ import { setupWhatsappCommand } from "./commands/setup-whatsapp.ts";
 import { whatsappSendCommand } from "./commands/whatsapp-send.ts";
 import { whatsappTemplatesCommand } from "./commands/whatsapp-templates.ts";
 import { sendSmsCommand } from "./commands/send-sms.ts";
+import { sendFaxCommand } from "./commands/send-fax.ts";
 import { sendGroupMmsCommand } from "./commands/send-group-mms.ts";
 import { scheduleSmsCommand } from "./commands/schedule-sms.ts";
 import { smsStatusCommand } from "./commands/sms-status.ts";
@@ -63,6 +64,7 @@ Commands:
   whatsapp-send     Send a WhatsApp message (text or template)
   whatsapp-templates List or create WhatsApp message templates
   send-sms          Send an SMS or MMS message (--media-url sends MMS)
+  send-fax          Send a fax from a hosted URL or pre-uploaded media
   send-group-mms    Send a group MMS to multiple recipients (--to comma-separated)
   schedule-sms      Schedule an SMS for future delivery (--send-at ISO 8601)
   sms-status        Check SMS delivery status, or cancel a scheduled message (--cancel)
@@ -147,6 +149,23 @@ SMS Action Flags:
   --send-at <iso8601>    Send time, ISO 8601 (schedule-sms — required, e.g., 2024-12-31T00:00:00Z)
   --id <message-id>      Message ID (sms-status — required)
   --cancel               Cancel a scheduled message instead of retrieving status (sms-status)
+
+Fax Action Flags:
+  --connection-id <id>   Fax application connection ID (required)
+  --from <e164>          Sender number in E.164 format (required)
+  --to <e164|sip-uri>    Destination number or SIP URI (required)
+  --media-url <url>      Publicly accessible fax document URL (one document source required)
+  --media-name <name>    File previously uploaded to the Telnyx Media API (one document source required)
+  --quality <value>      normal, high, very_high, ultra_light, or ultra_dark
+  --monochrome [bool]    Produce a true black-and-white fax
+  --black-threshold <n>  Black threshold percentage for monochrome output (0-100)
+  --store-media [bool]   Store fax media on a temporary URL (not supported with --media-name)
+  --store-preview [bool] Store a fax preview on a temporary URL
+  --preview-format <fmt> Preview format: pdf or tiff
+  --t38-enabled [bool]   Enable or disable T.38 (default: true)
+  --from-display-name <name> Caller ID display name
+  --client-state <base64> Base64 state included in fax webhooks
+  --webhook-url <url>    Override the webhook URL for this fax
 
 WhatsApp Flags:
   --waba-id <id>    WhatsApp Business Account id (setup-whatsapp, whatsapp-templates)
@@ -248,6 +267,8 @@ Examples:
   telnyx-agent whatsapp-templates --waba-id <id> --create --name promo --category MARKETING --component '[]'
   telnyx-agent send-sms --from +131****0000 --to +131****0001 --text "Hello!"
   telnyx-agent send-sms --from +131****0000 --to +131****0001 --text "See this" --media-url https://example.com/img.png --subject "Photo"
+  telnyx-agent send-fax --connection-id <id> --from +131****0000 --to +131****0001 --media-url https://example.com/document.pdf
+  telnyx-agent send-fax --connection-id <id> --from +131****0000 --to +131****0001 --media-name uploaded-document.pdf --json
   telnyx-agent send-group-mms --from +131****0000 --to +131****0001,+131****0002,+131****0003 --text "Group hi!"
   telnyx-agent send-group-mms --from +131****0000 --to +131****0001,+131****0002 --media-url https://example.com/cat.png
   telnyx-agent schedule-sms --from +131****0000 --to +131****0001 --text "Later" --send-at 2024-12-31T00:00:00Z
@@ -309,6 +330,7 @@ const COMMANDS: Record<string, (flags: Record<string, string | boolean>) => Prom
   "whatsapp-send": whatsappSendCommand,
   "whatsapp-templates": whatsappTemplatesCommand,
   "send-sms": sendSmsCommand,
+  "send-fax": sendFaxCommand,
   "send-group-mms": sendGroupMmsCommand,
   "schedule-sms": scheduleSmsCommand,
   "sms-status": smsStatusCommand,
