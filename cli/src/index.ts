@@ -32,6 +32,9 @@ import { callControlCommand } from "./commands/call-control.ts";
 import { callStatusCommand } from "./commands/call-status.ts";
 import { sttCommand } from "./commands/stt.ts";
 import { sttProvidersCommand } from "./commands/stt-providers.ts";
+import { aiChatCommand } from "./commands/ai-chat.ts";
+import { aiEmbedCommand } from "./commands/ai-embed.ts";
+import { aiModelsCommand } from "./commands/ai-models.ts";
 import { parseFlags } from "./utils/output.ts";
 
 const HELP = `
@@ -71,6 +74,9 @@ Commands:
   call-status       Get the status of a call by call-control-id
   stt               Transcribe audio to text (speech-to-text)
   stt-providers     List available speech-to-text providers
+  ai-chat           Generate an OpenAI-compatible chat completion
+  ai-embed          Generate OpenAI-compatible text embeddings
+  ai-models         List models available to Telnyx AI inference
 
 Global Flags:
   --json            Output structured JSON instead of human-readable text
@@ -215,6 +221,23 @@ STT-providers Flags:
   --provider        Filter providers by name (optional)
   --service-type    Filter providers by service type (optional)
 
+AI Chat Flags:
+  --message <text>  User message (required unless --messages is provided)
+  --messages <json> JSON array of {role, content} messages
+  --system <text>   System message prepended to --message
+  --model <id>      Inference model (optional; uses the Go CLI default when omitted)
+  --max-tokens <n>  Maximum completion tokens
+  --temperature <n> Sampling temperature (default is controlled by the Go CLI)
+  --top-p <n>       Nucleus sampling probability
+  --seed <n>        Best-effort deterministic sampling seed
+
+AI Embed Flags:
+  --input <text>    Text or JSON array of strings to embed (required)
+  --model <id>      Embedding model ID (required)
+  --dimensions <n>  Output dimensions (supported models only)
+  --encoding-format Embedding encoding format (Go CLI default: float)
+  --user <id>       End-user identifier for monitoring and abuse detection
+
 Environment:
   TELNYX_API_KEY    API key (or configure ~/.config/telnyx/config.json)
 
@@ -284,6 +307,11 @@ Examples:
   telnyx-agent stt --audio-url https://example.com/audio.mp3 --model openai/whisper-large-v3-turbo --language es --json
   telnyx-agent stt-providers --json
   telnyx-agent stt-providers --provider telnyx --service-type transcription --json
+  telnyx-agent ai-chat --message "Explain SIP in one sentence" --json
+  telnyx-agent ai-chat --system "Be concise" --message "What is WebRTC?" --model meta-llama/Meta-Llama-3.1-8B-Instruct
+  telnyx-agent ai-embed --model intfloat/multilingual-e5-large --input "Telnyx makes communications programmable" --json
+  telnyx-agent ai-embed --model intfloat/multilingual-e5-large --input '["first text","second text"]' --json
+  telnyx-agent ai-models --json
 `;
 
 const COMMANDS: Record<string, (flags: Record<string, string | boolean>) => Promise<void>> = {
@@ -317,6 +345,9 @@ const COMMANDS: Record<string, (flags: Record<string, string | boolean>) => Prom
   "call-status": callStatusCommand,
   stt: sttCommand,
   "stt-providers": sttProvidersCommand,
+  "ai-chat": aiChatCommand,
+  "ai-embed": aiEmbedCommand,
+  "ai-models": aiModelsCommand,
 };
 
 export async function run(argv: string[]): Promise<void> {
