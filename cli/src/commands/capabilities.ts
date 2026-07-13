@@ -99,6 +99,7 @@ const COMPOSITE_COMMANDS = [
   { name: "telnyx-agent stt", description: "Transcribe audio to text (speech-to-text) — accepts an audio URL and returns the transcript with optional language, model, and keyword biasing" },
   { name: "telnyx-agent stt", description: "Transcribe audio to text (speech-to-text) — accepts a hosted audio file URL and returns the transcript with optional model and language selection" },
   { name: "telnyx-agent stt-providers", description: "List available speech-to-text providers, optionally filtered by provider name or service type" },
+  { name: "telnyx-agent lookup-number", description: "Retrieve carrier, caller-name, and portability information for a phone number" },
   { name: "telnyx-agent status", description: "Account health overview — balance, numbers, profiles, connections" },
   { name: "telnyx-agent capabilities", description: "This command — lists all available API capabilities" },
   { name: "telnyx-agent call-dial", description: "Make an outbound call via Call Control (AMD, deepfake detection, recording optional)" },
