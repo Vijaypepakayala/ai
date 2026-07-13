@@ -47,7 +47,7 @@ Commands:
   setup-ai          Zero to AI: create assistant, buy number, wire them together
   setup-wireguard   Zero to VPN: create network, WireGuard interface, peer
   setup-verify      Zero to verification: create profile, buy number
-  verify-send       Trigger a phone verification (sms, call, or flashcall)
+  verify-send       Trigger a phone verification (sms, call, flashcall, or whatsapp)
   verify-check      Verify a code or check verification status
   setup-10dlc       Zero to A2P: create brand, campaign, assign number
   setup-porting     Zero to porting: check portability, create order, submit
@@ -86,7 +86,7 @@ Setup-specific Flags:
 Verify Flags:
   --phone-number    E.164 number to verify (verify-send, required)
   --verify-profile-id Verify profile ID (verify-send, required)
-  --method          Verification channel (verify-send, required): sms, call, flashcall
+  --method          Verification channel (verify-send, required): sms, call, flashcall, whatsapp
   --custom-code     Self-generated code to send (verify-send, optional; not used with flashcall)
   --timeout-secs    Verification timeout in seconds (verify-send, optional)
   --extension       Extension for the call leg (verify-send, optional; only with --method call)
@@ -227,6 +227,7 @@ Examples:
   telnyx-agent setup-ai --instructions "You are a pizza ordering bot"
   telnyx-agent setup-porting --phone-numbers +131****0001,+131****0002 --customer-name "Acme Corp"
   telnyx-agent verify-send --phone-number +131****0001 --verify-profile-id prof_xxx --method sms
+  telnyx-agent verify-send --phone-number +131****0001 --verify-profile-id prof_xxx --method whatsapp
   telnyx-agent verify-check --verification-id ver_xxx --code 123456
   telnyx-agent verify-check --verification-id ver_xxx
   telnyx-agent setup-porting --phone-numbers +13125550001,+13125550002 --customer-name "Acme Corp"
