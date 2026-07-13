@@ -99,7 +99,7 @@ Assistant creation is the entrypoint for any AI assistant integration. Agents ne
 | `model` | string | Yes | ID of the model to use. |
 | `instructions` | string | Yes | System instructions for the assistant. |
 | `tools` | array[object] | No | The tools that the assistant can use. |
-| `toolIds` | array[string] | No |  |
+| `tool_ids` | array[string] | No |  |
 | `description` | string | No |  |
 | ... | | | +12 optional params in [references/api-details.md](references/api-details.md) |
 
@@ -130,8 +130,8 @@ Chat is the primary runtime path. Agents need the exact assistant method and the
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `content` | string | Yes | The message content sent by the client to the assistant |
-| `conversationId` | string (UUID) | Yes | A unique identifier for the conversation thread, used to mai... |
-| `assistantId` | string (UUID) | Yes |  |
+| `conversation_id` | string (UUID) | Yes | A unique identifier for the conversation thread, used to mai... |
+| `assistant_id` | string (UUID) | Yes |  |
 | `name` | string | No | The optional display name of the user sending the message |
 
 ```javascript
@@ -159,8 +159,8 @@ Test creation is the main validation path for production assistant behavior befo
 | `instructions` | string | Yes | Detailed instructions that define the test scenario and what... |
 | `rubric` | array[object] | Yes | Evaluation criteria used to assess the assistant's performan... |
 | `description` | string | No | Optional detailed description of what this test evaluates an... |
-| `telnyxConversationChannel` | object | No | The communication channel through which the test will be con... |
-| `maxDurationSeconds` | integer | No | Maximum duration in seconds that the test conversation shoul... |
+| `telnyx_conversation_channel` | object | No | The communication channel through which the test will be con... |
+| `max_duration_seconds` | integer | No | Maximum duration in seconds that the test conversation shoul... |
 | ... | | | +1 optional params in [references/api-details.md](references/api-details.md) |
 
 ```javascript
@@ -200,9 +200,9 @@ Fetch the current state before updating, deleting, or making control-flow decisi
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `assistantId` | string (UUID) | Yes |  |
-| `callControlId` | string (UUID) | No |  |
-| `fetchDynamicVariablesFromWebhook` | boolean | No |  |
+| `assistant_id` | string (UUID) | Yes |  |
+| `call_control_id` | string (UUID) | No |  |
+| `fetch_dynamic_variables_from_webhook` | boolean | No |  |
 | `from` | string (E.164) | No |  |
 | ... | | | +1 optional params in [references/api-details.md](references/api-details.md) |
 
@@ -228,7 +228,7 @@ Create or provision an additional resource when the core tasks do not cover this
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `assistantId` | string (UUID) | Yes |  |
+| `assistant_id` | string (UUID) | Yes |  |
 | `name` | string | No |  |
 | `model` | string | No | ID of the model to use. |
 | `instructions` | string | No | System instructions for the assistant. |
@@ -280,8 +280,8 @@ Import existing assistants from an external provider instead of creating from sc
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `provider` | enum (elevenlabs, vapi, retell) | Yes | The external provider to import assistants from. |
-| `apiKeyRef` | string | Yes | Integration secret pointer that refers to the API key for th... |
-| `importIds` | array[string] | No | Optional list of assistant IDs to import from the external p... |
+| `api_key_ref` | string | Yes | Integration secret pointer that refers to the API key for th... |
+| `import_ids` | array[string] | No | Optional list of assistant IDs to import from the external p... |
 
 ```javascript
 const assistantsList = await client.ai.assistants.imports({
@@ -326,8 +326,8 @@ Inspect available resources or choose an existing resource before mutating it.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `testSuite` | string | No | Filter tests by test suite name |
-| `telnyxConversationChannel` | string | No | Filter tests by communication channel (e.g., 'web_chat', 'sm... |
+| `test_suite` | string | No | Filter tests by test suite name |
+| `telnyx_conversation_channel` | string | No | Filter tests by communication channel (e.g., 'web_chat', 'sm... |
 | `destination` | string | No | Filter tests by destination (phone number, webhook URL, etc.... |
 | ... | | | +1 optional params in [references/api-details.md](references/api-details.md) |
 
@@ -376,8 +376,8 @@ Fetch the current state before updating, deleting, or making control-flow decisi
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `suiteName` | string | Yes |  |
-| `testSuiteRunId` | string (UUID) | No | Filter runs by specific suite execution batch ID |
+| `suite_name` | string | Yes |  |
+| `test_suite_run_id` | string (UUID) | No | Filter runs by specific suite execution batch ID |
 | `status` | string | No | Filter runs by execution status (pending, running, completed... |
 | `page` | object | No | Consolidated page parameter (deepObject style). |
 

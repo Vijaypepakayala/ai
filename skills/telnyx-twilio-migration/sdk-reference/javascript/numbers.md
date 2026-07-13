@@ -97,10 +97,10 @@ Number ordering is the production provisioning step after number selection.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `phoneNumbers` | array[object] | Yes |  |
-| `connectionId` | string (UUID) | No | Identifies the connection associated with this phone number. |
-| `messagingProfileId` | string (UUID) | No | Identifies the messaging profile associated with the phone n... |
-| `billingGroupId` | string (UUID) | No | Identifies the billing group associated with the phone numbe... |
+| `phone_numbers` | array[object] | Yes |  |
+| `connection_id` | string (UUID) | No | Identifies the connection associated with this phone number. |
+| `messaging_profile_id` | string (UUID) | No | Identifies the messaging profile associated with the phone n... |
+| `billing_group_id` | string (UUID) | No | Identifies the billing group associated with the phone numbe... |
 | ... | | | +1 optional params in the API Details section below |
 
 ```javascript
@@ -127,7 +127,7 @@ Order status determines whether provisioning completed or additional requirement
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `numberOrderId` | string (UUID) | Yes | The number order ID. |
+| `number_order_id` | string (UUID) | Yes | The number order ID. |
 
 ```javascript
 const numberOrder = await client.numberOrders.retrieve('550e8400-e29b-41d4-a716-446655440000');
@@ -157,10 +157,10 @@ Create or provision an additional resource when the core tasks do not cover this
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `phoneNumbers` | array[object] | Yes |  |
+| `phone_numbers` | array[object] | Yes |  |
 | `status` | enum (pending, success, failure) | No | The status of the entire reservation. |
 | `id` | string (UUID) | No |  |
-| `recordType` | string | No |  |
+| `record_type` | string | No |  |
 | ... | | | +3 optional params in the API Details section below |
 
 ```javascript
@@ -187,7 +187,7 @@ Fetch the current state before updating, deleting, or making control-flow decisi
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `numberReservationId` | string (UUID) | Yes | The number reservation ID. |
+| `number_reservation_id` | string (UUID) | Yes | The number reservation ID. |
 
 ```javascript
 const numberReservation = await client.numberReservations.retrieve('550e8400-e29b-41d4-a716-446655440000');
@@ -234,9 +234,9 @@ Create or provision an additional resource when the core tasks do not cover this
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `phoneNumberType` | enum (local, mobile, toll_free, shared_cost, national, ...) | No |  |
-| `requirementGroupId` | string (UUID) | No | The ID of the requirement group to associate with this advan... |
-| `countryCode` | string (ISO 3166-1 alpha-2) | No |  |
+| `phone_number_type` | enum (local, mobile, toll_free, shared_cost, national, ...) | No |  |
+| `requirement_group_id` | string (UUID) | No | The ID of the requirement group to associate with this advan... |
+| `country_code` | string (ISO 3166-1 alpha-2) | No |  |
 | ... | | | +5 optional params in the API Details section below |
 
 ```javascript
@@ -262,9 +262,9 @@ Modify an existing resource without recreating it.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `advanced-order-id` | string (UUID) | Yes |  |
-| `phoneNumberType` | enum (local, mobile, toll_free, shared_cost, national, ...) | No |  |
-| `requirementGroupId` | string (UUID) | No | The ID of the requirement group to associate with this advan... |
-| `countryCode` | string (ISO 3166-1 alpha-2) | No |  |
+| `phone_number_type` | enum (local, mobile, toll_free, shared_cost, national, ...) | No |  |
+| `requirement_group_id` | string (UUID) | No | The ID of the requirement group to associate with this advan... |
+| `country_code` | string (ISO 3166-1 alpha-2) | No |  |
 | ... | | | +5 optional params in the API Details section below |
 
 ```javascript
@@ -291,7 +291,7 @@ Fetch the current state before updating, deleting, or making control-flow decisi
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `orderId` | string (UUID) | Yes |  |
+| `order_id` | string (UUID) | Yes |  |
 
 ```javascript
 const advancedOrder = await client.advancedOrders.retrieve('182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e');

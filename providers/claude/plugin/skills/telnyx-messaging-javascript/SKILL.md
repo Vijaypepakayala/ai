@@ -96,9 +96,9 @@ Primary outbound messaging flow. Agents need exact request fields and delivery-r
 | `to` | string (E.164) | Yes | Receiving address (+E.164 formatted phone number or short co... |
 | `from` | string (E.164) | Yes | Sending address (+E.164 formatted phone number, alphanumeric... |
 | `text` | string | Yes | Message body (i.e., content) as a non-empty string. |
-| `messagingProfileId` | string (UUID) | No | Unique identifier for a messaging profile. |
-| `mediaUrls` | array[string] | No | A list of media URLs. |
-| `webhookUrl` | string (URL) | No | The URL where webhooks related to this message will be sent. |
+| `messaging_profile_id` | string (UUID) | No | Unique identifier for a messaging profile. |
+| `media_urls` | array[string] | No | A list of media URLs. |
+| `webhook_url` | string (URL) | No | The URL where webhooks related to this message will be sent. |
 | ... | | | +7 optional params in [references/api-details.md](references/api-details.md) |
 
 ```javascript
@@ -130,10 +130,10 @@ Common sender variant that requires different request shape.
 | `from` | string (E.164) | Yes | A valid alphanumeric sender ID on the user's account. |
 | `to` | string (E.164) | Yes | Receiving address (+E.164 formatted phone number or short co... |
 | `text` | string | Yes | The message body. |
-| `messagingProfileId` | string (UUID) | Yes | The messaging profile ID to use. |
-| `webhookUrl` | string (URL) | No | Callback URL for delivery status updates. |
-| `webhookFailoverUrl` | string (URL) | No | Failover callback URL for delivery status updates. |
-| `useProfileWebhooks` | boolean | No | If true, use the messaging profile's webhook settings. |
+| `messaging_profile_id` | string (UUID) | Yes | The messaging profile ID to use. |
+| `webhook_url` | string (URL) | No | Callback URL for delivery status updates. |
+| `webhook_failover_url` | string (URL) | No | Failover callback URL for delivery status updates. |
+| `use_profile_webhooks` | boolean | No | If true, use the messaging profile's webhook settings. |
 
 ```javascript
 const response = await client.messages.sendWithAlphanumericSender({
@@ -226,9 +226,9 @@ Send one MMS payload to multiple recipients.
 |-----------|------|----------|-------------|
 | `from` | string (E.164) | Yes | Phone number, in +E.164 format, used to send the message. |
 | `to` | array[object] | Yes | A list of destinations. |
-| `mediaUrls` | array[string] | No | A list of media URLs. |
-| `webhookUrl` | string (URL) | No | The URL where webhooks related to this message will be sent. |
-| `webhookFailoverUrl` | string (URL) | No | The failover URL where webhooks related to this message will... |
+| `media_urls` | array[string] | No | A list of media URLs. |
+| `webhook_url` | string (URL) | No | The URL where webhooks related to this message will be sent. |
+| `webhook_failover_url` | string (URL) | No | The failover URL where webhooks related to this message will... |
 | ... | | | +3 optional params in [references/api-details.md](references/api-details.md) |
 
 ```javascript
@@ -259,9 +259,9 @@ Force a long-code sending path instead of the generic send endpoint.
 |-----------|------|----------|-------------|
 | `from` | string (E.164) | Yes | Phone number, in +E.164 format, used to send the message. |
 | `to` | string (E.164) | Yes | Receiving address (+E.164 formatted phone number or short co... |
-| `mediaUrls` | array[string] | No | A list of media URLs. |
-| `webhookUrl` | string (URL) | No | The URL where webhooks related to this message will be sent. |
-| `webhookFailoverUrl` | string (URL) | No | The failover URL where webhooks related to this message will... |
+| `media_urls` | array[string] | No | A list of media URLs. |
+| `webhook_url` | string (URL) | No | The URL where webhooks related to this message will be sent. |
+| `webhook_failover_url` | string (URL) | No | The failover URL where webhooks related to this message will... |
 | ... | | | +6 optional params in [references/api-details.md](references/api-details.md) |
 
 ```javascript
@@ -289,11 +289,11 @@ Let a messaging profile or number pool choose the sender for you.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `messagingProfileId` | string (UUID) | Yes | Unique identifier for a messaging profile. |
+| `messaging_profile_id` | string (UUID) | Yes | Unique identifier for a messaging profile. |
 | `to` | string (E.164) | Yes | Receiving address (+E.164 formatted phone number or short co... |
-| `mediaUrls` | array[string] | No | A list of media URLs. |
-| `webhookUrl` | string (URL) | No | The URL where webhooks related to this message will be sent. |
-| `webhookFailoverUrl` | string (URL) | No | The failover URL where webhooks related to this message will... |
+| `media_urls` | array[string] | No | A list of media URLs. |
+| `webhook_url` | string (URL) | No | The URL where webhooks related to this message will be sent. |
+| `webhook_failover_url` | string (URL) | No | The failover URL where webhooks related to this message will... |
 | ... | | | +6 optional params in [references/api-details.md](references/api-details.md) |
 
 ```javascript
@@ -324,9 +324,9 @@ Force a short-code sending path when the sender must be a short code.
 |-----------|------|----------|-------------|
 | `from` | string (E.164) | Yes | Phone number, in +E.164 format, used to send the message. |
 | `to` | string (E.164) | Yes | Receiving address (+E.164 formatted phone number or short co... |
-| `mediaUrls` | array[string] | No | A list of media URLs. |
-| `webhookUrl` | string (URL) | No | The URL where webhooks related to this message will be sent. |
-| `webhookFailoverUrl` | string (URL) | No | The failover URL where webhooks related to this message will... |
+| `media_urls` | array[string] | No | A list of media URLs. |
+| `webhook_url` | string (URL) | No | The URL where webhooks related to this message will be sent. |
+| `webhook_failover_url` | string (URL) | No | The failover URL where webhooks related to this message will... |
 | ... | | | +6 optional params in [references/api-details.md](references/api-details.md) |
 
 ```javascript
@@ -355,9 +355,9 @@ Queue a message for future delivery instead of sending immediately.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `to` | string (E.164) | Yes | Receiving address (+E.164 formatted phone number or short co... |
-| `messagingProfileId` | string (UUID) | No | Unique identifier for a messaging profile. |
-| `mediaUrls` | array[string] | No | A list of media URLs. |
-| `webhookUrl` | string (URL) | No | The URL where webhooks related to this message will be sent. |
+| `messaging_profile_id` | string (UUID) | No | Unique identifier for a messaging profile. |
+| `media_urls` | array[string] | No | A list of media URLs. |
+| `webhook_url` | string (URL) | No | The URL where webhooks related to this message will be sent. |
 | ... | | | +8 optional params in [references/api-details.md](references/api-details.md) |
 
 ```javascript
@@ -389,9 +389,9 @@ Send WhatsApp traffic instead of SMS/MMS.
 |-----------|------|----------|-------------|
 | `from` | string (E.164) | Yes | Phone number in +E.164 format associated with Whatsapp accou... |
 | `to` | string (E.164) | Yes | Phone number in +E.164 format |
-| `whatsappMessage` | object | Yes |  |
+| `whatsapp_message` | object | Yes |  |
 | `type` | enum (WHATSAPP) | No | Message type - must be set to "WHATSAPP" |
-| `webhookUrl` | string (URL) | No | The URL where webhooks related to this message will be sent. |
+| `webhook_url` | string (URL) | No | The URL where webhooks related to this message will be sent. |
 
 ```javascript
 const response = await client.messages.sendWhatsapp({

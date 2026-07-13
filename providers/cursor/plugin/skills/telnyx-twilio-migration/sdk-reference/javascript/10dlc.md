@@ -81,14 +81,14 @@ Brand registration is the entrypoint for any US A2P 10DLC campaign flow.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `entityType` | object | Yes | Entity type behind the brand. |
-| `displayName` | string | Yes | Display name, marketing name, or DBA name of the brand. |
+| `entity_type` | object | Yes | Entity type behind the brand. |
+| `display_name` | string | Yes | Display name, marketing name, or DBA name of the brand. |
 | `country` | string | Yes | ISO2 2 characters country code. |
 | `email` | string | Yes | Valid email address of brand support contact. |
 | `vertical` | object | Yes | Vertical or industry segment of the brand. |
-| `companyName` | string | No | (Required for Non-profit/private/public) Legal company name. |
-| `firstName` | string | No | First name of business contact. |
-| `lastName` | string | No | Last name of business contact. |
+| `company_name` | string | No | (Required for Non-profit/private/public) Legal company name. |
+| `first_name` | string | No | First name of business contact. |
+| `last_name` | string | No | Last name of business contact. |
 | ... | | | +16 optional params in the API Details section below |
 
 ```javascript
@@ -119,12 +119,12 @@ Campaign submission is the compliance-critical step that determines whether traf
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `brandId` | string (UUID) | Yes | Alphanumeric identifier of the brand associated with this ca... |
+| `brand_id` | string (UUID) | Yes | Alphanumeric identifier of the brand associated with this ca... |
 | `description` | string | Yes | Summary description of this campaign. |
 | `usecase` | string | Yes | Campaign usecase. |
-| `ageGated` | boolean | No | Age gated message content in campaign. |
-| `autoRenewal` | boolean | No | Campaign subscription auto-renewal option. |
-| `directLending` | boolean | No | Direct lending or loan arrangement |
+| `age_gated` | boolean | No | Age gated message content in campaign. |
+| `auto_renewal` | boolean | No | Campaign subscription auto-renewal option. |
+| `direct_lending` | boolean | No | Direct lending or loan arrangement |
 | ... | | | +29 optional params in the API Details section below |
 
 ```javascript
@@ -154,9 +154,9 @@ Messaging profile assignment is the practical handoff from registration to send-
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `messagingProfileId` | string (UUID) | Yes | The ID of the messaging profile that you want to link to the... |
-| `campaignId` | string (UUID) | Yes | The ID of the campaign you want to link to the specified mes... |
-| `tcrCampaignId` | string (UUID) | No | The TCR ID of the shared campaign you want to link to the sp... |
+| `messaging_profile_id` | string (UUID) | Yes | The ID of the messaging profile that you want to link to the... |
+| `campaign_id` | string (UUID) | Yes | The ID of the campaign you want to link to the specified mes... |
+| `tcr_campaign_id` | string (UUID) | No | The TCR ID of the shared campaign you want to link to the sp... |
 
 ```javascript
 const response = await client.messaging10dlc.phoneNumberAssignmentByProfile.assign({
@@ -230,7 +230,7 @@ Inspect the current state of an existing brand registration.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `brandId` | string (UUID) | Yes |  |
+| `brand_id` | string (UUID) | Yes |  |
 
 ```javascript
 const brand = await client.messaging10dlc.brand.retrieve('BXXX001');
@@ -255,7 +255,7 @@ Fetch the current state before updating, deleting, or making control-flow decisi
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `usecase` | string | Yes |  |
-| `brandId` | string (UUID) | Yes |  |
+| `brand_id` | string (UUID) | Yes |  |
 
 ```javascript
 const response = await client.messaging10dlc.campaignBuilder.brand.qualifyByUsecase('usecase', {
@@ -281,8 +281,8 @@ Create or provision an additional resource when the core tasks do not cover this
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `phoneNumber` | string (E.164) | Yes | The phone number you want to link to a specified campaign. |
-| `campaignId` | string (UUID) | Yes | The ID of the campaign you want to link to the specified pho... |
+| `phone_number` | string (E.164) | Yes | The phone number you want to link to a specified campaign. |
+| `campaign_id` | string (UUID) | Yes | The ID of the campaign you want to link to the specified pho... |
 
 ```javascript
 const phoneNumberCampaign = await client.messaging10dlc.phoneNumberCampaigns.create({
@@ -309,7 +309,7 @@ Inspect the current state of an existing campaign registration.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `campaignId` | string (UUID) | Yes |  |
+| `campaign_id` | string (UUID) | Yes |  |
 
 ```javascript
 const telnyxCampaignCsp = await client.messaging10dlc.campaign.retrieve('CXXX001');
@@ -335,7 +335,7 @@ Inspect available resources or choose an existing resource before mutating it.
 |-----------|------|----------|-------------|
 | `sort` | enum (assignedCampaignsCount, -assignedCampaignsCount, brandId, -brandId, createdAt, ...) | No | Specifies the sort order for results. |
 | `page` | integer | No |  |
-| `recordsPerPage` | integer | No | number of records per page. |
+| `records_per_page` | integer | No | number of records per page. |
 | ... | | | +6 optional params in the API Details section below |
 
 ```javascript
@@ -358,7 +358,7 @@ Fetch the current state before updating, deleting, or making control-flow decisi
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `brandId` | string (UUID) | Yes |  |
+| `brand_id` | string (UUID) | Yes |  |
 
 ```javascript
 const response = await client.messaging10dlc.brand.getFeedback('BXXX001');

@@ -334,123 +334,123 @@
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `companyName` | string | (Required for Non-profit/private/public) Legal company name. |
-| `firstName` | string | First name of business contact. |
-| `lastName` | string | Last name of business contact. |
+| `company_name` | string | (Required for Non-profit/private/public) Legal company name. |
+| `first_name` | string | First name of business contact. |
+| `last_name` | string | Last name of business contact. |
 | `ein` | string | (Required for Non-profit) Government assigned corporate tax ID. |
 | `phone` | string | Valid phone number in e.164 international format. |
 | `street` | string | Street number and name. |
 | `city` | string | City name |
 | `state` | string | State. |
-| `postalCode` | string | Postal codes. |
-| `stockSymbol` | string | (Required for public company) stock symbol. |
-| `stockExchange` | object | (Required for public company) stock exchange. |
-| `ipAddress` | string (IPv4/IPv6) | IP address of the browser requesting to create brand identity. |
+| `postal_code` | string | Postal codes. |
+| `stock_symbol` | string | (Required for public company) stock symbol. |
+| `stock_exchange` | object | (Required for public company) stock exchange. |
+| `ip_address` | string (IPv4/IPv6) | IP address of the browser requesting to create brand identity. |
 | `website` | string | Brand website URL. |
-| `isReseller` | boolean |  |
+| `is_reseller` | boolean |  |
 | `mock` | boolean | Mock brand for testing purposes. |
-| `mobilePhone` | string | Valid mobile phone number in e.164 international format. |
-| `businessContactEmail` | string | Business contact email. |
-| `webhookURL` | string | Webhook URL for brand status updates. |
-| `webhookFailoverURL` | string | Webhook failover URL for brand status updates. |
+| `mobile_phone` | string | Valid mobile phone number in e.164 international format. |
+| `business_contact_email` | string | Business contact email. |
+| `webhook_url` | string | Webhook URL for brand status updates. |
+| `webhook_failover_url` | string | Webhook failover URL for brand status updates. |
 
 ### Update Brand — `client.messaging10dlc.brand.update()`
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `companyName` | string | (Required for Non-profit/private/public) Legal company name. |
-| `firstName` | string | First name of business contact. |
-| `lastName` | string | Last name of business contact. |
+| `company_name` | string | (Required for Non-profit/private/public) Legal company name. |
+| `first_name` | string | First name of business contact. |
+| `last_name` | string | Last name of business contact. |
 | `ein` | string | (Required for Non-profit) Government assigned corporate tax ID. |
 | `phone` | string | Valid phone number in e.164 international format. |
 | `street` | string | Street number and name. |
 | `city` | string | City name |
 | `state` | string | State. |
-| `postalCode` | string | Postal codes. |
-| `stockSymbol` | string | (Required for public company) stock symbol. |
-| `stockExchange` | object | (Required for public company) stock exchange. |
-| `ipAddress` | string (IPv4/IPv6) | IP address of the browser requesting to create brand identity. |
+| `postal_code` | string | Postal codes. |
+| `stock_symbol` | string | (Required for public company) stock symbol. |
+| `stock_exchange` | object | (Required for public company) stock exchange. |
+| `ip_address` | string (IPv4/IPv6) | IP address of the browser requesting to create brand identity. |
 | `website` | string | Brand website URL. |
-| `altBusinessIdType` | enum (NONE, DUNS, GIIN, LEI) | An enumeration. |
-| `isReseller` | boolean |  |
-| `identityStatus` | enum (VERIFIED, UNVERIFIED, SELF_DECLARED, VETTED_VERIFIED) | The verification status of an active brand |
-| `businessContactEmail` | string | Business contact email. |
-| `webhookURL` | string | Webhook URL for brand status updates. |
-| `webhookFailoverURL` | string | Webhook failover URL for brand status updates. |
-| `altBusinessId` | string (UUID) | Alternate business identifier such as DUNS, LEI, or GIIN |
+| `alt_business_id_type` | enum (NONE, DUNS, GIIN, LEI) | An enumeration. |
+| `is_reseller` | boolean |  |
+| `identity_status` | enum (VERIFIED, UNVERIFIED, SELF_DECLARED, VETTED_VERIFIED) | The verification status of an active brand |
+| `business_contact_email` | string | Business contact email. |
+| `webhook_url` | string | Webhook URL for brand status updates. |
+| `webhook_failover_url` | string | Webhook failover URL for brand status updates. |
+| `alt_business_id` | string (UUID) | Alternate business identifier such as DUNS, LEI, or GIIN |
 
 ### Import External Vetting Record — `client.messaging10dlc.brand.externalVetting.imports()`
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `vettingToken` | string | Required by some providers for vetting record confirmation. |
+| `vetting_token` | string | Required by some providers for vetting record confirmation. |
 
 ### Update campaign — `client.messaging10dlc.campaign.update()`
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `resellerId` | string (UUID) | Alphanumeric identifier of the reseller that you want to associate with this ... |
+| `reseller_id` | string (UUID) | Alphanumeric identifier of the reseller that you want to associate with this ... |
 | `sample1` | string | Message sample. |
 | `sample2` | string | Message sample. |
 | `sample3` | string | Message sample. |
 | `sample4` | string | Message sample. |
 | `sample5` | string | Message sample. |
-| `messageFlow` | string | Message flow description. |
-| `helpMessage` | string | Help message of the campaign. |
-| `autoRenewal` | boolean | Help message of the campaign. |
-| `webhookURL` | string | Webhook to which campaign status updates are sent. |
-| `webhookFailoverURL` | string | Webhook failover to which campaign status updates are sent. |
+| `message_flow` | string | Message flow description. |
+| `help_message` | string | Help message of the campaign. |
+| `auto_renewal` | boolean | Help message of the campaign. |
+| `webhook_url` | string | Webhook to which campaign status updates are sent. |
+| `webhook_failover_url` | string | Webhook failover to which campaign status updates are sent. |
 
 ### Submit Campaign — `client.messaging10dlc.campaignBuilder.submit()`
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `ageGated` | boolean | Age gated message content in campaign. |
-| `autoRenewal` | boolean | Campaign subscription auto-renewal option. |
-| `directLending` | boolean | Direct lending or loan arrangement |
-| `embeddedLink` | boolean | Does message generated by the campaign include URL link in SMS? |
-| `embeddedPhone` | boolean | Does message generated by the campaign include phone number in SMS? |
-| `helpKeywords` | string | Subscriber help keywords. |
-| `helpMessage` | string | Help message of the campaign. |
-| `messageFlow` | string | Message flow description. |
-| `mnoIds` | array[integer] | Submit campaign to given list of MNOs by MNO's network ID. |
-| `numberPool` | boolean | Does campaign utilize pool of phone numbers? |
-| `optinKeywords` | string | Subscriber opt-in keywords. |
-| `optinMessage` | string | Subscriber opt-in message. |
-| `optoutKeywords` | string | Subscriber opt-out keywords. |
-| `optoutMessage` | string | Subscriber opt-out message. |
-| `referenceId` | string (UUID) | Caller supplied campaign reference ID. |
-| `resellerId` | string (UUID) | Alphanumeric identifier of the reseller that you want to associate with this ... |
+| `age_gated` | boolean | Age gated message content in campaign. |
+| `auto_renewal` | boolean | Campaign subscription auto-renewal option. |
+| `direct_lending` | boolean | Direct lending or loan arrangement |
+| `embedded_link` | boolean | Does message generated by the campaign include URL link in SMS? |
+| `embedded_phone` | boolean | Does message generated by the campaign include phone number in SMS? |
+| `help_keywords` | string | Subscriber help keywords. |
+| `help_message` | string | Help message of the campaign. |
+| `message_flow` | string | Message flow description. |
+| `mno_ids` | array[integer] | Submit campaign to given list of MNOs by MNO's network ID. |
+| `number_pool` | boolean | Does campaign utilize pool of phone numbers? |
+| `optin_keywords` | string | Subscriber opt-in keywords. |
+| `optin_message` | string | Subscriber opt-in message. |
+| `optout_keywords` | string | Subscriber opt-out keywords. |
+| `optout_message` | string | Subscriber opt-out message. |
+| `reference_id` | string (UUID) | Caller supplied campaign reference ID. |
+| `reseller_id` | string (UUID) | Alphanumeric identifier of the reseller that you want to associate with this ... |
 | `sample1` | string | Message sample. |
 | `sample2` | string | Message sample. |
 | `sample3` | string | Message sample. |
 | `sample4` | string | Message sample. |
 | `sample5` | string | Message sample. |
-| `subUsecases` | array[string] | Campaign sub-usecases. |
-| `subscriberHelp` | boolean | Does campaign responds to help keyword(s)? |
-| `subscriberOptin` | boolean | Does campaign require subscriber to opt-in before SMS is sent to subscriber? |
-| `subscriberOptout` | boolean | Does campaign support subscriber opt-out keyword(s)? |
+| `sub_usecases` | array[string] | Campaign sub-usecases. |
+| `subscriber_help` | boolean | Does campaign responds to help keyword(s)? |
+| `subscriber_optin` | boolean | Does campaign require subscriber to opt-in before SMS is sent to subscriber? |
+| `subscriber_optout` | boolean | Does campaign support subscriber opt-out keyword(s)? |
 | `tag` | array[string] | Tags to be set on the Campaign. |
-| `termsAndConditions` | boolean | Is terms and conditions accepted? |
-| `privacyPolicyLink` | string | Link to the campaign's privacy policy. |
-| `termsAndConditionsLink` | string | Link to the campaign's terms and conditions. |
-| `embeddedLinkSample` | string | Sample of an embedded link that will be sent to subscribers. |
-| `webhookURL` | string | Webhook to which campaign status updates are sent. |
-| `webhookFailoverURL` | string | Failover webhook to which campaign status updates are sent. |
+| `terms_and_conditions` | boolean | Is terms and conditions accepted? |
+| `privacy_policy_link` | string | Link to the campaign's privacy policy. |
+| `terms_and_conditions_link` | string | Link to the campaign's terms and conditions. |
+| `embedded_link_sample` | string | Sample of an embedded link that will be sent to subscribers. |
+| `webhook_url` | string | Webhook to which campaign status updates are sent. |
+| `webhook_failover_url` | string | Failover webhook to which campaign status updates are sent. |
 
 ### Update Single Shared Campaign — `client.messaging10dlc.partnerCampaigns.update()`
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `webhookURL` | string | Webhook to which campaign status updates are sent. |
-| `webhookFailoverURL` | string | Webhook failover to which campaign status updates are sent. |
+| `webhook_url` | string | Webhook to which campaign status updates are sent. |
+| `webhook_failover_url` | string | Webhook failover to which campaign status updates are sent. |
 
 ### Assign Messaging Profile To Campaign — `client.messaging10dlc.phoneNumberAssignmentByProfile.assign()`
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `tcrCampaignId` | string (UUID) | The TCR ID of the shared campaign you want to link to the specified messaging... |
-| `campaignId` | string (UUID) | The ID of the campaign you want to link to the specified messaging profile. |
+| `tcr_campaign_id` | string (UUID) | The TCR ID of the shared campaign you want to link to the specified messaging... |
+| `campaign_id` | string (UUID) | The ID of the campaign you want to link to the specified messaging profile. |
 
 ## Webhook Payload Fields
 
