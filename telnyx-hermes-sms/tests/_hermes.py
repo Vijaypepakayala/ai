@@ -64,8 +64,9 @@ def ensure_hermes_on_path() -> Path:
         pytest.skip(
             "Hermes Agent checkout not found. Set HERMES_AGENT_ROOT to the "
             "hermes-agent checkout (or its parent Hermes home), set HERMES_HOME "
-            "to the Hermes home directory, or clone Hermes to "
-            "~/.hermes/hermes-agent before running runtime/live tests.",
+            "to the Hermes home directory, or clone Hermes with "
+            "`git clone https://github.com/NousResearch/hermes-agent.git "
+            "$HOME/.hermes/hermes-agent` before running runtime/live tests.",
             allow_module_level=True,
         )
     if str(hermes_root) not in sys.path:

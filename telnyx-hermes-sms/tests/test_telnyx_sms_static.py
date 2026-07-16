@@ -89,10 +89,13 @@ def test_readme_documents_hermes_checkout_contract():
     assert 'Choose the path that matches your goal' in readme
     assert 'You do not need a local Hermes source\ncheckout just to install and enable the plugin' in readme
     assert "you do need a local\n`hermes-agent` checkout because the runtime and plugin-loading tests import" in readme
-    assert 'Set `HERMES_AGENT_ROOT` to the checkout itself, or set `HERMES_HOME`' in readme
+    assert '`HERMES_AGENT_ROOT` is only a locator; it does not replace the checkout' in readme
     assert 'Hermes checkout contract:' in readme
     assert 'not just the Hermes data directory such as `~/.hermes`' in readme
     assert 'export HERMES_AGENT_ROOT="$HOME/.hermes/hermes-agent"' in readme
+    assert 'git clone https://github.com/NousResearch/hermes-agent.git "$HOME/.hermes/hermes-agent"' in readme
+    assert 'the environment variable does not' in readme
+    assert 'bootstrap or download Hermes for you' in readme
     assert 'test -d "$HERMES_AGENT_ROOT/gateway" -a -f "$HERMES_AGENT_ROOT/pyproject.toml"' in readme
     assert 'or just: export HERMES_AGENT_ROOT="$HERMES_HOME"' in readme
     assert 'Hermes-dependent test modules skip with an explicit setup message' in readme
@@ -106,6 +109,7 @@ def test_hermes_bootstrap_defers_annotation_evaluation():
     bootstrap = (ROOT / 'tests' / '_hermes.py').read_text()
     assert bootstrap.startswith('from __future__ import annotations')
     assert 'Hermes-dependent tests require Python 3.10+' in bootstrap
+    assert 'git clone https://github.com/NousResearch/hermes-agent.git ' in bootstrap
 
 
 def test_readme_and_bootstrap_script_document_download_first_install_path():

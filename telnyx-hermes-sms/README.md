@@ -53,9 +53,10 @@ Requirements:
 - Python 3.10+; Python 3.12 is recommended because local Hermes checkouts may
   use modern typing syntax.
 - A local Hermes Agent checkout for tests that import `gateway.*` modules.
-  Set `HERMES_AGENT_ROOT` to the checkout itself, or set `HERMES_HOME` / point
-  `HERMES_AGENT_ROOT` at the parent Hermes home directory when the checkout
-  lives at `.../hermes-agent`.
+  `HERMES_AGENT_ROOT` is only a locator; it does not replace the checkout.
+  Point it at the checkout itself, or set `HERMES_HOME` / point
+  `HERMES_AGENT_ROOT` at the parent Hermes home directory when that directory
+  already contains a `hermes-agent/` repo checkout.
 - `uv` is recommended for reproducible local test dependencies.
 
 Hermes checkout contract:
@@ -67,6 +68,18 @@ Hermes checkout contract:
 - If you prefer to point at the parent Hermes home directory, use
   `export HERMES_HOME="$HOME/.hermes"` and either leave
   `HERMES_AGENT_ROOT` unset or set `export HERMES_AGENT_ROOT="$HERMES_HOME"`.
+- If `~/.hermes/hermes-agent` does not exist yet, create it first:
+
+```bash
+mkdir -p "$HOME/.hermes"
+git clone https://github.com/NousResearch/hermes-agent.git "$HOME/.hermes/hermes-agent"
+export HERMES_HOME="$HOME/.hermes"
+export HERMES_AGENT_ROOT="$HERMES_HOME/hermes-agent"
+```
+
+- Setting `HERMES_AGENT_ROOT="$HOME/.hermes"` only works when that parent
+  directory already contains `hermes-agent/`; the environment variable does not
+  bootstrap or download Hermes for you.
 - A quick sanity check is:
 
 ```bash
