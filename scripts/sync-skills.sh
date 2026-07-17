@@ -4,8 +4,9 @@
 # Claude Code: multi-plugin structure under providers/claude/plugins/<plugin-name>/skills/
 # Cursor: flat structure under providers/cursor/plugin/skills/
 #
-# Plugin groupings are defined by prefix patterns in this script.
-# To add a new product plugin, add it to the PLUGIN_PATTERNS array.
+# Plugin groupings are defined by prefix patterns in scripts/plugin-patterns.sh
+# (shared with check-skills-sync.sh). To add a new product plugin, add it to
+# the PLUGIN_PATTERNS array there.
 
 set -euo pipefail
 
@@ -13,20 +14,8 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SKILLS_SRC="$REPO_ROOT/skills"
 
 # ── Plugin groupings ────────────────────────────────────────────────────────
-# Format: "plugin_name|prefix1,prefix2,...|catch_all_flag"
-# catch_all_flag=1 means this plugin gets all skills not matched by other plugins
-PLUGIN_PATTERNS=(
-  "telnyx-whatsapp|telnyx-whatsapp-|0"
-  "telnyx-voice|telnyx-voice-,telnyx-ai-outbound-voice|0"
-  "telnyx-messaging|telnyx-messaging-|0"
-  "telnyx-tts|telnyx-tts-|0"
-  "telnyx-stt|telnyx-stt-|0"
-  "telnyx-verify|telnyx-verify-|0"
-  "telnyx-ai|telnyx-ai-assistants-,telnyx-ai-inference-|0"
-  "telnyx-numbers|telnyx-numbers-,telnyx-10dlc-,telnyx-porting-|0"
-  "telnyx-webrtc|telnyx-webrtc-,telnyx-video-|0"
-  "telnyx-platform||1"
-)
+# PLUGIN_PATTERNS is shared with check-skills-sync.sh via plugin-patterns.sh.
+source "$REPO_ROOT/scripts/plugin-patterns.sh"
 
 # ── Claude Code: multi-plugin sync ──────────────────────────────────────────
 CLAUDE_PLUGINS="$REPO_ROOT/providers/claude/plugins"

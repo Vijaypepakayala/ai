@@ -30,17 +30,25 @@ if [ -n "$deep" ]; then
 fi
 
 # ── Claude Code: modular plugins layout ─────────────────────────────────────
+# Plugin groupings shared with sync-skills.sh.
+source "$REPO_ROOT/scripts/plugin-patterns.sh"
+
 CLAUDE_PLUGINS="$REPO_ROOT/providers/claude/plugins"
 if [ ! -d "$CLAUDE_PLUGINS" ]; then
   echo "WARNING: $CLAUDE_PLUGINS does not exist"
 else
-  # Every provider copy must byte-match its canonical source, and no copy may
-  # exist without a canonical source.
+  # Every provider copy must byte-match its canonical source, exist under the
+  # plugin PLUGIN_PATTERNS assigns it to, and have a canonical source.
   while IFS= read -r skill_copy; do
     skill_name="$(basename "$skill_copy")"
+    plugin_name="$(basename "$(dirname "$(dirname "$skill_copy")")")"
     plugin_rel="${skill_copy#"$REPO_ROOT"/}"
+    expected_plugin="$(claude_plugin_for "$skill_name")"
     if [ ! -d "$SKILLS_SRC/$skill_name" ]; then
       echo "Out of sync (no canonical source): $plugin_rel"
+      out_of_sync=true
+    elif [ "$plugin_name" != "$expected_plugin" ]; then
+      echo "Wrong plugin (expected $expected_plugin): $plugin_rel"
       out_of_sync=true
     elif ! diff -r "$SKILLS_SRC/$skill_name" "$skill_copy" > /dev/null 2>&1; then
       echo "Out of sync: $plugin_rel"
@@ -48,16 +56,13 @@ else
     fi
   done < <(find "$CLAUDE_PLUGINS" -mindepth 3 -maxdepth 3 -type d -path "*/skills/*")
 
-  # Every canonical skill must appear exactly once across the Claude plugins.
+  # Every canonical skill must be present in its assigned plugin.
   for skill_dir in "$SKILLS_SRC"/*/; do
     [ -d "$skill_dir" ] || continue
     skill_name="$(basename "$skill_dir")"
-    count=$(find "$CLAUDE_PLUGINS" -mindepth 3 -maxdepth 3 -type d -path "*/skills/$skill_name" | wc -l | tr -d ' ')
-    if [ "$count" -eq 0 ]; then
-      echo "Missing from Claude plugins: $skill_name"
-      out_of_sync=true
-    elif [ "$count" -gt 1 ]; then
-      echo "Duplicated across Claude plugins ($count copies): $skill_name"
+    expected_plugin="$(claude_plugin_for "$skill_name")"
+    if [ ! -d "$CLAUDE_PLUGINS/$expected_plugin/skills/$skill_name" ]; then
+      echo "Missing from Claude plugin $expected_plugin: $skill_name"
       out_of_sync=true
     fi
   done
