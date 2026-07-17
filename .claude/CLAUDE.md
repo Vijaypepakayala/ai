@@ -12,7 +12,7 @@ Skills, and operational guides.
 
 ## Hard rules (must follow)
 
-- **Generated files** under `providers/claude/plugin/skills/` and
+- **Generated files** under `providers/claude/plugins/<plugin>/skills/` and
   `providers/cursor/plugin/skills/` are produced by
   `./scripts/sync-skills.sh` from `skills/`. **Never hand-edit them.**
   Edit the source under `skills/` and run the sync script.

@@ -1,6 +1,9 @@
 #!/bin/bash
 # Checks that provider plugin skill directories match the canonical skills/ source.
-# Both are flat: skills/<skill-name>/SKILL.md
+#
+# Canonical layout is flat: skills/<skill-name>/SKILL.md
+# Claude Code copies live in modular plugins: providers/claude/plugins/<plugin>/skills/<skill-name>
+# Cursor copies live in one flat plugin: providers/cursor/plugin/skills/<skill-name>
 
 set -euo pipefail
 
@@ -26,23 +29,54 @@ if [ -n "$deep" ]; then
   exit 1
 fi
 
-for provider in claude cursor; do
-  target="$REPO_ROOT/providers/$provider/plugin/skills"
+# ── Claude Code: modular plugins layout ─────────────────────────────────────
+CLAUDE_PLUGINS="$REPO_ROOT/providers/claude/plugins"
+if [ ! -d "$CLAUDE_PLUGINS" ]; then
+  echo "WARNING: $CLAUDE_PLUGINS does not exist"
+else
+  # Every provider copy must byte-match its canonical source, and no copy may
+  # exist without a canonical source.
+  while IFS= read -r skill_copy; do
+    skill_name="$(basename "$skill_copy")"
+    plugin_rel="${skill_copy#"$REPO_ROOT"/}"
+    if [ ! -d "$SKILLS_SRC/$skill_name" ]; then
+      echo "Out of sync (no canonical source): $plugin_rel"
+      out_of_sync=true
+    elif ! diff -r "$SKILLS_SRC/$skill_name" "$skill_copy" > /dev/null 2>&1; then
+      echo "Out of sync: $plugin_rel"
+      out_of_sync=true
+    fi
+  done < <(find "$CLAUDE_PLUGINS" -mindepth 3 -maxdepth 3 -type d -path "*/skills/*")
 
-  if [ ! -d "$target" ]; then
-    echo "WARNING: $target does not exist"
-    continue
-  fi
-
+  # Every canonical skill must appear exactly once across the Claude plugins.
   for skill_dir in "$SKILLS_SRC"/*/; do
     [ -d "$skill_dir" ] || continue
     skill_name="$(basename "$skill_dir")"
-    if ! diff -r "$skill_dir" "$target/$skill_name" > /dev/null 2>&1; then
-      echo "Out of sync: providers/$provider/plugin/skills/$skill_name"
+    count=$(find "$CLAUDE_PLUGINS" -mindepth 3 -maxdepth 3 -type d -path "*/skills/$skill_name" | wc -l | tr -d ' ')
+    if [ "$count" -eq 0 ]; then
+      echo "Missing from Claude plugins: $skill_name"
+      out_of_sync=true
+    elif [ "$count" -gt 1 ]; then
+      echo "Duplicated across Claude plugins ($count copies): $skill_name"
       out_of_sync=true
     fi
   done
-done
+fi
+
+# ── Cursor: flat plugin layout ──────────────────────────────────────────────
+CURSOR_SKILLS="$REPO_ROOT/providers/cursor/plugin/skills"
+if [ ! -d "$CURSOR_SKILLS" ]; then
+  echo "WARNING: $CURSOR_SKILLS does not exist"
+else
+  for skill_dir in "$SKILLS_SRC"/*/; do
+    [ -d "$skill_dir" ] || continue
+    skill_name="$(basename "$skill_dir")"
+    if ! diff -r "$skill_dir" "$CURSOR_SKILLS/$skill_name" > /dev/null 2>&1; then
+      echo "Out of sync: providers/cursor/plugin/skills/$skill_name"
+      out_of_sync=true
+    fi
+  done
+fi
 
 if [ "$out_of_sync" = true ]; then
   echo ""

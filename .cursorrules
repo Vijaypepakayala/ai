@@ -10,11 +10,12 @@ rules in sync with it when changing project-wide guidance.
 Telnyx AI — agent toolkits, plugins for Claude Code / Cursor / Gemini /
 OpenCode, an MCP proxy, 235+ agent skills, and operational guides.
 The skills under `skills/` are the source of truth; they are synced to
-`providers/{claude,cursor}/plugin/skills/` via `scripts/sync-skills.sh`.
+`providers/claude/plugins/<plugin>/skills/` and `providers/cursor/plugin/skills/`
+via `scripts/sync-skills.sh`.
 
 ## Hard rules (don't break these)
-- **Don't hand-edit** files under `providers/claude/plugin/skills/` or
-  `providers/cursor/plugin/skills/` — they are generated. Edit the
+- **Don't hand-edit** files under `providers/claude/plugins/<plugin>/skills/`
+  or `providers/cursor/plugin/skills/` — they are generated. Edit the
   source under `skills/` and run `./scripts/sync-skills.sh`.
 - **Don't run `npm install` at the repo root.** Each package has its
   own `package.json` and `node_modules/`. Install per-package:

@@ -96,7 +96,7 @@ The capability list in `agent.json` is the source of truth for what Telnyx surfa
 
 ### Don'ts
 
-- Don't edit files under `providers/claude/plugin/skills/` or `providers/cursor/plugin/skills/` directly — they are generated. Edit the source under `skills/` and run `./scripts/sync-skills.sh`.
+- Don't edit files under `providers/claude/plugins/<plugin>/skills/` or `providers/cursor/plugin/skills/` directly — they are generated. Edit the source under `skills/` and run `./scripts/sync-skills.sh`.
 - Don't introduce a root-level test runner — each package has its own.
 - Don't commit credentials, API keys, or `.env` files. Use the patterns in existing `.env.example` files.
 - Don't `npm install` at the root and expect it to install workspace deps — each package has its own `package.json` and `node_modules/`.

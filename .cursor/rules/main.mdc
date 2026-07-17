@@ -13,7 +13,7 @@ guidance.
 ## Hard rules (don't break these)
 
 - **Generated files**: never hand-edit under
-  `providers/claude/plugin/skills/` or `providers/cursor/plugin/skills/`.
+  `providers/claude/plugins/<plugin>/skills/` or `providers/cursor/plugin/skills/`.
   Edit the source under `skills/` and run `./scripts/sync-skills.sh`.
 - **Per-package install/test**: `npm ci` and tests run from each
   package's directory, not the repo root. Don't introduce a root-level
