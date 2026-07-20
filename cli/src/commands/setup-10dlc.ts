@@ -91,6 +91,37 @@ interface Setup10dlcResult {
   steps: StepResult[];
 }
 
+function nonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function parseCampaignResponse(response: unknown): { id: string; status: string } {
+  const root = response && typeof response === "object"
+    ? response as Record<string, unknown>
+    : {};
+  const data = root.data && typeof root.data === "object"
+    ? root.data as Record<string, unknown>
+    : {};
+  const id = [data.id, data.CampaignID, data.campaignId, root.id, root.CampaignID, root.campaignId]
+    .map(nonEmptyString)
+    .find((value): value is string => value !== undefined);
+
+  if (!id) {
+    throw new Error("Campaign submission response did not include a campaign id");
+  }
+
+  return {
+    id,
+    status: nonEmptyString(data.status)
+      ?? nonEmptyString(data.Status)
+      ?? nonEmptyString(root.status)
+      ?? nonEmptyString(root.Status)
+      ?? "PENDING",
+  };
+}
+
 // ─── Compliance helpers ──────────────────────────────────────────────────────
 
 /** Generate the message_flow based on opt-in method + brand + optional website. */
@@ -322,23 +353,26 @@ export async function setup10dlcCommand(flags: Record<string, string | boolean>)
     }
     if (!jsonOutput) printStep(steps[steps.length - 1], totalSteps);
 
-    // Step 2: Create campaign via CLI
+    // Step 2: Submit campaign via CLI
     const description = (flags.description as string) || "Agent-provisioned campaign for customer communications";
     const step2Start = Date.now();
     try {
       const campaignArgs = [
-        "messaging-10dlc:campaign", "create",
+        "messaging-10dlc:campaign-builder", "submit",
         "--brand-id", brandId,
         "--usecase", usecase,
         "--description", description,
         "--sample1", sample1,
         "--message-flow", messageFlow,
+        "--help-message", helpMsg,
+        "--optout-message", stopMsg,
+        "--optin-message", startMsg,
       ];
       if (sample2) campaignArgs.push("--sample2", sample2);
       const campaignRes = await telnyxCli(campaignArgs);
-      const campaignData = campaignRes.data as Record<string, unknown>;
-      campaignId = String(campaignData.id);
-      campaignStatus = String(campaignData.status ?? "PENDING");
+      const campaign = parseCampaignResponse(campaignRes);
+      campaignId = campaign.id;
+      campaignStatus = campaign.status;
       steps.push({ step: 2, name: "Create campaign", status: "completed", resourceId: campaignId, detail: USE_CASE_LABELS[usecase] ?? usecase, elapsedMs: Date.now() - step2Start });
     } catch (err) {
       steps.push({ step: 2, name: "Create campaign", status: "failed", detail: errorMsg(err), elapsedMs: Date.now() - step2Start });
