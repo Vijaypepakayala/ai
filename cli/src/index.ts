@@ -486,10 +486,35 @@ const COMMANDS: Record<string, (
   "disable-sim-card": disableSimCardCommand,
 };
 
+// Detect a help request in FLAG position only. A help token counts when it is
+// the command itself (`help`, `--help`, `-h`) or a standalone flag on a
+// subcommand (`setup-voice --help`, `setup-voice -h`). It must NOT count when
+// `-h`/`--help` is consumed as the VALUE of another flag (e.g.
+// `send-sms --text "-h"`), so we walk argv the same way parseFlags does and skip
+// consumed values. This keeps help interception consistent with the parser and
+// avoids a false positive that would block legitimate sends.
+function isHelpRequested(argv: string[]): boolean {
+  const command = argv[0];
+  if (command === "help" || command === "--help" || command === "-h") return true;
+  for (let i = 1; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--help" || arg === "-h") return true;
+    if (arg.startsWith("--")) {
+      const next = argv[i + 1];
+      if (next && !next.startsWith("--")) i++; // skip value consumed by this flag
+    }
+  }
+  return false;
+}
+
 export async function run(argv: string[]): Promise<void> {
   const { command, flags, occurrences } = parseFlags(argv);
 
-  if (command === "help" || command === "--help" || command === "-h" || !command) {
+  // Intercept help BEFORE dispatching to any command handler. setup-* handlers
+  // make live API calls and purchase billable resources (numbers, connections)
+  // before hitting an unknown flag, so a `--help`/`-h` request must never fall
+  // through to a handler. See isHelpRequested for flag-position vs value nuance.
+  if (!command || command === "help" || isHelpRequested(argv)) {
     console.log(HELP);
     return;
   }
