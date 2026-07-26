@@ -51,6 +51,10 @@ import {
 } from "./commands/sim-cards.ts";
 import { parseFlags } from "./utils/output.ts";
 
+// Version is read lazily so that `--version` works without loading any command modules.
+import { createRequire } from "node:module";
+const VERSION = createRequire(import.meta.url)("../package.json").version as string;
+
 const HELP = `
 telnyx-agent — Agent-friendly CLI for Telnyx API v2
 
@@ -488,6 +492,11 @@ const COMMANDS: Record<string, (
 
 export async function run(argv: string[]): Promise<void> {
   const { command, flags, occurrences } = parseFlags(argv);
+
+  if (command === "--version" || command === "-V") {
+    console.log(VERSION);
+    return;
+  }
 
   if (command === "help" || command === "--help" || command === "-h" || !command) {
     console.log(HELP);
