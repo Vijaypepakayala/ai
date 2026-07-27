@@ -9,7 +9,7 @@
  */
 
 import { TelnyxClient, TelnyxAPIError } from "../client.ts";
-import { telnyxCli, TelnyxCLIError } from "../telnyx-cli.ts";
+import { TelnyxCLIError } from "../telnyx-cli.ts";
 import { printStep, printSuccess, printError, outputJson, type StepResult } from "../utils/output.ts";
 import { searchAndBuyNumber } from "../utils/number-order.ts";
 
@@ -94,16 +94,14 @@ export async function setupVoiceCommand(flags: Record<string, string | boolean>)
       printStep(steps[steps.length - 1], totalSteps);
     }
 
-    // Step 4: Assign number to connection via CLI
+    // Step 4: Assign number to connection via REST (AIF-329: Go CLI doesn't
+    // support --force on phone-numbers update)
     const step4Start = Date.now();
     try {
-      if (phoneNumber) {
-        await telnyxCli([
-          "phone-numbers", "update",
-          "--phone-number-id", phoneNumber,
-          "--connection-id", connectionId,
-          "--force",
-        ]);
+      if (phoneNumberId) {
+        await client.patch(`/phone_numbers/${phoneNumberId}`, {
+          connection_id: connectionId,
+        });
       }
       steps.push({ step: 4, name: "Assign number to connection", status: "completed", elapsedMs: Date.now() - step4Start });
     } catch (err) {

@@ -487,9 +487,15 @@ const COMMANDS: Record<string, (
 };
 
 export async function run(argv: string[]): Promise<void> {
-  const { command, flags, occurrences } = parseFlags(argv);
+  const { command, flags, occurrences, helpRequested } = parseFlags(argv);
 
   if (command === "help" || command === "--help" || command === "-h" || !command) {
+    console.log(HELP);
+    return;
+  }
+
+  // Per-command help: `telnyx-agent tts --help` or `telnyx-agent tts -h`
+  if (helpRequested) {
     console.log(HELP);
     return;
   }
