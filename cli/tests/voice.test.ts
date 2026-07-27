@@ -116,6 +116,7 @@ describe("Voice API action commands", () => {
     // Boolean/detection flags should NOT be present when not requested.
     assert.ok(!dialCall!.includes("--answering-machine-detection"));
     assert.ok(!dialCall!.includes("--deepfake-detection"));
+    assert.ok(!dialCall!.some((arg) => arg.startsWith("--retry-on-timeout")));
   });
 
   it("call-dial forwards AMD mode, deepfake and record flags in Go CLI syntax", () => {
@@ -163,6 +164,46 @@ describe("Voice API action commands", () => {
     const dialCall = calls.find((a) => a.slice(0, 2).join(" ") === "calls dial");
     assert.ok(dialCall, "should invoke `calls dial`");
     assertFlagValue(dialCall!, "--answering-machine-detection", "premium");
+  });
+
+  it("call-dial forwards a bare --retry-on-timeout as explicit true", () => {
+    const fake = setupFakeTelnyx();
+    run(
+      [
+        "call-dial",
+        "--connection-id", "conn-1",
+        "--from", "+15550001000",
+        "--to", "+15550001001",
+        "--retry-on-timeout",
+        "--json",
+      ],
+      fake.env,
+    );
+
+    const calls = readLoggedArgs(fake.logPath);
+    const dialCall = calls.find((a) => a.slice(0, 2).join(" ") === "calls dial");
+    assert.ok(dialCall, "should invoke `calls dial`");
+    assert.ok(dialCall!.includes("--retry-on-timeout=true"));
+  });
+
+  it("call-dial forwards explicit false in the Go CLI's boolean flag syntax", () => {
+    const fake = setupFakeTelnyx();
+    run(
+      [
+        "call-dial",
+        "--connection-id", "conn-1",
+        "--from", "+15550001000",
+        "--to", "+15550001001",
+        "--retry-on-timeout", "false",
+        "--json",
+      ],
+      fake.env,
+    );
+
+    const calls = readLoggedArgs(fake.logPath);
+    const dialCall = calls.find((a) => a.slice(0, 2).join(" ") === "calls dial");
+    assert.ok(dialCall, "should invoke `calls dial`");
+    assert.ok(dialCall!.includes("--retry-on-timeout=false"));
   });
 
   it("call-dial rejects an invalid --answering-machine-detection mode", () => {
@@ -340,6 +381,7 @@ describe("Voice API action commands", () => {
     assert.ok(output.includes("call-control"), "help should list call-control");
     assert.ok(output.includes("call-status"), "help should list call-status");
     assert.ok(output.includes("--answering-machine-detection"), "help should document AMD flag");
+    assert.ok(output.includes("--retry-on-timeout"), "help should document dial timeout routing behavior");
   });
 
   it("capabilities lists the voice actions and composite commands", () => {

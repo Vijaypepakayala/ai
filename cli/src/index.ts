@@ -252,6 +252,7 @@ Voice Call Flags:
   --webhook-url                  Webhook URL override (call-dial, call-control answer)
   --audio-url                    Audio URL to play on answer (call-dial); start-playback (required); gather-using-audio (optional)
   --timeout-secs                 Dial timeout in seconds (call-dial)
+  --retry-on-timeout [true|false] Continue through remaining routing paths after a dial timeout (call-dial, default: true)
   --privacy                      Number masking: 'id' hides caller ID, 'none' is normal (call-dial, default: none)
   --from-display-name            Caller ID display name (call-dial)
   --time-limit-secs              Max call duration in seconds (call-dial)

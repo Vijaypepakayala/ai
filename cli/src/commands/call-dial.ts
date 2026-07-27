@@ -37,6 +37,7 @@ export async function callDialCommand(flags: Record<string, string | boolean>): 
   const webhookUrl = flags["webhook-url"] as string | undefined;
   const audioUrl = flags["audio-url"] as string | undefined;
   const timeoutSecs = flags["timeout-secs"] as string | undefined;
+  const retryOnTimeout = flags["retry-on-timeout"];
   // New flags (number masking + advanced dial options).
   const privacy = flags["privacy"] as string | undefined;
   const fromDisplayName = flags["from-display-name"] as string | undefined;
@@ -73,6 +74,16 @@ export async function callDialCommand(flags: Record<string, string | boolean>): 
     printError(`Invalid --timeout-secs: ${timeoutSecs}. Must be a positive integer`);
     process.exit(1);
   }
+  if (
+    retryOnTimeout !== undefined &&
+    retryOnTimeout !== true &&
+    retryOnTimeout !== false &&
+    retryOnTimeout !== "true" &&
+    retryOnTimeout !== "false"
+  ) {
+    printError(`Invalid --retry-on-timeout: ${String(retryOnTimeout)}. Must be true or false`);
+    process.exit(1);
+  }
   if (privacy !== undefined && !["id", "none"].includes(privacy)) {
     printError(`Invalid --privacy: ${privacy}. Must be 'id' (number masking) or 'none'`);
     process.exit(1);
@@ -104,6 +115,8 @@ export async function callDialCommand(flags: Record<string, string | boolean>): 
   if (webhookUrl) args.push("--webhook-url", webhookUrl);
   if (audioUrl) args.push("--audio-url", audioUrl);
   if (timeoutSecs) args.push("--timeout-secs", timeoutSecs);
+  if (retryOnTimeout === true || retryOnTimeout === "true") args.push("--retry-on-timeout=true");
+  if (retryOnTimeout === false || retryOnTimeout === "false") args.push("--retry-on-timeout=false");
   // --privacy is supported by the v0.21 Go CLI (BodyPath: "privacy").
   if (privacy) args.push("--privacy", privacy);
   if (fromDisplayName) args.push("--from-display-name", fromDisplayName);
