@@ -7,7 +7,7 @@ import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 
-const VERSION = "0.21.0"; // Pin to known working version (adds whatsapp:user-data, conversation windows, and CLI bug fixes)
+const VERSION = "0.24.0"; // Pin to a release that includes Anthropic Messages and calls dial --retry-on-timeout
 
 const PLATFORM_MAP: Record<string, string> = {
   "darwin-arm64": `telnyx_${VERSION}_macos_arm64.zip`,
@@ -27,15 +27,15 @@ function isAtLeast(found: number[], want: number[]): boolean {
 
 async function main() {
   // Skip if telnyx is already on PATH AND at the required version.
-  // An older CLI on PATH would leave WhatsApp and other commands broken,
-  // so we check the version before skipping the download.
+  // Older releases may not expose commands and flags wrapped by the agent CLI,
+  // so check the complete semantic version before skipping the download.
   try {
     const out = execSync("telnyx --version", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
     const installedVersion = out.match(/v?(\d+\.\d+\.\d+)/)?.[1];
     if (installedVersion) {
-      const [maj, min] = installedVersion.split(".").map(Number);
-      const [reqMaj, reqMin] = VERSION.split(".").map(Number);
-      if (maj > reqMaj || (maj === reqMaj && min >= reqMin)) {
+      const found = installedVersion.split(".").map(Number);
+      const want = VERSION.split(".").map(Number);
+      if (isAtLeast(found, want)) {
         console.log(`✓ telnyx CLI ${installedVersion} already installed (>= ${VERSION})`);
         return;
       }

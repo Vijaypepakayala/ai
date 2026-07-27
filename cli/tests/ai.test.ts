@@ -36,6 +36,21 @@ if (args[0] === "ai:openai:chat" && args[1] === "create-completion") {
     choices: [{ index: 0, message: { role: "assistant", content: "Hello from Telnyx" }, finish_reason: "stop" }],
     usage: { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 }
   }));
+} else if (args[0] === "ai:anthropic:v1" && args[1] === "messages") {
+  console.log(JSON.stringify({
+    id: "msg_01ABC",
+    type: "message",
+    role: "assistant",
+    model: "zai-org/GLM-5.2",
+    content: [
+      { type: "text", text: "Hello from Anthropic format" },
+      { type: "tool_use", id: "toolu_01", name: "lookup", input: { query: "Telnyx" } }
+    ],
+    stop_reason: "tool_use",
+    stop_sequence: null,
+    usage: { input_tokens: 14, output_tokens: 9 },
+    vendor_extension: { trace_id: "trace-123" }
+  }));
 } else if (args[0] === "ai:openai:embeddings" && args[1] === "create-embeddings") {
   console.log(JSON.stringify({
     object: "list",
@@ -96,6 +111,10 @@ function assertFlagValue(args: string[], flag: string, expected: string): void {
   const index = args.indexOf(flag);
   assert.notEqual(index, -1, `expected ${flag} in ${args.join(" ")}`);
   assert.equal(args[index + 1], expected);
+}
+
+function flagValues(args: string[], flag: string): string[] {
+  return args.flatMap((arg, index) => arg === flag ? [args[index + 1]] : []);
 }
 
 describe("AI inference action commands", () => {
@@ -196,6 +215,159 @@ describe("AI inference action commands", () => {
     assert.ok(!call.includes("false"), "false must not be emitted as an extra positional argument");
   });
 
+  it("ai-anthropic-message forwards the complete request surface and preserves the full JSON response", () => {
+    const fake = setupFakeTelnyx();
+    const messages = [
+      '{"role":"user","content":"Use the tools"}',
+      '{"role":"assistant","content":[{"type":"text","text":"Ready"}]}',
+    ];
+    const mcpServers = [
+      '{"type":"url","url":"https://mcp-one.example.com"}',
+      '{"type":"url","url":"https://mcp-two.example.com"}',
+    ];
+    const tools = [
+      '{"name":"lookup","description":"Look up a value","input_schema":{"type":"object"}}',
+      '{"name":"calculate","description":"Calculate","input_schema":{"type":"object"}}',
+    ];
+    const fallbackConfig = '{"models":["backup/model"]}';
+    const metadata = '{"user_id":"agent-123"}';
+    const system = '[{"type":"text","text":"Be concise"}]';
+    const thinking = '{"type":"enabled","budget_tokens":128}';
+    const toolChoice = '{"type":"auto"}';
+
+    const result = runCli([
+      "ai-anthropic-message",
+      "--max-tokens", "512",
+      "--message", messages[0],
+      "--message", messages[1],
+      "--model", "zai-org/GLM-5.2",
+      "--api-key-ref", "secret-ref-1",
+      "--billing-group-id", "billing-group-1",
+      "--fallback-config", fallbackConfig,
+      "--max-retries", "3",
+      "--mcp-server", mcpServers[0],
+      "--mcp-server", mcpServers[1],
+      "--metadata", metadata,
+      "--service-tier", "priority",
+      "--stop-sequence", "END",
+      "--stop-sequence", "DONE",
+      "--system", system,
+      "--temperature", "0.3",
+      "--thinking", thinking,
+      "--timeout", "45",
+      "--tool-choice", toolChoice,
+      "--tool", tools[0],
+      "--tool", tools[1],
+      "--top-k", "40",
+      "--top-p", "0.85",
+      "--json",
+    ], fake.env);
+
+    assert.equal(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.id, "msg_01ABC");
+    assert.equal(output.type, "message");
+    assert.equal(output.content.length, 2, "all Anthropic content blocks must be preserved");
+    assert.deepEqual(output.content[1], {
+      type: "tool_use",
+      id: "toolu_01",
+      name: "lookup",
+      input: { query: "Telnyx" },
+    });
+    assert.deepEqual(output.usage, { input_tokens: 14, output_tokens: 9 });
+    assert.deepEqual(output.vendor_extension, { trace_id: "trace-123" });
+
+    const calls = readLoggedArgs(fake.logPath);
+    assert.equal(calls.length, 1, "the fake binary log should contain exactly one JSON line");
+    const call = calls[0];
+    assert.deepEqual(call.slice(0, 2), ["ai:anthropic:v1", "messages"]);
+    assertFlagValue(call, "--max-tokens", "512");
+    assert.deepEqual(flagValues(call, "--message"), messages);
+    assertFlagValue(call, "--model", "zai-org/GLM-5.2");
+    assertFlagValue(call, "--api-key-ref", "secret-ref-1");
+    assertFlagValue(call, "--billing-group-id", "billing-group-1");
+    assertFlagValue(call, "--fallback-config", fallbackConfig);
+    assertFlagValue(call, "--max-retries", "3");
+    assert.deepEqual(flagValues(call, "--mcp-server"), mcpServers);
+    assertFlagValue(call, "--metadata", metadata);
+    assertFlagValue(call, "--service-tier", "priority");
+    assert.deepEqual(flagValues(call, "--stop-sequence"), ["END", "DONE"]);
+    assertFlagValue(call, "--system", system);
+    assertFlagValue(call, "--temperature", "0.3");
+    assertFlagValue(call, "--thinking", thinking);
+    assertFlagValue(call, "--timeout", "45");
+    assertFlagValue(call, "--tool-choice", toolChoice);
+    assert.deepEqual(flagValues(call, "--tool"), tools);
+    assertFlagValue(call, "--top-k", "40");
+    assertFlagValue(call, "--top-p", "0.85");
+    assert.deepEqual(call.slice(-2), ["--format", "json"]);
+  });
+
+  it("ai-anthropic-message prints a useful text and usage summary", () => {
+    const fake = setupFakeTelnyx();
+    const result = runCli([
+      "ai-anthropic-message",
+      "--max-tokens", "64",
+      "--message", '{"role":"user","content":"Hello"}',
+      "--model", "zai-org/GLM-5.2",
+    ], fake.env);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Anthropic message created!/);
+    assert.match(result.stdout, /zai-org\/GLM-5\.2/);
+    assert.match(result.stdout, /2/);
+    assert.match(result.stdout, /tool_use/);
+    assert.match(result.stdout, /14 input \/ 9 output/);
+    assert.match(result.stdout, /Hello from Anthropic format/);
+  });
+
+  it("ai-anthropic-message rejects streaming locally without invoking the Go CLI", () => {
+    const fake = setupFakeTelnyx();
+    const result = runCli([
+      "ai-anthropic-message",
+      "--max-tokens", "64",
+      "--message", '{"role":"user","content":"Hello"}',
+      "--model", "zai-org/GLM-5.2",
+      "--stream",
+      "--json",
+    ], fake.env);
+
+    assert.notEqual(result.status, 0);
+    assert.match(JSON.parse(result.stdout).error, /streaming.*not supported/i);
+    assert.deepEqual(readLoggedArgs(fake.logPath), []);
+  });
+
+  it("ai-anthropic-message validates every required field before invoking the Go CLI", () => {
+    for (const args of [
+      ["ai-anthropic-message", "--message", '{"role":"user","content":"Hi"}', "--model", "zai-org/GLM-5.2", "--json"],
+      ["ai-anthropic-message", "--max-tokens", "64", "--model", "zai-org/GLM-5.2", "--json"],
+      ["ai-anthropic-message", "--max-tokens", "64", "--message", '{"role":"user","content":"Hi"}', "--json"],
+      ["ai-anthropic-message", "--max-tokens", "--message", '{"role":"user","content":"Hi"}', "--model", "zai-org/GLM-5.2", "--json"],
+    ]) {
+      const fake = setupFakeTelnyx();
+      const result = runCli(args, fake.env);
+      assert.notEqual(result.status, 0, `expected ${args.join(" ")} to fail`);
+      assert.ok(JSON.parse(result.stdout).error);
+      assert.deepEqual(readLoggedArgs(fake.logPath), []);
+    }
+  });
+
+  it("ai-anthropic-message rejects a repeatable flag without a value", () => {
+    const fake = setupFakeTelnyx();
+    const result = runCli([
+      "ai-anthropic-message",
+      "--max-tokens", "64",
+      "--message", '{"role":"user","content":"Hello"}',
+      "--model", "zai-org/GLM-5.2",
+      "--tool",
+      "--json",
+    ], fake.env);
+
+    assert.notEqual(result.status, 0);
+    assert.match(JSON.parse(result.stdout).error, /--tool requires a value/);
+    assert.deepEqual(readLoggedArgs(fake.logPath), []);
+  });
+
   it("ai-embed passes input JSON through and preserves top-level embedding data", () => {
     const fake = setupFakeTelnyx();
     const input = '["one","two"]';
@@ -246,8 +418,11 @@ describe("AI inference action commands", () => {
     const help = runCli(["help"]);
     assert.equal(help.status, 0, help.stderr);
     assert.match(help.stdout, /ai-chat/);
+    assert.match(help.stdout, /ai-anthropic-message/);
     assert.match(help.stdout, /ai-embed/);
     assert.match(help.stdout, /--message <json>/);
+    assert.match(help.stdout, /Anthropic message JSON object \(repeatable, required\)/);
+    assert.match(help.stdout, /--max-tokens <n>\s+Maximum number of tokens to generate \(required\)/);
     assert.doesNotMatch(help.stdout, /--stream\s+Request a streaming completion/);
     assert.match(help.stdout, /--input <value>/);
 
@@ -256,9 +431,11 @@ describe("AI inference action commands", () => {
     const output = JSON.parse(capabilities.stdout);
     const commandNames = output.composite_commands.map((command: { name: string }) => command.name);
     assert.ok(commandNames.includes("telnyx-agent ai-chat"));
+    assert.ok(commandNames.includes("telnyx-agent ai-anthropic-message"));
     assert.ok(commandNames.includes("telnyx-agent ai-embed"));
     const aiActions = output.api_capabilities["🤖 AI"].flatMap((capability: { actions: string[] }) => capability.actions);
     assert.ok(aiActions.includes("ai_chat"));
+    assert.ok(aiActions.includes("ai_anthropic_message"));
     assert.ok(aiActions.includes("ai_embed"));
   });
 });

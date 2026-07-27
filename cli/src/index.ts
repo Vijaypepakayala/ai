@@ -42,6 +42,7 @@ import {
   searchPhoneNumbersCommand,
 } from "./commands/numbers.ts";
 import { aiChatCommand } from "./commands/ai-chat.ts";
+import { aiAnthropicMessageCommand } from "./commands/ai-anthropic-message.ts";
 import { aiEmbedCommand } from "./commands/ai-embed.ts";
 import {
   disableSimCardCommand,
@@ -100,6 +101,7 @@ Commands:
   buy-phone-number  Purchase/order one phone number
   lookup-number     Look up carrier and caller-name information
   ai-chat           Create an OpenAI-compatible chat completion
+  ai-anthropic-message Create an Anthropic-compatible message response
   ai-embed          Create OpenAI-compatible text embeddings
 
 Global Flags:
@@ -325,6 +327,27 @@ AI Chat Flags:
   --tool <json>     OpenAI-compatible tool object
   --tool-choice     Tool selection: none, auto, or required
 
+AI Anthropic Message Flags:
+  --message <json>  Anthropic message JSON object (repeatable, required)
+  --model <id>      Anthropic-compatible model ID (required)
+  --max-tokens <n>  Maximum number of tokens to generate (required)
+  --api-key-ref <id> Integration-secret identifier for an external provider API key
+  --billing-group-id <id> Billing group to associate with the request
+  --fallback-config <json> Model fallback configuration
+  --max-retries <n> Maximum request retries
+  --mcp-server <json> MCP server definition JSON object (repeatable)
+  --metadata <json> Request metadata object
+  --service-tier <tier> Service tier for the request
+  --stop-sequence <value> Stop sequence (repeatable)
+  --system <value>  System prompt string or JSON content-block array
+  --temperature <n> Sampling temperature from 0 to 1
+  --thinking <json> Extended-thinking configuration
+  --timeout <seconds> Request timeout in seconds
+  --tool-choice <json> Anthropic tool-choice JSON object
+  --tool <json>     Anthropic tool definition JSON object (repeatable)
+  --top-k <n>       Restrict sampling to the top K token options
+  --top-p <n>       Nucleus sampling probability
+
 AI Embed Flags:
   --input <value>   Text or JSON array of strings to embed (required)
   --model <id>      Embedding model ID (required)
@@ -429,6 +452,7 @@ Examples:
   telnyx-agent lookup-number --phone-number +131****0000 --type caller-name --json
   telnyx-agent ai-chat --message '{"role":"user","content":"Hello"}' --json
   telnyx-agent ai-chat --message '{"role":"user","content":"Return JSON"}' --response-format '{"type":"json_object"}' --json
+  telnyx-agent ai-anthropic-message --model zai-org/GLM-5.2 --max-tokens 256 --message '{"role":"user","content":"Hello"}' --json
   telnyx-agent ai-embed --model thenlper/gte-large --input "Hello world" --json
   telnyx-agent ai-embed --model thenlper/gte-large --input '["one","two"]' --dimensions 256 --json
   telnyx-agent list-sim-cards --status enabled,disabled --page-size 25 --json
@@ -479,6 +503,7 @@ const COMMANDS: Record<string, (
   "buy-phone-number": buyPhoneNumberCommand,
   "lookup-number": lookupNumberCommand,
   "ai-chat": aiChatCommand,
+  "ai-anthropic-message": aiAnthropicMessageCommand,
   "ai-embed": aiEmbedCommand,
   "list-sim-cards": listSimCardsCommand,
   "retrieve-sim-card": retrieveSimCardCommand,
