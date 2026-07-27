@@ -211,6 +211,7 @@ describe("CLI — Edge Compute handoff", () => {
     const data = JSON.parse(run(["setup-edge-mcp", "--json", "--name", "demo-mcp"], fake.env));
     assert.equal(data.ready, true);
     assert.equal(data.telnyx_edge_installed, true);
+    assert.equal(data.root_status_passed, true);
     assert.equal(data.inspect_supported, true);
     assert.equal(data.actor_instances_supported, true);
     assert.equal(data.source_repo, "https://github.com/team-telnyx/edge-compute.git");
@@ -229,6 +230,7 @@ describe("CLI — Edge Compute handoff", () => {
     const fake = withFakeEdgeCli("api_key");
     const data = JSON.parse(run(["setup-edge-webhook", "--json", "--name", "demo-webhook"], fake.env));
     assert.equal(data.ready, true);
+    assert.equal(data.root_status_passed, true);
     assert.equal(data.source_path, "examples/js/webhook-receiver");
     assert.ok(data.deploy_command.includes("git clone --depth 1"));
     assert.ok(data.deploy_command.includes('secrets add WEBHOOK_SECRET "$WEBHOOK_SECRET"'));
@@ -236,6 +238,18 @@ describe("CLI — Edge Compute handoff", () => {
     assert.ok(data.deploy_command.includes("telnyx-edge inspect demo-webhook"));
     assert.ok(data.notes.some((note: string) => note.includes("HMAC-SHA256")));
     assert.ok(data.next_steps.some((step: string) => step.includes("HMAC-sign")));
+  });
+
+  it("setup handoffs stay unready when authenticated but the root status check fails", () => {
+    const fake = withFakeEdgeCli({ auth: "api_key", rootStatus: "fail" });
+    for (const command of ["setup-edge-mcp", "setup-edge-webhook"]) {
+      const data = JSON.parse(run([command, "--json"], fake.env));
+      assert.equal(data.telnyx_edge_installed, true);
+      assert.equal(data.authenticated, true);
+      assert.equal(data.root_status_passed, false);
+      assert.equal(data.ready, false);
+      assert.ok(data.next_steps.some((step: string) => step.includes("telnyx-edge status")));
+    }
   });
 
   it("setup handoffs omit inspect from executable flows when the authenticated CLI does not support it", () => {

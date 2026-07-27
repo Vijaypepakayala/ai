@@ -5,6 +5,7 @@
 import { outputJson, printError, printSuccess, printWarning } from "../utils/output.ts";
 import {
   getEdgeAuthStatus,
+  getEdgeRootStatus,
   hasEdgeCli,
   supportsActorInstances,
   supportsApiKeyAuth,
@@ -18,6 +19,7 @@ interface SetupEdgeMcpResult {
   telnyx_edge_installed: boolean;
   authenticated: boolean;
   auth_mode: "api_key" | "oauth" | "none" | "unknown";
+  root_status_passed: boolean;
   api_key_auth_supported: boolean;
   stateful_actors_supported: boolean;
   inspect_supported: boolean;
@@ -47,6 +49,7 @@ export async function setupEdgeMcpCommand(flags: Record<string, string | boolean
   const inspectSupported = hasEdge ? supportsInspect() : false;
   const actorInstancesSupported = hasEdge ? supportsActorInstances() : false;
   const authStatus = hasEdge ? safeAuthStatus() : { authenticated: false, mode: "none" as const };
+  const rootStatusPassed = hasEdge ? safeRootStatus() : false;
   const authCommand = apiKeyAuthSupported
     ? `: "\${TELNYX_API_KEY:?Export TELNYX_API_KEY first}" && telnyx-edge auth api-key set "$TELNYX_API_KEY"`
     : "telnyx-edge auth login";
@@ -89,6 +92,11 @@ export async function setupEdgeMcpCommand(flags: Record<string, string | boolean
     ? ["Install telnyx-edge from the Edge Compute releases page, then rerun this command."]
     : !authStatus.authenticated
       ? [`Authenticate first: ${authCommand}`, "Run telnyx-edge status, then rerun this handoff."]
+      : !rootStatusPassed
+        ? [
+            "Run telnyx-edge status and resolve every failed config, credential, or connectivity check.",
+            "Rerun this handoff after telnyx-edge status reports that all checks passed.",
+          ]
       : [
           "Export TELNYX_API_KEY and a high-entropy SHARED_SECRET (for example, openssl rand -hex 32).",
           "Run deploy_command from the directory where you want the function project created.",
@@ -96,10 +104,11 @@ export async function setupEdgeMcpCommand(flags: Record<string, string | boolean
         ];
 
   const result: SetupEdgeMcpResult = {
-    ready: hasEdge && authStatus.authenticated,
+    ready: hasEdge && authStatus.authenticated && rootStatusPassed,
     telnyx_edge_installed: hasEdge,
     authenticated: authStatus.authenticated,
     auth_mode: authStatus.mode,
+    root_status_passed: rootStatusPassed,
     api_key_auth_supported: apiKeyAuthSupported,
     stateful_actors_supported: statefulActorsSupported,
     inspect_supported: inspectSupported,
@@ -132,10 +141,16 @@ export async function setupEdgeMcpCommand(flags: Record<string, string | boolean
       Ready: "✓",
     });
   } else {
-    printError(hasEdge ? "telnyx-edge is not positively authenticated." : "telnyx-edge is not installed.");
-    printWarning(hasEdge
-      ? `Authenticate first with: ${authCommand}`
-      : "This command is a handoff helper — it depends on the dedicated Edge Compute CLI.");
+    printError(!hasEdge
+      ? "telnyx-edge is not installed."
+      : !authStatus.authenticated
+        ? "telnyx-edge is not positively authenticated."
+        : "telnyx-edge status did not pass every config, credential, and connectivity check.");
+    printWarning(!hasEdge
+      ? "This command is a handoff helper — it depends on the dedicated Edge Compute CLI."
+      : !authStatus.authenticated
+        ? `Authenticate first with: ${authCommand}`
+        : "Run telnyx-edge status and resolve every failed check before deploying.");
   }
 
   console.log(`  Source repository: ${SOURCE_REPO}`);
@@ -162,5 +177,13 @@ function safeAuthStatus(): { authenticated: boolean; mode: "api_key" | "oauth" |
     return { authenticated: status.authenticated, mode: status.mode };
   } catch {
     return { authenticated: false, mode: "unknown" };
+  }
+}
+
+function safeRootStatus(): boolean {
+  try {
+    return getEdgeRootStatus().passed;
+  } catch {
+    return false;
   }
 }
