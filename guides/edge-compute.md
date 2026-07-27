@@ -21,7 +21,7 @@ git clone --depth 1 https://github.com/team-telnyx/edge-compute.git
 
 ## Prerequisites and readiness
 
-1. Download the latest CLI from the [Edge Compute releases page](https://github.com/team-telnyx/edge-compute/releases).
+1. Download the latest CLI from the [Edge Compute CLI releases page](https://github.com/team-telnyx/edge-compute-cli/releases).
 2. Authenticate interactively or with an API key stored by the CLI.
 3. Run the root status diagnostic. Unlike `auth status`, this validates configuration, credentials, and API connectivity.
 
@@ -157,9 +157,13 @@ Do not put `WEBHOOK_SECRET` in the request body or an Authorization header unles
 
 ## API Reference
 
-### Create, deploy, inspect, and recover
+### List, create, deploy, inspect, and recover
 
 ```bash
+# List deployed functions. Use --page and --page-size for larger accounts.
+telnyx-edge list
+telnyx-edge list --page 2 --page-size 25
+
 # New generated project
 telnyx-edge new-func --language=ts --name=my-function
 
@@ -181,6 +185,14 @@ telnyx-edge ship --from-dir=./my-function
 ```
 
 `reset-func` applies to failed states, not healthy deployments. Teardown is asynchronous.
+
+Delete a function when it is no longer needed:
+
+```bash
+telnyx-edge delete-func my-function
+```
+
+`delete-func` is irreversible. Confirm the function name before running it, especially when cleaning up an end-to-end test deployment.
 
 ### Revisions and rollback
 
