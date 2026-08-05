@@ -27,10 +27,22 @@
     "twilio-migration",
     "twilio-alternative"
   ],
+  "userConfig": {
+    "telnyx_api_key": {
+      "type": "string",
+      "title": "Telnyx API key",
+      "description": "API key used to authenticate Telnyx MCP requests. Create one at https://portal.telnyx.com/#/app/api-keys.",
+      "sensitive": true,
+      "required": true
+    }
+  },
   "mcpServers": {
     "telnyx": {
       "type": "http",
-      "url": "https://api.telnyx.com/v2/mcp"
+      "url": "https://api.telnyx.com/v2/mcp",
+      "headers": {
+        "Authorization": "Bearer ${user_config.telnyx_api_key}"
+      }
     }
   }
 }
