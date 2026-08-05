@@ -4,7 +4,8 @@ description: >-
   Triage Telnyx API errors and runtime failures fast: exact error-code
   meanings, retryability, silent-failure traps (TeXML attribute case, dead
   webhooks, 10DLC filtering), and where to look when calls or messages fail
-  with no error at all.
+  with no error at all. Do not use for pre-launch architecture or compliance
+  review when no runtime failure has occurred.
 metadata:
   author: telnyx
   product: platform

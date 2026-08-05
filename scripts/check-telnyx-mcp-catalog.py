@@ -2,8 +2,9 @@
 """Validate the hosted Telnyx MCP review contract without invoking an API.
 
 This checker reads public discovery metadata, MCP tool/resource metadata, the
-endpoint catalog, and every endpoint schema. It never calls invoke_api_endpoint
-or any app tool, so it cannot send traffic, buy numbers, place calls, charge a
+documentation-only endpoint catalog, and every endpoint schema. It cannot call
+an API executor because the public release contract exposes none, or call any
+app tool, so it cannot send traffic, buy numbers, place calls, charge a
 payment method, or mutate Telnyx account state.
 """
 
@@ -54,40 +55,15 @@ EXPECTED_AUTHORIZATION_SERVER = "https://api.telnyx.com"
 EXPECTED_UI_DOMAIN = "https://telnyx-developer-kit.telnyx.com"
 EXPECTED_UI_RESOURCES = {
     "open_number_intelligence": "ui://number-intelligence/index.html",
-    "open_usage_cost_explorer": "ui://usage-cost-explorer/index.html",
     "open_voice_monitor": "ui://voice-monitor/index.html",
 }
-EXPECTED_UI_RESOURCE_URIS = frozenset(
-    {
-        *EXPECTED_UI_RESOURCES.values(),
-        "ui://usage-cost-explorer/auto-recharge.html",
-        "ui://usage-cost-explorer/stored-payment-top-up.html",
-    }
-)
+EXPECTED_UI_RESOURCE_URIS = frozenset(EXPECTED_UI_RESOURCES.values())
 EXPECTED_UI_RESOURCE_MARKERS = {
     "ui://number-intelligence/index.html": (
         "tools/call",
         "window.parent.postMessage",
         "addEventListener",
         "number_intelligence_analyze",
-    ),
-    "ui://usage-cost-explorer/index.html": (
-        "tools/call",
-        "window.parent.postMessage",
-        "addEventListener",
-        "billing_query_usage",
-    ),
-    "ui://usage-cost-explorer/auto-recharge.html": (
-        "tools/call",
-        "window.parent.postMessage",
-        "addEventListener",
-        "billing_update_auto_recharge_preferences",
-    ),
-    "ui://usage-cost-explorer/stored-payment-top-up.html": (
-        "tools/call",
-        "window.parent.postMessage",
-        "addEventListener",
-        "billing_create_stored_payment_transaction",
     ),
     "ui://voice-monitor/index.html": (
         "tools/call",
@@ -113,13 +89,6 @@ SUPPORTED_TOKEN_AUTH_METHODS = {
     "private_key_jwt",
     "client_secret_basic",
     "client_secret_post",
-}
-INVOKE_RISK_TERMS = {
-    "message",
-    "call",
-    "purchase",
-    "charge",
-    "delete",
 }
 DESTRUCTIVE_ENDPOINT_PATTERNS = (
     re.compile(r"\b(?:delete|destroy|erase|purge|revoke|terminate|hang[ -]?up)\w*\b"),
@@ -198,8 +167,8 @@ ANNOTATION_FIELDS = (
     "idempotentHint",
     "openWorldHint",
 )
-EXPECTED_MODEL_VISIBLE_TOOL_COUNT = 6
-EXPECTED_APP_ONLY_TOOL_COUNT = 25
+EXPECTED_MODEL_VISIBLE_TOOL_COUNT = 4
+EXPECTED_APP_ONLY_TOOL_COUNT = 8
 EXPECTED_APP_TOOL_WIRE_CONTRACT = {
     "securitySchemes": [{"type": "oauth2", "scopes": ["admin"]}],
     "_meta": {
@@ -207,13 +176,20 @@ EXPECTED_APP_TOOL_WIRE_CONTRACT = {
         "ui": {"visibility": ["app"]},
     },
 }
-EXPECTED_ENDPOINT_COUNT = 846
-EXPECTED_READ_COUNT = 400
-EXPECTED_WRITE_COUNT = 446
+EXPECTED_ENDPOINT_COUNT = 812
+EXPECTED_READ_COUNT = 382
+EXPECTED_WRITE_COUNT = 430
 EXPECTED_CATALOG_NAMES_SHA256 = (
-    "6e3e7167fc512259e67ba0fb793d9f6ecca6ab1da7f82115e55d480ea843dcbc"
+    "b7337124b89bb50a7e388c81141ddb545af5de8434315f7f0b617f6b7da6780d"
 )
-CATALOG_FIELDS = {"name", "description", "resource", "operation", "tags"}
+CATALOG_FIELDS = {
+    "name",
+    "description",
+    "resource",
+    "operation",
+    "execution",
+    "tags",
+}
 REQUEST_IDS = itertools.count(1)
 
 
@@ -1268,17 +1244,6 @@ def validate_model_visible_tools(
                 f"actual={resource_uri!r}, expected={expected_resource_uri!r}"
             )
 
-    invoke_description = indexed["invoke_api_endpoint"]["description"].lower()
-    missing_risk_terms = sorted(
-        term for term in INVOKE_RISK_TERMS if term not in invoke_description
-    )
-    if missing_risk_terms:
-        raise AuditError(
-            "invoke_api_endpoint description does not disclose "
-            f"{', '.join(missing_risk_terms)} risk"
-        )
-
-
 def validate_constrained_output_schema(
     schema: Any,
     *,
@@ -1877,7 +1842,7 @@ def validate_catalog(
     for index, tool in enumerate(tools):
         label = f"catalog entry {index + 1}"
         if not isinstance(tool, dict) or set(tool) != CATALOG_FIELDS:
-            raise AuditError(f"{label} does not match the five-field catalog shape")
+            raise AuditError(f"{label} does not match the six-field catalog shape")
         for field in ("name", "description", "resource"):
             if not isinstance(tool[field], str) or not tool[field].strip():
                 raise AuditError(f"{label}.{field} must be a non-empty string")
@@ -1886,6 +1851,8 @@ def validate_catalog(
         seen_names.add(tool["name"])
         if tool["operation"] not in {"read", "write"}:
             raise AuditError(f"{label}.operation must be read or write")
+        if tool["execution"] != "catalog_only":
+            raise AuditError(f"{label}.execution must be catalog_only")
         if not isinstance(tool["tags"], list) or not all(
             isinstance(tag, str) for tag in tool["tags"]
         ):
@@ -2260,6 +2227,14 @@ def validate_schema(
         raise AuditError("schema name does not match the catalog")
     if payload.get("description") != catalog_tool["description"]:
         raise AuditError("schema description does not match the catalog")
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, dict) or any(
+        metadata.get(key) != catalog_tool[key]
+        for key in ("resource", "operation", "tags")
+    ):
+        raise AuditError("schema metadata does not match the catalog")
+    if payload.get("execution") != "catalog_only":
+        raise AuditError("schema must remain documentation-only")
 
     input_schema = payload.get("inputSchema")
     if not isinstance(input_schema, dict) or input_schema.get("type") != "object":
@@ -2577,25 +2552,22 @@ def run_self_tests() -> None:
         ),
     )
 
-    root_tool_name = "invoke_api_endpoint"
+    root_tool_name = "list_api_endpoints"
     root_annotations = {
-        "readOnlyHint": False,
-        "destructiveHint": True,
-        "idempotentHint": False,
-        "openWorldHint": True,
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
     }
     root_expected_annotations = {
-        "readOnlyHint": False,
-        "destructiveHint": True,
-        "openWorldHint": True,
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "openWorldHint": False,
     }
     root_tool = {
         "name": root_tool_name,
-        "title": "Invoke API endpoint",
-        "description": (
-            "Invoke an endpoint that may send a message, place a call, "
-            "purchase, charge, or delete resources."
-        ),
+        "title": "List API endpoints",
+        "description": "List documentation-only API endpoint metadata.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -2854,6 +2826,25 @@ def run_self_tests() -> None:
         "operation": "read",
         "tags": ["widgets"],
     }
+    catalog_tool = {**read_tool, "execution": "catalog_only"}
+    if validate_catalog({"tools": [catalog_tool]}) != [catalog_tool]:
+        raise AuditError("self-test documentation-only catalog changed")
+    expect_audit_error(
+        "executable catalog entry",
+        lambda: validate_catalog(
+            {"tools": [{**catalog_tool, "execution": "available"}]}
+        ),
+    )
+    expect_audit_error(
+        "catalog invocation tool",
+        lambda: validate_catalog(
+            {
+                "tools": [
+                    {**catalog_tool, "invocation_tool": "unexpected_executor"}
+                ]
+            }
+        ),
+    )
     validate_annotation_semantics(
         read_tool,
         {
@@ -3067,8 +3058,8 @@ def main() -> None:
         )
     else:
         print(
-            "Hosted review contract passed: OAuth, six model-visible tools, "
-            "25 app-only tools, server card, and five UI resources."
+            "Hosted review contract passed: OAuth, four model-visible tools, "
+            "eight app-only tools, server card, and two UI resources."
         )
 
     catalog_payload = call_tool(
@@ -3160,8 +3151,8 @@ def main() -> None:
 
     print(
         f"Hosted MCP release audit passed: {len(catalog)}/{len(catalog)} "
-        "endpoint schemas plus discovery, auth, tools, and UI resources; "
-        "invoke_api_endpoint was never called."
+        "documentation-only endpoint schemas plus discovery, auth, tools, "
+        "and UI resources; no API executor was exposed or called."
     )
 
 

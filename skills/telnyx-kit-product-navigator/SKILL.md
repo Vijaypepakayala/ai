@@ -4,7 +4,9 @@ description: >-
   Pick the right Telnyx product and API for a job before writing code. Use at
   the START of any Telnyx build: maps use cases (notifications, 2FA, voice
   agents, contact centers, IoT, video, fax, Twilio migration) to the correct
-  product, API surface, and companion skill.
+  product, API surface, and companion skill. Do not use for a fixed-design
+  compliance review, a runtime incident diagnosis, or a task where the Telnyx
+  product has already been selected.
 metadata:
   author: telnyx
   product: platform
@@ -21,10 +23,11 @@ Answer three questions, then jump to the row that matches.
   product plugins in the last column; they are not published in the Codex
   marketplace. Use the installed `telnyx` hosted MCP instead: call
   `list_api_endpoints` to discover the relevant operation, then call
-  `get_api_endpoint_schema` for the selected endpoint before writing a request
-  or invoking it. Stop after schema discovery unless the user asks to execute
-  an account API action; only then consider `invoke_api_endpoint` with the
-  appropriate guardrails.
+  `get_api_endpoint_schema` for the selected endpoint before writing a request.
+  The public catalog is documentation-only and cannot execute account API
+  operations. Use its exact schema to generate implementation guidance or SDK
+  code; use only a separately reviewed focused MCP App when account inspection
+  is required.
 - **Cursor**: Matching canonical product skills are already bundled in the
   flat Telnyx Cursor plugin. Load the relevant `telnyx-<product>-*` skill or
   skills from the current installation; do not run Claude `/plugin install`

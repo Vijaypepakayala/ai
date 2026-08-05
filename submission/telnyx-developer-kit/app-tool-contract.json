@@ -1,6 +1,6 @@
 {
   "mcpServerURL": "https://api.telnyx.com/v2/mcp",
-  "reviewScope": "The complete 25-tool local app-only candidate contract for five bundled UI resources. Current production discovery exposes 24 legacy app-endpoint tools; zero satisfy this complete contract, and the 25th local tool (billing_preview_billing_group_create) is not deployed. The hosted reference keeps the two create flows and their two previews fail-closed until a durable shared confirmation coordinator or upstream idempotency is deployed. Candidate tools must be hidden from model selection.",
+  "reviewScope": "The complete eight-tool app-only contract for the two publicly federated UI resources. The internal Usage and Cost Explorer implementation is intentionally excluded from public federation. These tools must remain hidden from model selection.",
   "visibility": [
     "app"
   ],
@@ -38,203 +38,16 @@
         "readOnlyHint": false,
         "destructiveHint": true,
         "idempotentHint": false,
-        "openWorldHint": true
+        "openWorldHint": false
       }
     },
     {
       "name": "number_intelligence_batch_analyze",
       "title": "Batch analyze phone numbers",
-      "description": "Billable batch Number Intelligence for pasted CSV/newline input. Each unique accepted number performs a Telnyx Number Lookup that can incur lookup charges and affect account balance; selected enrichments can make additional Telnyx API requests. Runs sequentially, caps the batch at 25 and output near 1 MiB, omits raw payloads before stopping later lookups, reports partial output explicitly, redacts outputs, and does not create, change, or delete phone-number resources.",
+      "description": "Billable batch Number Intelligence for pasted CSV/newline input. Each unique accepted number performs a Telnyx Number Lookup that can incur lookup charges and affect account balance; selected enrichments can make additional Telnyx API requests. Runs sequentially, caps the batch at 25, redacts outputs, and does not create, change, or delete phone-number resources.",
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": true,
-        "idempotentHint": false,
-        "openWorldHint": true
-      }
-    },
-    {
-      "name": "billing_overview",
-      "title": "Open billing dashboard",
-      "description": "Open a single Telnyx billing dashboard with current balance, usage controls, billing groups, and guarded auto-recharge settings.",
-      "annotations": {
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "billing_auto_recharge_setup",
-      "title": "Set up auto recharge",
-      "description": "Open a focused app for reviewing and preparing auto recharge. Opening this tool does not enable auto recharge or charge a payment method; a separately confirmed update changes future automatic charges.",
-      "annotations": {
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "billing_stored_payment_top_up",
-      "title": "Top up with stored payment",
-      "description": "Open a focused app for reviewing a stored-payment top-up. Opening this tool does not charge a payment method; a separately previewed and confirmed transaction charges the saved method.",
-      "annotations": {
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "billing_get_balance",
-      "title": "Get account balance",
-      "description": "Read account balance details from GET /balance.",
-      "annotations": {
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "billing_get_auto_recharge_preferences",
-      "title": "Get auto-recharge preferences",
-      "description": "Read auto-recharge preferences from GET /payment/auto_recharge_prefs. This does not mutate billing settings.",
-      "annotations": {
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "billing_list_billing_groups",
-      "title": "List billing groups",
-      "description": "List billing groups from GET /billing_groups. Billing group IDs are preserved for follow-up calls.",
-      "annotations": {
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "billing_get_billing_group",
-      "title": "Get billing group",
-      "description": "Fetch one billing group by ID from GET /billing_groups/{id}.",
-      "annotations": {
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "billing_usage_report_options",
-      "title": "Discover Usage Reports options (beta)",
-      "description": "Discover available products, dimensions, and metrics from GET /usage_reports/options. Usage Reports is beta.",
-      "annotations": {
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "billing_query_usage",
-      "title": "Query Usage Reports (beta)",
-      "description": "Query the Telnyx Usage Reports beta endpoint and return structured JSON. Requires one product plus dimensions[] and metrics[]. Defaults format=json, managed_accounts=false, caps page size, and limits explicit start/end ranges to 31 days.",
-      "annotations": {
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": true,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "billing_preview_auto_recharge_update",
-      "title": "Preview auto-recharge update",
-      "description": "Preview a financial side-effect update to PATCH /payment/auto_recharge_prefs. No mutation occurs; returns a diff and confirmation token.",
-      "annotations": {
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "billing_update_auto_recharge_preferences",
-      "title": "Confirm auto-recharge update",
-      "description": "Guarded financial side-effect that changes future automatic charges: validates the confirmation token from billing_preview_auto_recharge_update, enforces conservative app caps, refetches current preferences, then PATCHes.",
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": true,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "billing_preview_stored_payment_transaction",
-      "title": "Preview stored payment top-up",
-      "description": "Preview a financial side-effect transaction to POST /payment/stored_payment_transactions. No mutation occurs; returns a short-lived, one-time confirmation token.",
-      "annotations": {
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "billing_create_stored_payment_transaction",
-      "title": "Confirm stored payment top-up",
-      "description": "Guarded, billable financial side-effect: atomically reserves the one-time confirmation token from billing_preview_stored_payment_transaction, then charges the saved payment method with POST /payment/stored_payment_transactions. The reservation is released only after a successful bounded MCP result is produced.",
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": true,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "billing_preview_billing_group_update",
-      "title": "Preview billing group update",
-      "description": "Preview a billing group rename from PATCH /billing_groups/{id}. No mutation occurs; returns a diff and confirmation token.",
-      "annotations": {
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "billing_update_billing_group",
-      "title": "Confirm billing group update",
-      "description": "Guarded destructive update that replaces an existing billing group name: validates the token from billing_preview_billing_group_update, refetches current group, then PATCHes /billing_groups/{id}.",
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": true,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "billing_preview_billing_group_create",
-      "title": "Preview billing group creation",
-      "description": "Preview adding a billing group with POST /billing_groups. No resource is created; returns a short-lived, one-time confirmation token bound to the credential and exact name.",
-      "annotations": {
-        "readOnlyHint": true,
-        "destructiveHint": false,
-        "idempotentHint": false,
-        "openWorldHint": false
-      }
-    },
-    {
-      "name": "billing_create_billing_group",
-      "title": "Create billing group",
-      "description": "Guarded additive side effect: atomically reserves the one-time token from billing_preview_billing_group_create, then adds exactly one billing group with POST /billing_groups. This action does not charge a payment method or alter auto-recharge settings.",
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": false,
         "idempotentHint": false,
         "openWorldHint": false
       }
@@ -264,7 +77,7 @@
     {
       "name": "voice_monitor_active_calls",
       "title": "List active calls",
-      "description": "List active calls for a selected Call Control Application ID. If omitted, discovers a bounded set of call-control applications and queries each; it never assumes a global active-calls endpoint. Aggregate output is capped near 1 MiB, reports truncation explicitly, and stops querying later connections once the cap is reached.",
+      "description": "List active calls for a selected Call Control Application ID. If omitted, discovers a bounded set of call-control applications and queries each; it never assumes a global active-calls endpoint.",
       "annotations": {
         "readOnlyHint": true,
         "destructiveHint": false,

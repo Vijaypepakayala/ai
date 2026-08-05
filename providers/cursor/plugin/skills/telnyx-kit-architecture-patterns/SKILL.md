@@ -3,7 +3,9 @@ name: telnyx-kit-architecture-patterns
 description: >-
   Reference architectures for Telnyx builds: AI voice agents, high-volume
   messaging, webhook processing, and multi-product apps. Use when DESIGNING a
-  system (before code) to pick components, data flow, and failure handling.
+  system (before code) to pick components, data flow, and failure handling. Do
+  not use for a fixed-design guardrail review, a runtime incident diagnosis,
+  or a channel/product comparison that does not request system architecture.
 metadata:
   author: telnyx
   product: platform
@@ -91,9 +93,14 @@ TeXML instruction requests and status callbacks are a separate wire format:
 - Configure distinct primary and failover webhook URLs for critical call
   paths. Exercise failover before launch; both endpoints must verify
   signatures, share the same durable dedupe store, and fast-ack before work.
-- Correlate `data.id`, `call_session_id`, `call_leg_id`, `command_id`, Telnyx
-  request IDs, and error codes across ingress, commands, and workers. Alert on
-  primary/failover delivery failures, queue age, and duplicate suppression.
+- Correlate `data.id`, `call_control_id`, `call_session_id`, `call_leg_id`,
+  `command_id`, Telnyx request IDs, and error codes across ingress, commands,
+  and workers. Alert on primary/failover delivery failures, queue age, and
+  duplicate suppression. Never log API keys or webhook secrets, recording
+  URLs, recording media, or transcript content.
+- In every architecture response that includes observability or recording,
+  state that logging must exclude API keys, webhook secrets, recording URLs,
+  recording media, and transcript content; do not leave this boundary implied.
 - For a static single-tenant service, validate its process-wide API key,
   profile IDs, and connection IDs at startup. In a delegated multi-tenant
   service, validate the current tenant's credential and resource IDs before

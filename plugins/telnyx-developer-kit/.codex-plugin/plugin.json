@@ -28,7 +28,7 @@
   "interface": {
     "displayName": "Telnyx Developer Kit",
     "shortDescription": "Build and debug with Telnyx",
-    "longDescription": "Plan, build, review, and debug communications applications with Telnyx. Four bundled skills help select products, design architectures, apply security and compliance guardrails, and troubleshoot Messaging, Voice, Call Control, TeXML, WebRTC, Verify, Numbers, 10DLC, and Twilio migrations. The hosted Telnyx MCP server provides live API discovery, account data, and authenticated API actions.",
+    "longDescription": "Plan, build, review, and debug communications applications with Telnyx. Four bundled skills help select products, design architectures, apply security and compliance guardrails, and troubleshoot Messaging, Voice, Call Control, TeXML, WebRTC, Verify, Numbers, 10DLC, and Twilio migrations. The hosted Telnyx MCP server provides documentation-only API contract discovery plus focused interfaces for bounded Number Intelligence and Voice Monitor workflows.",
     "developerName": "Telnyx",
     "category": "Developer Tools",
     "capabilities": [

@@ -1,6 +1,6 @@
 {
   "mcpServerURL": "https://api.telnyx.com/v2/mcp",
-  "reviewScope": "The six model-visible tools required by the release-candidate contract. The current production server card advertises three of those six and still marks MCP Apps experimental. The separately reviewed 25-tool local app-only candidate is intentionally excluded from this annotation-justification document.",
+  "reviewScope": "The four model-visible tools required by the release-candidate contract. The API catalog is documentation-only and cannot execute account API requests. The separately reviewed eight-tool app-only contract for Number Intelligence and Voice Monitor is intentionally excluded from this annotation-justification document. The internal billing app is not publicly federated.",
   "tools": [
     {
       "name": "get_api_endpoint_schema",
@@ -25,17 +25,6 @@
       }
     },
     {
-      "name": "invoke_api_endpoint",
-      "readOnlyHint": false,
-      "openWorldHint": true,
-      "destructiveHint": true,
-      "justification": {
-        "readOnlyHint": "The selected endpoint can read or mutate account state.",
-        "openWorldHint": "Selected endpoints can send messages, place calls, submit registrations, or otherwise affect third parties.",
-        "destructiveHint": "Selected endpoints can delete resources, purchase numbers, incur charges, or trigger other irreversible effects."
-      }
-    },
-    {
       "name": "open_number_intelligence",
       "readOnlyHint": true,
       "openWorldHint": false,
@@ -44,17 +33,6 @@
         "readOnlyHint": "Opens the Number Intelligence interface and does not itself perform a lookup.",
         "openWorldHint": "Opening the bundled interface does not change public or third-party state.",
         "destructiveHint": "Opening the bundled interface cannot delete or overwrite data."
-      }
-    },
-    {
-      "name": "open_usage_cost_explorer",
-      "readOnlyHint": true,
-      "openWorldHint": false,
-      "destructiveHint": false,
-      "justification": {
-        "readOnlyHint": "Returns the Usage and Cost Explorer interface; its initial dashboard population is limited to balance, billing-group, auto-recharge, and report-option reads.",
-        "openWorldHint": "Opening and populating the bundled interface does not change public or third-party state.",
-        "destructiveHint": "The opener and initial reads cannot charge a payment method or mutate billing settings."
       }
     },
     {

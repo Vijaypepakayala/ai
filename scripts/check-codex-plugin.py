@@ -112,7 +112,6 @@ EXPECTED_SKILLS = {
 }
 EXPECTED_UI_OPENERS = {
     "open_number_intelligence",
-    "open_usage_cost_explorer",
     "open_voice_monitor",
 }
 PUBLIC_CATEGORIES = {
@@ -141,17 +140,7 @@ EXPECTED_ROOT_TOOL_ANNOTATIONS = {
         "openWorldHint": False,
         "destructiveHint": False,
     },
-    "invoke_api_endpoint": {
-        "readOnlyHint": False,
-        "openWorldHint": True,
-        "destructiveHint": True,
-    },
     "open_number_intelligence": {
-        "readOnlyHint": True,
-        "openWorldHint": False,
-        "destructiveHint": False,
-    },
-    "open_usage_cost_explorer": {
         "readOnlyHint": True,
         "openWorldHint": False,
         "destructiveHint": False,
@@ -758,29 +747,25 @@ def validate_kit_skill_semantics(skill_texts: dict[str, str]) -> None:
     codex_position = navigator.find(codex_marker)
     list_position = navigator.find("`list_api_endpoints`", codex_position)
     schema_position = navigator.find("`get_api_endpoint_schema`", list_position)
-    stop_position = navigator.find("Stop after schema discovery", schema_position)
-    invoke_position = navigator.find("`invoke_api_endpoint`", stop_position)
+    catalog_only_position = navigator.find("documentation-only", schema_position)
     codex_route_positions = (
         codex_position,
         list_position,
         schema_position,
-        stop_position,
-        invoke_position,
+        catalog_only_position,
     )
     require(
         all(position != -1 for position in codex_route_positions)
         and codex_position
         < list_position
         < schema_position
-        < stop_position
-        < invoke_position,
+        < catalog_only_position,
         "product navigator must route Codex through list_api_endpoints, then "
-        "get_api_endpoint_schema, and stop before invoke_api_endpoint",
+        "get_api_endpoint_schema, and identify the catalog as documentation-only",
     )
     require(
-        "unless the user asks to execute" in navigator,
-        "product navigator must require an explicit user execution request "
-        "before Codex invokes an account API action",
+        "cannot execute account API" in navigator,
+        "product navigator must prohibit account API execution through the catalog",
     )
 
     cursor_position = navigator.find("**Cursor**")
@@ -1855,7 +1840,7 @@ def validate_review_materials() -> None:
             )
         require(
             set(covered_tools) == set(EXPECTED_ROOT_TOOL_ANNOTATIONS),
-            "positive review cases must cover all six model-visible MCP tools",
+            "positive review cases must cover all four model-visible MCP tools",
         )
         for opener_name in EXPECTED_UI_OPENERS:
             require(
@@ -1985,7 +1970,7 @@ def validate_review_materials() -> None:
         }
         require(
             set(indexed_tools) == set(EXPECTED_ROOT_TOOL_ANNOTATIONS),
-            "annotation justifications must cover exactly the six model-visible "
+            "annotation justifications must cover exactly the four model-visible "
             "MCP tools",
         )
         require(
@@ -2182,6 +2167,14 @@ if isinstance(interface, dict):
     require(
         interface.get("shortDescription") == "Build and debug with Telnyx",
         "manifest short description must be public-directory ready",
+    )
+    long_description = interface.get("longDescription")
+    require(
+        isinstance(long_description, str)
+        and "documentation-only API contract discovery" in long_description
+        and "authenticated API actions" not in long_description
+        and "account data" not in long_description,
+        "manifest long description must match the documentation-only public MCP contract",
     )
     require(
         interface.get("websiteURL") == "https://developers.telnyx.com",

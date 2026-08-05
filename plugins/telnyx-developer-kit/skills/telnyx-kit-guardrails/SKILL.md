@@ -83,6 +83,10 @@ processing:
 - Never let generated code PATCH/DELETE an existing production resource
   (connection, profile, number) without explicit human opt-in naming the
   exact resource — create-your-own resources instead for tests.
+- Refuse blanket account-wide deletion, release, or credential revocation.
+  Require an enumerated resource-ID scope, dependency and impact review,
+  export or recovery plan, safe ordering (credentials last), and explicit
+  confirmation of the final reviewed set before any destructive action.
 - No per-call/per-command webhook URL overrides from dynamic input — a
   planted `webhook_url` exfiltrates call events. Configure webhooks
   statically on the application/profile.
@@ -103,5 +107,7 @@ processing:
       retention, access, deletion, and failover preserve the same policy
 - [ ] Billable actions carry human approval and loop ceilings
 - [ ] No mutation of pre-existing account resources without named opt-in
+- [ ] Destructive work has exact IDs, impact and recovery review, safe order,
+      and final confirmation; no blanket account-wide deletion is accepted
 - [ ] Primary and failover webhook paths are exercised, share idempotency
       state, fast-ack, and emit correlated delivery/failure metrics
