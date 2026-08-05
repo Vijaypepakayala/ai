@@ -5,7 +5,7 @@ Read-only Telnyx MCP App for active-call monitoring, call timelines, call status
 ## Tools
 
 - `voice_monitor_list_options` — discovers connections, call-control applications, and voice numbers for dropdowns.
-- `voice_monitor_active_calls` — lists active calls for a selected connection, or a capped set of discovered connections when omitted.
+- `voice_monitor_active_calls` — lists active calls for a selected connection, or a capped set of discovered connections when omitted. The aggregate response is capped near 1 MiB and stops querying later connections once the cap is reached.
 - `voice_monitor_call_timeline` — reads `GET /call_events` with supported deepObject filters.
 - `voice_monitor_call_status` — reads `GET /calls/{call_control_id}`.
 - `voice_monitor_recordings` — searches recordings with sensitive URLs/transcripts/metadata redacted.
@@ -15,6 +15,8 @@ Read-only Telnyx MCP App for active-call monitoring, call timelines, call status
 This app is read-only. It does not answer, hang up, transfer, speak, record, modify conferences, modify queues, or mutate Telnyx resources.
 
 The app preserves operational IDs needed for follow-up (`connection_id`, `call_control_id`, `call_leg_id`, `call_session_id`) while redacting phone numbers, credentials, recording URLs, transcripts, and metadata.
+
+Active-call payloads appear once in `active_calls`; `per_connection` contains counts only, avoiding duplicate large arrays. A bounded partial response sets `truncated_output: true`, includes an explicit warning, and lists only the connections actually queried. Every tool also has a final serialized-output cap with a generic safe error if an upstream shape cannot be returned safely.
 
 ## Configuration
 

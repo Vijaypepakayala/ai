@@ -1,7 +1,25 @@
+const MCP_APP_CONTENT_SECURITY_POLICY = [
+  "default-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "connect-src 'none'",
+  "frame-src 'none'",
+  "img-src 'none'",
+  "media-src 'none'",
+  "font-src 'none'",
+  "object-src 'none'",
+  "script-src 'unsafe-inline'",
+  "style-src 'unsafe-inline'"
+].join("; ");
+
+const MCP_APP_SECURITY_META = `    <meta name="color-scheme" content="light dark" />
+    <meta http-equiv="Content-Security-Policy" content="${MCP_APP_CONTENT_SECURITY_POLICY}" />`;
+
 export const NUMBER_INTELLIGENCE_UI_HTML = String.raw`<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+${MCP_APP_SECURITY_META}
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Telnyx Number Intelligence</title>
     <style>
@@ -67,6 +85,8 @@ export const NUMBER_INTELLIGENCE_UI_HTML = String.raw`<!doctype html>
       }
       .eyebrow { color: var(--accent-strong); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
       .toolbar { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 10px; margin: 18px 0 12px; }
+      .billing-notice { margin: 0 0 12px; padding: 12px 14px; border: 2px solid var(--warn); border-radius: 8px; background: var(--panel); color: var(--text); line-height: 1.45; }
+      .billing-notice strong { color: var(--warn); }
       .source-options { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 18px; }
       .checkbox { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 13px; }
       .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
@@ -135,6 +155,10 @@ export const NUMBER_INTELLIGENCE_UI_HTML = String.raw`<!doctype html>
         <input id="phoneInput" name="phone" autocomplete="tel" aria-label="Phone number" placeholder="+13125550123" />
         <button id="analyzeButton" type="submit">Analyze</button>
       </form>
+
+      <div class="billing-notice" role="note" aria-label="Billable lookup notice">
+        <strong>Billable lookup.</strong> Each submitted number triggers one Telnyx Number Lookup that may incur a charge. Batch analysis accepts at most 25 unique numbers and can trigger up to 25 billable lookups; confirm the submitted count before running it.
+      </div>
 
       <div class="source-options" aria-label="Source options">
         <label class="checkbox"><input type="checkbox" value="owned" checked /> owned</label>
@@ -322,7 +346,9 @@ export const NUMBER_INTELLIGENCE_UI_HTML = String.raw`<!doctype html>
         const health = first?.health || {};
         els.empty.classList.add("hidden");
         els.result.classList.remove("hidden");
-        els.modeStatus.textContent = isBatch ? "Batch: " + text(result.total, result.results.length) + " numbers" : "Single number";
+        els.modeStatus.textContent = isBatch
+          ? "Batch: " + text(result.total, result.results.length) + " returned of " + text(result.requested_total, result.results.length) + " requested" + (result.truncated ? " · partial" : "")
+          : "Single number";
 
         if (first?.normalized?.e164 || first?.display?.redacted) {
           els.phone.value = first.normalized?.e164 || first.display?.redacted || "";
@@ -360,7 +386,12 @@ export const NUMBER_INTELLIGENCE_UI_HTML = String.raw`<!doctype html>
         const counts = result.aggregate?.health_status_counts || {};
         const summary = document.createElement("p");
         summary.className = "meta";
-        summary.textContent = "Total: " + result.total + "; action-required signals: " + text(result.aggregate?.action_required_count, 0) + "; good/warning/bad/unknown: " + [counts.good || 0, counts.warning || 0, counts.bad || 0, counts.unknown || 0].join("/");
+        summary.textContent = "Requested: " + text(result.requested_total, result.total) + "; queried: " + text(result.queried_total, result.total) + "; returned: " + result.total + "; action-required signals: " + text(result.aggregate?.action_required_count, 0) + "; good/warning/bad/unknown: " + [counts.good || 0, counts.warning || 0, counts.bad || 0, counts.unknown || 0].join("/");
+
+        const warnings = Array.isArray(result.warnings) ? result.warnings : [];
+        const warning = document.createElement("p");
+        warning.className = "meta " + (result.truncated ? "status-warning" : "");
+        warning.textContent = warnings.join(" ");
 
         const wrap = document.createElement("div");
         wrap.className = "table-wrap";
@@ -385,7 +416,9 @@ export const NUMBER_INTELLIGENCE_UI_HTML = String.raw`<!doctype html>
         }
         table.append(tbody);
         wrap.append(table);
-        els.batchContent.append(summary, wrap);
+        els.batchContent.append(summary);
+        if (warning.textContent) els.batchContent.append(warning);
+        els.batchContent.append(wrap);
       }
 
       function extractResult(result) {

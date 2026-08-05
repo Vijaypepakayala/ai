@@ -286,13 +286,19 @@ Configure webhook URLs in your messaging profile to receive delivery reports and
 ```json
 {
   "data": {
-    "event_type": "message.delivered",
+    "event_type": "message.finalized",
     "id": "uuid",
     "occurred_at": "2024-01-15T12:00:00Z",
     "payload": {
-      "to": "+15559876543",
-      "from": "+15551234567",
-      "status": "delivered"
+      "id": "msg-uuid",
+      "to": [
+        {
+          "phone_number": "+15559876543",
+          "status": "delivered"
+        }
+      ],
+      "from": {"phone_number": "+15551234567"},
+      "errors": []
     }
   }
 }

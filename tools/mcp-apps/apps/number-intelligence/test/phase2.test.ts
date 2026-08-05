@@ -158,6 +158,10 @@ describe("phase 2 batch analysis", () => {
     );
 
     expect(result.total).toBe(2);
+    expect(result.requested_total).toBe(2);
+    expect(result.queried_total).toBe(2);
+    expect(result.truncated).toBe(false);
+    expect(result.warnings).toEqual([]);
     expect(result.aggregate.health_status_counts.good).toBe(2);
     expect(result.aggregate.action_required_count).toBe(0);
     expect(result.results).toHaveLength(2);
@@ -175,6 +179,69 @@ describe("phase 2 batch analysis", () => {
       )
     ).rejects.toThrow("at most 2 numbers");
     expect(lookupCalls).toBe(0);
+  });
+
+  it("omits raw payloads first and stops later billable lookups at the aggregate output cap", async () => {
+    const numbers = Array.from({ length: 10 }, (_, index) => `+13125550${String(index).padStart(3, "0")}`);
+    let lookupCalls = 0;
+    const result = await analyzeBatchNumbers(
+      { numbers, include_raw: true, sources: ["lookup"] },
+      {
+        lookupClient: {
+          async lookupNumber(phoneNumber) {
+            lookupCalls += 1;
+            return {
+              data: {
+                ...lookupResponse.data,
+                phone_number: phoneNumber,
+                provider_payload: Array.from({ length: 2 }, () => "x".repeat(4096))
+              }
+            };
+          }
+        }
+      },
+      { maxBatchSize: 25, maxOutputBytes: 16 * 1024 }
+    );
+
+    expect(result.requested_total).toBe(10);
+    expect(result.queried_total).toBe(lookupCalls);
+    expect(result.queried_total).toBeGreaterThan(result.total);
+    expect(result.total).toBeLessThan(result.requested_total);
+    expect(result.truncated).toBe(true);
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/raw lookup payloads were omitted/i),
+        expect.stringMatching(/queried result could not be returned.*later numbers were not queried/i)
+      ])
+    );
+    expect(result.results.every((item) => item.raw === undefined)).toBe(true);
+    expect(lookupCalls).toBeGreaterThan(1);
+    expect(lookupCalls).toBeLessThan(numbers.length);
+    expect(new TextEncoder().encode(JSON.stringify(result)).byteLength).toBeLessThanOrEqual(16 * 1024);
+  });
+
+  it("stops an ambiguous batch without encouraging a rebill of earlier lookups", async () => {
+    let lookupCalls = 0;
+    await expect(
+      analyzeBatchNumbers(
+        {
+          numbers: ["+13125550100", "+13125550101", "+13125550102"],
+          sources: ["lookup"]
+        },
+        {
+          lookupClient: {
+            async lookupNumber() {
+              lookupCalls += 1;
+              if (lookupCalls === 2) throw new Error("timeout after request write");
+              return lookupResponse;
+            }
+          }
+        }
+      )
+    ).rejects.toThrow(
+      /stopped after 2 attempted lookups.*may have been billed.*no later numbers were queried.*do not retry the whole batch automatically/i
+    );
+    expect(lookupCalls).toBe(2);
   });
 });
 

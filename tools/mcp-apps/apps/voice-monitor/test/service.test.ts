@@ -77,7 +77,13 @@ describe("Voice Monitor service", () => {
     expect(consulted).toEqual(["app_1", "app_2"]);
     expect(result.connections_consulted).toEqual(["app_1", "app_2"]);
     expect(result.truncated_connections).toBe(true);
+    expect(result.truncated_output).toBe(false);
     expect(result.total_active_calls).toBe(2);
+    expect(result.per_connection).toEqual([
+      { connection_id: "app_1", active_call_count: 1 },
+      { connection_id: "app_2", active_call_count: 1 }
+    ]);
+    expect(result.per_connection.every((entry) => !("data" in entry))).toBe(true);
     expect(JSON.stringify(result)).toContain("call_app_1");
     expect(JSON.stringify(result)).not.toContain("15551234567");
   });
@@ -100,6 +106,46 @@ describe("Voice Monitor service", () => {
 
     expect(calls).toEqual(["conn_keep_for_followup:100"]);
     expect(result.connections_consulted).toEqual(["conn_keep_for_followup"]);
+  });
+
+  it("bounds aggregate active-call output and stops querying later connections", async () => {
+    const consulted: string[] = [];
+    const connectionIds = ["app_1", "app_2", "app_3", "app_4", "app_5"];
+    const maxOutputBytes = 20 * 1024;
+    const service = createVoiceMonitorService(
+      fakeClient({
+        listCallControlApplications: async () => ({
+          data: connectionIds.map((id) => ({ id, application_name: id }))
+        }),
+        listActiveCalls: async (connectionId) => {
+          consulted.push(connectionId);
+          return {
+            data: [
+              {
+                call_control_id: `call_${connectionId}`,
+                provider_fragments: Array.from({ length: 3 }, () => "x".repeat(4096))
+              }
+            ]
+          };
+        }
+      }),
+      { maxDiscoveryConnections: 5, maxAggregateOutputBytes: maxOutputBytes }
+    );
+
+    const result = await service.activeCalls({ pageSize: 100 });
+
+    expect(result.truncated_output).toBe(true);
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: "active_calls", message: expect.stringMatching(/output byte limit/i) })
+      ])
+    );
+    expect(consulted.length).toBeGreaterThan(0);
+    expect(consulted.length).toBeLessThan(connectionIds.length);
+    expect(result.connections_consulted).toEqual(consulted);
+    expect(result.per_connection.every((entry) => !("data" in entry))).toBe(true);
+    expect(result.total_active_calls).toBe(result.active_calls.length);
+    expect(new TextEncoder().encode(JSON.stringify(result)).byteLength).toBeLessThanOrEqual(maxOutputBytes);
   });
 
   it("normalizes call timeline filters and defaults connection-only searches to a bounded last-24-hour window", async () => {

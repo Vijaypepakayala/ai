@@ -1,6 +1,10 @@
 {
   "name": "@telnyx/mcp-apps",
   "private": true,
+  "packageManager": "npm@11.17.0",
+  "engines": {
+    "node": ">=22"
+  },
   "type": "module",
   "description": "App-layer Telnyx MCP servers and MCP Apps UI resources.",
   "main": "dist/src/index.js",
@@ -21,14 +25,15 @@
     "build": "tsc -p tsconfig.json && npm --workspaces run build"
   },
   "dependencies": {
-    "@hono/node-server": "^2.0.3",
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "hono": "^4.12.21"
+    "@hono/node-server": "^2.0.12",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "hono": "^4.12.32"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "tsx": "^4.20.6",
+    "ajv": "^8.20.0",
+    "tsx": "^4.23.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.13"
+    "vitest": "^4.1.10"
   }
 }

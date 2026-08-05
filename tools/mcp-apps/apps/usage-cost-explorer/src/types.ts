@@ -2,6 +2,9 @@ export interface TelnyxClientOptions {
   apiKey: string;
   baseUrl?: string;
   fetch?: typeof fetch;
+  timeoutMs?: number;
+  maxResponseBytes?: number;
+  signal?: AbortSignal;
 }
 
 export interface TelnyxEnvelope<T = unknown> {
@@ -79,7 +82,7 @@ export interface UsageReportOptionsInput {
   product?: string;
 }
 
-export type UsageReportFormat = "json" | "csv";
+export type UsageReportFormat = "json";
 
 export interface UsageQueryInput {
   product: string;

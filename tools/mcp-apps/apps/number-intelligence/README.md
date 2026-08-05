@@ -19,6 +19,8 @@ Current scope:
 - **No secrets in tests.** Tests use injected `fetch`/client stubs and do not require a real Telnyx API key.
 - **Default outputs are redacted.** `input.phone_number`, `normalized`, and `display` values use redacted phone-number strings; exact numbers are used only internally for lookup requests.
 - **Raw responses are opt-in and redacted.** `include_raw` defaults to `false`; when enabled, raw values pass through phone-number redaction.
+- **Billable ambiguity is fail-safe.** Network failures, cancellations, timeouts, HTTP 408/429, and 5xx responses leave the lookup outcome unknown. The app warns that the request may have been billed and does not recommend an automatic retry. Deterministic non-auth 4xx rejections return a review action instead of a blind retry action; 401/403 remain hard authentication/authorization failures.
+- **Output is bounded.** Batch results are capped near 1 MiB. Accumulated raw payloads are omitted first; if the remaining result would still exceed the cap, later numbers are not queried and `requested_total`, `queried_total`, `truncated`, and `warnings` make the partial and potentially billable work explicit. A final serialized tool-result cap protects single and batch tools.
 - **Avoid logging full numbers/secrets.** The client does not log requests or Authorization headers.
 
 ## APIs used
@@ -71,6 +73,8 @@ The server is built on the official `@modelcontextprotocol/sdk` and registers MC
   - `numbers` as newline/CSV text or an array of strings
   - conservative max batch size: 25
   - runs sequentially, redacts per-number output, and returns aggregate health/action counts
+  - caps output near 1 MiB, omits raw payloads before dropping results, and stops later billable lookups when the cap is reached
+  - returns `requested_total`, `queried_total`, `total`, `truncated`, and `warnings` so callers can distinguish requested, queried/billable, returned, and bounded-partial work
 - resource: `ui://number-intelligence/index.html` (mimeType `text/html;profile=mcp-app`)
 
 If `TELNYX_API_KEY` is missing, tool calls return a safe error result instead of attempting a live lookup.
@@ -151,4 +155,5 @@ A host that supports the MCP Apps extension can resolve the tool's `_meta.ui.res
 - Portability is opt-in because it is a read-first POST, even though it does not create a port order.
 - Cached reputation is opt-in and always uses `fresh=false`; fresh/billed reputation lookups are not exposed.
 - `normalized.e164` is best-effort, not validated (see `normalized.e164_validated`).
+- A transport failure after request upload can be indistinguishable from a completed billable lookup. Ambiguous failures intentionally require a human to verify the prior outcome before choosing whether to retry.
 - The UI resource consumes `structuredContent` and attempts common host bridge names for re-analysis; host-specific MCP Apps client integration can vary.

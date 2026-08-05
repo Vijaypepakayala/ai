@@ -8,10 +8,11 @@ import type {
   TelnyxEnvelope,
   VoiceNumberData
 } from "./types.js";
+import { fetchBoundedJson } from "./boundedFetch.js";
 
 const DEFAULT_BASE_URL = "https://api.telnyx.com/v2";
+const MAX_SAFE_MESSAGE_CHARS = 4096;
 const OPERATIONAL_ID_KEYS = new Set([
-  "id",
   "connection_id",
   "call_control_id",
   "call_leg_id",
@@ -20,7 +21,6 @@ const OPERATIONAL_ID_KEYS = new Set([
   "leg_id",
   "conference_id",
   "queue_name",
-  "value",
   "connections_consulted"
 ]);
 
@@ -40,6 +40,9 @@ export class TelnyxVoiceMonitorClient {
   private readonly apiKey: string;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly timeoutMs: number | undefined;
+  private readonly maxResponseBytes: number | undefined;
+  private readonly signal: AbortSignal | undefined;
 
   constructor(options: TelnyxClientOptions) {
     if (!options.apiKey) {
@@ -48,6 +51,9 @@ export class TelnyxVoiceMonitorClient {
     this.apiKey = options.apiKey;
     this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
     this.fetchImpl = options.fetch ?? globalThis.fetch;
+    this.timeoutMs = options.timeoutMs;
+    this.maxResponseBytes = options.maxResponseBytes;
+    this.signal = options.signal;
     if (!this.fetchImpl) {
       throw new Error("A fetch implementation is required");
     }
@@ -125,8 +131,16 @@ export class TelnyxVoiceMonitorClient {
       ...(init.body ? { "Content-Type": "application/json" } : {}),
       ...(init.headers as Record<string, string> | undefined)
     };
-    const response = await this.fetchImpl(url.toString(), { ...init, headers });
-    const body = await parseJson(response);
+    const { response, body } = await fetchBoundedJson(
+      this.fetchImpl,
+      url.toString(),
+      { ...init, headers },
+      {
+        timeoutMs: this.timeoutMs,
+        maxResponseBytes: this.maxResponseBytes,
+        signal: this.signal
+      }
+    );
     if (!response.ok) {
       const sanitizedDetails = sanitizeVoiceMonitorValue(body);
       const message = sanitizeMessage(extractTelnyxErrorMessage(sanitizedDetails) ?? `Telnyx request failed with status ${response.status}`);
@@ -144,16 +158,6 @@ function addPaging(url: URL, input: PageInput): void {
 function addFilter(url: URL, name: string, value: unknown, rawKey = `filter[${name}]`): void {
   if (value === undefined || value === null || value === "") return;
   url.searchParams.append(rawKey, String(value));
-}
-
-async function parseJson(response: Response): Promise<unknown> {
-  const text = await response.text();
-  if (!text) return {};
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return { text };
-  }
 }
 
 function extractTelnyxErrorMessage(body: unknown): string | undefined {
@@ -179,7 +183,9 @@ export function sanitizeVoiceMonitorValue(value: unknown, key = ""): unknown {
   if (value && typeof value === "object") {
     const output: Record<string, unknown> = {};
     for (const [nestedKey, nestedValue] of Object.entries(value)) {
-      if (isMetadataKey(nestedKey)) output[nestedKey] = "[redacted-metadata]";
+      if (nestedKey === "meta" && key === "") {
+        output[nestedKey] = sanitizeVoiceMonitorValue(nestedValue, "response_meta");
+      } else if (isMetadataKey(nestedKey)) output[nestedKey] = "[redacted-metadata]";
       else if (isTranscriptKey(nestedKey)) output[nestedKey] = "[redacted-transcript]";
       else if (isRecordingUrlKey(nestedKey)) output[nestedKey] = "[redacted-recording-url]";
       else if (isSecretKey(nestedKey)) output[nestedKey] = "[redacted-secret]";
@@ -188,7 +194,7 @@ export function sanitizeVoiceMonitorValue(value: unknown, key = ""): unknown {
     return output;
   }
   if (typeof value === "string") {
-    if (OPERATIONAL_ID_KEYS.has(key)) return sanitizeMessage(value, false, false);
+    if (OPERATIONAL_ID_KEYS.has(key)) return sanitizeMessage(value, false, true);
     if (isPhoneKey(key)) return redactPhoneNumbers(sanitizeMessage(value));
     return sanitizeMessage(value);
   }
@@ -200,11 +206,17 @@ function isPhoneKey(key: string): boolean {
 }
 
 function isSecretKey(key: string): boolean {
-  return /(^|_)(auth|authorization|api_?key|secret|token|password|credential|private_key)($|_)/i.test(key);
+  const normalized = key.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
+  return (
+    /^auth(?!or)/.test(normalized) ||
+    /(authorization|apikey|secret|token|password|credential|privatekey|clientsecret|accesstoken|refreshtoken)/.test(
+      normalized
+    )
+  );
 }
 
 function isRecordingUrlKey(key: string): boolean {
-  return /(^|_)(recording_?url|download_?url|media_?url|audio_?url|url)($|_)/i.test(key);
+  return /(^|_)(recording_?urls?|download_?urls?|media_?urls?|audio_?urls?|urls?)($|_)/i.test(key);
 }
 
 function isTranscriptKey(key: string): boolean {
@@ -212,7 +224,7 @@ function isTranscriptKey(key: string): boolean {
 }
 
 function isMetadataKey(key: string): boolean {
-  return /(^|_)(metadata|meta|payload|webhook_payload)($|_)/i.test(key);
+  return /(^|_)(metadata|meta|payload|webhook_payload|client_state)($|_)/i.test(key);
 }
 
 function sanitizeMessage(message: string, redactPhones = true, redactPayments = true): string {
@@ -220,9 +232,16 @@ function sanitizeMessage(message: string, redactPhones = true, redactPayments = 
     .replace(/Authorization\s*:\s*Bearer\s+[^\s;,)]+/gi, "Authorization: Bearer [redacted-secret]")
     .replace(/Bearer\s+[^\s;,)]+/gi, "Bearer [redacted-secret]")
     .replace(/\b(?:sk|pk|key|api)[_-]?(?:live|test|secret)?_[A-Za-z0-9_\-]{6,}\b/gi, "[redacted-secret]")
-    .replace(/\b(?:api[_-]?key|secret|token|password)\s*(?:[=:]|\s)\s*[^\s;,)]+/gi, (match) => `${match.split(/[=:\s]/)[0]}=[redacted-secret]`);
+    .replace(
+      /(["']?(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key|secret|token|password)["']?\s*[:=]\s*)(["'])[^"'\r\n]*\2/gi,
+      "$1$2[redacted-secret]$2"
+    )
+    .replace(/\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key|secret|token|password)\s*(?:[=:]|\s)\s*[^\s;,)]+/gi, (match) => `${match.split(/[=:\s]/)[0]}=[redacted-secret]`);
   const withoutPayments = redactPayments ? withoutSecrets.replace(/\b(?:\d[ -]*?){13,19}\b/g, "[redacted-payment]") : withoutSecrets;
-  return redactPhones ? redactPhoneNumbers(withoutPayments) : withoutPayments;
+  const sanitized = redactPhones ? redactPhoneNumbers(withoutPayments) : withoutPayments;
+  return sanitized.length <= MAX_SAFE_MESSAGE_CHARS
+    ? sanitized
+    : `${sanitized.slice(0, MAX_SAFE_MESSAGE_CHARS)}…[truncated]`;
 }
 
 function redactPhoneNumbers(value: string): string {

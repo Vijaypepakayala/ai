@@ -9,7 +9,7 @@
 
 ## What Are Webhooks?
 
-Webhooks are HTTP POST requests that Telnyx sends to your server when events occur — message delivered, call answered, etc. They enable real-time reactions without polling.
+Webhooks are HTTP callbacks that Telnyx sends to your server when events occur — a message reaches a final delivery state, a call is answered, etc. API v2 event webhooks use a nested JSON envelope under `data.*`. TeXML instruction requests and status callbacks are separate: configured POSTs use flat form-encoded fields, while configured GETs use query parameters.
 
 ## Quick Start
 
@@ -47,7 +47,7 @@ curl "https://api.telnyx.com/v2/webhook_deliveries?page[size]=20" \
       "finished_at": "2024-01-15T12:00:01Z",
       "webhook": {
         "url": "https://your-app.com/webhooks",
-        "event_type": "message.delivered"
+        "event_type": "message.finalized"
       },
       "attempts": [
         {
@@ -74,7 +74,7 @@ curl "https://api.telnyx.com/v2/webhook_deliveries?page[size]=20" \
 |-----------|------|-------------|
 | `page[size]` | integer | Results per page (max 250) |
 | `filter[status]` | string | `success`, `failed` |
-| `filter[event_type]` | string | e.g. `message.delivered`, `call.answered` |
+| `filter[event_type]` | string | e.g. `message.finalized`, `call.answered` |
 
 ```python
 import requests
@@ -131,7 +131,7 @@ curl "https://api.telnyx.com/v2/webhook_deliveries/{delivery_id}" \
     "finished_at": "2024-01-15T12:00:01Z",
     "webhook": {
       "url": "https://your-app.com/webhooks",
-      "event_type": "message.delivered"
+      "event_type": "message.finalized"
     },
     "attempts": [
       {
@@ -220,21 +220,25 @@ curl -X PATCH "https://api.telnyx.com/v2/phone_numbers/{number_id}" \
 
 ## Webhook Payload Format
 
-### Message Delivered
+### Message Finalized (delivered outcome)
 
 ```json
 {
   "data": {
-    "event_type": "message.delivered",
+    "event_type": "message.finalized",
     "id": "uuid",
     "occurred_at": "2024-01-15T12:00:00Z",
     "record_type": "event",
     "payload": {
-      "to": "+15559876543",
-      "from": "+15551234567",
-      "message_id": "msg-uuid",
-      "status": "delivered",
-      "delivered_at": "2024-01-15T12:00:05Z"
+      "id": "msg-uuid",
+      "to": [
+        {
+          "phone_number": "+15559876543",
+          "status": "delivered"
+        }
+      ],
+      "from": {"phone_number": "+15551234567"},
+      "errors": []
     }
   }
 }
@@ -303,9 +307,12 @@ def verify_telnyx_signature(payload: bytes, signature_header: str, timestamp_hea
     # Load public key
     public_key = serialization.load_pem_public_key(PUBLIC_KEY_PEM.encode())
     
+    # Telnyx signs the exact bytes of: timestamp + "|" + raw request body.
+    signed_payload = timestamp_header.encode("ascii") + b"|" + payload
+
     # Verify
     try:
-        public_key.verify(signature, payload)
+        public_key.verify(signature, signed_payload)
         return True
     except InvalidSignature:
         return False
@@ -335,7 +342,7 @@ curl "https://api.telnyx.com/v2/webhook_deliveries?page[size]=20" \
       "finished_at": "2024-01-15T12:00:01Z",
       "webhook": {
         "url": "https://your-app.com/webhooks",
-        "event_type": "message.delivered"
+        "event_type": "message.finalized"
       },
       "attempts": [
         {
@@ -395,8 +402,10 @@ def handle_webhook():
     
     if event_type == "message.received":
         handle_inbound_sms(payload["data"]["payload"])
-    elif event_type == "message.delivered":
-        log_delivery(payload["data"]["payload"])
+    elif event_type == "message.finalized":
+        message = payload["data"]["payload"]
+        if message["to"][0]["status"] == "delivered":
+            log_delivery(message)
     elif event_type == "call.answered":
         handle_call_answered(payload["data"]["payload"])
     
@@ -424,8 +433,10 @@ app.post("/webhooks/telnyx", (req, res) => {
     case "message.received":
       console.log(`SMS from ${payload.from}: ${payload.text}`);
       break;
-    case "message.delivered":
-      console.log(`Delivered to ${payload.to}`);
+    case "message.finalized":
+      if (payload.to?.[0]?.status === "delivered") {
+        console.log(`Delivered to ${payload.to[0].phone_number}`);
+      }
       break;
     case "call.answered":
       console.log(`Call answered: ${payload.call_control_id}`);
@@ -445,7 +456,7 @@ app.listen(3000, () => console.log("Webhook server on :3000"));
 | Invalid URL | 404 responses | Check URL is accessible |
 | SSL errors | Delivery failures | Ensure valid TLS certificate |
 | Timeout | Retries increasing | Respond within 10 seconds |
-| Wrong content-type | Parse errors | Expect `application/json` |
+| Wrong content-type | Parse errors | API v2 events use JSON; TeXML POST callbacks use form encoding |
 | Signature mismatch | Rejected requests | Verify signature correctly |
 
 ## Retry Behavior
@@ -463,7 +474,7 @@ After 5 failures, the webhook is marked as failed.
 
 1. **Respond quickly** — Return 200 within 10 seconds, process async
 2. **Verify signatures** — Ensure requests are from Telnyx
-3. **Handle duplicates** — Same event may be delivered twice
+3. **Handle duplicates** — API v2 events dedupe on `data.id`; TeXML status callbacks dedupe on `(CallSid, SequenceNumber)`
 4. **Log everything** — Store raw payloads for debugging
 5. **Monitor deliveries** — Check webhook_deliveries API regularly
 

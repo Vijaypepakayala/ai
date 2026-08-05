@@ -1,0 +1,52 @@
+{
+  "name": "telnyx-developer-kit",
+  "version": "0.1.0",
+  "description": "Telnyx Skills provide procedural knowledge for AI coding agents — product selection, reference architectures, production guardrails, and debugging across Messaging, Voice, Verify, Numbers, WebRTC, and Twilio migrations.",
+  "author": {
+    "name": "Telnyx",
+    "url": "https://telnyx.com"
+  },
+  "homepage": "https://developers.telnyx.com",
+  "repository": "https://github.com/team-telnyx/ai",
+  "license": "MIT",
+  "keywords": [
+    "telnyx",
+    "sms",
+    "messaging",
+    "voice",
+    "call-control",
+    "texml",
+    "webrtc",
+    "verify",
+    "numbers",
+    "10dlc",
+    "twilio-migration",
+    "twilio-alternative"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Telnyx Developer Kit",
+    "shortDescription": "Build and debug with Telnyx",
+    "longDescription": "Plan, build, review, and debug communications applications with Telnyx. Four bundled skills help select products, design architectures, apply security and compliance guardrails, and troubleshoot Messaging, Voice, Call Control, TeXML, WebRTC, Verify, Numbers, 10DLC, and Twilio migrations. The hosted Telnyx MCP server provides live API discovery, account data, and authenticated API actions.",
+    "developerName": "Telnyx",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Navigate Telnyx products and APIs",
+      "Design communications architectures",
+      "Review security and compliance guardrails",
+      "Debug messaging and voice integrations"
+    ],
+    "websiteURL": "https://developers.telnyx.com",
+    "privacyPolicyURL": "https://telnyx.com/privacy-policy",
+    "termsOfServiceURL": "https://telnyx.com/terms-and-conditions-of-service",
+    "defaultPrompt": [
+      "Which Telnyx products should I use for this communications build?",
+      "Design a production-ready Telnyx architecture for this use case.",
+      "Debug this Telnyx API, messaging, or voice failure."
+    ],
+    "brandColor": "#000000",
+    "composerIcon": "./assets/telnyx-mark.png",
+    "logo": "./assets/telnyx-mark.png"
+  }
+}

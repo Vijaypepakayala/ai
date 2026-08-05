@@ -14,6 +14,24 @@ export interface McpAppDefinition {
   createServer: () => McpServer;
 }
 
+export const MCP_PUBLIC_DISCOVERY_METHODS = [
+  "initialize",
+  "notifications/initialized",
+  "tools/list",
+  "resources/list",
+  "resources/read"
+] as const;
+
+export const MCP_AUTH_REQUIRED_METHODS = ["tools/call"] as const;
+
+export const MCP_STREAMABLE_HTTP_DISCOVERY = {
+  transport: "streamable-http",
+  requiredAccept: ["application/json", "text/event-stream"],
+  sessionHeader: "mcp-session-id",
+  publicMethods: MCP_PUBLIC_DISCOVERY_METHODS,
+  authRequiredMethods: MCP_AUTH_REQUIRED_METHODS
+} as const;
+
 export const MCP_APP_DEFINITIONS: readonly McpAppDefinition[] = [
   {
     slug: "number-intelligence",
@@ -27,7 +45,13 @@ export const MCP_APP_DEFINITIONS: readonly McpAppDefinition[] = [
     name: "Usage & Cost Explorer",
     description: "Balance, usage reports, billing groups, and guarded billing controls.",
     endpoint: "/apps/usage-cost-explorer/mcp",
-    createServer: createUsageCostExplorerServer
+    // Create-style billing mutations use process-local confirmation state in
+    // this reference implementation. Hosted mode keeps them fail-closed until
+    // a durable shared coordinator or upstream idempotency is deployed.
+    createServer: () =>
+      createUsageCostExplorerServer({
+        allowProcessLocalCreateMutations: false
+      })
   },
   {
     slug: "voice-monitor",
@@ -43,12 +67,45 @@ export interface PublicMcpAppInfo {
   name: string;
   description: string;
   endpoint: string;
+  endpointPath: string;
+  endpointUrl?: string;
+  discovery: typeof MCP_STREAMABLE_HTTP_DISCOVERY;
 }
 
-export function listPublicApps(): PublicMcpAppInfo[] {
-  return MCP_APP_DEFINITIONS.map(({ slug, name, description, endpoint }) => ({ slug, name, description, endpoint }));
+export interface PublicMcpAppListOptions {
+  publicOrigin?: string;
+  publicPathPrefix?: string;
+}
+
+export function listPublicApps(options: PublicMcpAppListOptions = {}): PublicMcpAppInfo[] {
+  return MCP_APP_DEFINITIONS.map(({ slug, name, description, endpoint }) => {
+    const endpointPath = joinPublicPath(options.publicPathPrefix, endpoint);
+    return {
+      slug,
+      name,
+      description,
+      endpoint,
+      endpointPath,
+      ...(options.publicOrigin ? { endpointUrl: new URL(endpointPath, options.publicOrigin).toString() } : {}),
+      discovery: MCP_STREAMABLE_HTTP_DISCOVERY
+    };
+  });
 }
 
 export function findMcpApp(slug: string): McpAppDefinition | undefined {
   return MCP_APP_DEFINITIONS.find((app) => app.slug === slug);
+}
+
+function joinPublicPath(prefix: string | undefined, path: string): string {
+  const normalizedPrefix = normalizePathPrefix(prefix);
+  return `${normalizedPrefix}${path}`;
+}
+
+function normalizePathPrefix(prefix: string | undefined): string {
+  if (!prefix) return "";
+  const trimmed = prefix.trim();
+  if (!trimmed) return "";
+
+  const withoutBoundarySlashes = trimmed.replace(/^\/+|\/+$/g, "");
+  return withoutBoundarySlashes ? `/${withoutBoundarySlashes}` : "";
 }

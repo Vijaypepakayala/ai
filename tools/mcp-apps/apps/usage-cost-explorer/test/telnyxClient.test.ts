@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { TelnyxBillingClient, TelnyxBillingError, sanitizeError } from "../src/telnyxClient.js";
+import {
+  sanitizeBillingToolOutput,
+  sanitizeBillingValue,
+  sanitizeError,
+  TelnyxBillingClient,
+  TelnyxBillingError
+} from "../src/telnyxClient.js";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -27,6 +33,7 @@ describe("TelnyxBillingClient", () => {
       "https://api.telnyx.com/v2/payment/stored_payment_transactions"
     ]);
     expect(calls.map((call) => call.init?.method)).toEqual(["GET", "GET", "POST"]);
+    expect(calls.every((call) => call.init?.redirect === "error")).toBe(true);
     expect(calls[2]?.init?.body).toBe(JSON.stringify({ amount: "25.00" }));
     expect(calls.every((call) => (call.init?.headers as Record<string, string>).Authorization === "Bearer fixture_credential")).toBe(true);
   });
@@ -122,5 +129,113 @@ describe("TelnyxBillingClient", () => {
     const sanitized = sanitizeError(new Error("Authorization: Bearer <fixture-token>; card 4242424242424242 failed"));
     expect(sanitized.message).not.toContain("fixture_credential");
     expect(sanitized.message).not.toContain("4242424242424242");
+  });
+
+  it("aborts an upstream request that exceeds the configured timeout", async () => {
+    const fetchImpl: typeof fetch = async (_url, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (signal?.aborted) {
+          reject(signal.reason);
+          return;
+        }
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    const client = new TelnyxBillingClient({
+      apiKey: "fixture_credential",
+      fetch: fetchImpl,
+      timeoutMs: 5
+    });
+
+    await expect(client.getBalance()).rejects.toThrow(
+      "Telnyx request timed out after 5 ms"
+    );
+  });
+
+  it("rejects upstream responses that exceed the configured byte limit", async () => {
+    const client = new TelnyxBillingClient({
+      apiKey: "fixture_credential",
+      fetch: async () => new Response("x".repeat(64), { status: 200 }),
+      maxResponseBytes: 32
+    });
+
+    await expect(client.getBalance()).rejects.toThrow(
+      "Telnyx response exceeded the 32-byte limit"
+    );
+  });
+
+  it("rejects non-JSON and invalid UTF-8 success bodies instead of returning an empty success", async () => {
+    const nonJson = new TelnyxBillingClient({
+      apiKey: "fixture_credential",
+      fetch: async () => new Response("upstream maintenance", { status: 200 })
+    });
+    const invalidUtf8 = new TelnyxBillingClient({
+      apiKey: "fixture_credential",
+      fetch: async () => new Response(new Uint8Array([0xc3, 0x28]), { status: 200 })
+    });
+
+    await expect(nonJson.getBalance()).rejects.toThrow("Telnyx response was not valid JSON");
+    await expect(invalidUtf8.getBalance()).rejects.toThrow(
+      "Telnyx response was not valid UTF-8 JSON"
+    );
+  });
+
+  it("redacts camelCase and nested upstream secrets while preserving only app-issued root confirmation tokens", () => {
+    const upstreamSanitized = sanitizeBillingValue({
+      author: "Telnyx",
+      confirmation_token: "app-issued-token",
+      cache_hit: true,
+      data: {
+        confirmation_token: "upstream-token",
+        accessToken: "fixture_access",
+        clientSecret: "fixture_client_secret",
+        privateKey: "fixture_private_key"
+      }
+    });
+
+    expect(upstreamSanitized).toEqual({
+      author: "Telnyx",
+      confirmation_token: "[redacted-secret]",
+      cache_hit: true,
+      data: {
+        confirmation_token: "[redacted-secret]",
+        accessToken: "[redacted-secret]",
+        clientSecret: "[redacted-secret]",
+        privateKey: "[redacted-secret]"
+      }
+    });
+    expect(
+      sanitizeBillingToolOutput({ confirmation_token: "app-issued-token" })
+    ).toEqual({ confirmation_token: "app-issued-token" });
+  });
+
+  it("bounds attacker-controlled upstream error messages", async () => {
+    const client = new TelnyxBillingClient({
+      apiKey: "fixture_credential",
+      fetch: async () =>
+        json(
+          {
+            errors: [
+              {
+                title: "Denied",
+                detail: `clientSecret=fixture_client_secret {"accessToken":"quoted_access","privateKey":"quoted_private"} ${"x".repeat(500_000)}`
+              }
+            ]
+          },
+          500
+        )
+    });
+
+    try {
+      await client.getBalance();
+      throw new Error("expected balance request to fail");
+    } catch (error) {
+      const caught = error as Error & { details?: unknown };
+      expect(caught.message.length).toBeLessThanOrEqual(4_120);
+      expect(caught.message).not.toContain("fixture_client_secret");
+      expect(caught.message).not.toContain("quoted_access");
+      expect(caught.message).not.toContain("quoted_private");
+      expect(JSON.stringify(caught.details)).not.toContain("fixture_client_secret");
+    }
   });
 });

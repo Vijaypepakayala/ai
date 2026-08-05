@@ -18,12 +18,20 @@ export const DEFAULT_MAX_PAGE_SIZE = 100;
 export const DEFAULT_MAX_DISCOVERY_CONNECTIONS = 10;
 export const DEFAULT_MAX_TIMELINE_WINDOW_HOURS = 168;
 export const DEFAULT_MAX_RECORDING_WINDOW_HOURS = 168;
+export const DEFAULT_MAX_AGGREGATE_OUTPUT_BYTES = 1024 * 1024;
+const MIN_AGGREGATE_OUTPUT_BYTES = 4096;
+const ACTIVE_CALL_OUTPUT_LIMIT_WARNING =
+  "The active-call response reached its output byte limit. Returned calls may be a subset of a queried response; later connections were not queried.";
 
 export function createVoiceMonitorService(client: VoiceMonitorClient, options: VoiceMonitorServiceOptions = {}) {
   const maxPageSize = options.maxPageSize ?? DEFAULT_MAX_PAGE_SIZE;
   const maxDiscoveryConnections = options.maxDiscoveryConnections ?? DEFAULT_MAX_DISCOVERY_CONNECTIONS;
   const maxTimelineWindowHours = options.maxTimelineWindowHours ?? DEFAULT_MAX_TIMELINE_WINDOW_HOURS;
   const maxRecordingWindowHours = options.maxRecordingWindowHours ?? DEFAULT_MAX_RECORDING_WINDOW_HOURS;
+  const maxAggregateOutputBytes = options.maxAggregateOutputBytes ?? DEFAULT_MAX_AGGREGATE_OUTPUT_BYTES;
+  if (!Number.isSafeInteger(maxAggregateOutputBytes) || maxAggregateOutputBytes < MIN_AGGREGATE_OUTPUT_BYTES) {
+    throw new Error(`Voice Monitor aggregate output byte limit must be at least ${MIN_AGGREGATE_OUTPUT_BYTES}.`);
+  }
   const now = options.now ?? (() => new Date());
 
   return {
@@ -70,28 +78,129 @@ export function createVoiceMonitorService(client: VoiceMonitorClient, options: V
       const maxConnections = Math.min(normalizePositiveInt(input.maxConnections, maxDiscoveryConnections), maxDiscoveryConnections);
       const warnings: Array<{ source: string; message: string }> = [];
       const connections = requestedConnectionId ? [requestedConnectionId] : await discoverActiveCallTargetIds(client, page, maxConnections, warnings);
+      const connectionsConsulted: string[] = [];
       const allCalls: unknown[] = [];
-      const perConnection: Array<{ connection_id: string; active_call_count: number; data: unknown[] }> = [];
+      const perConnection: Array<{ connection_id: string; active_call_count: number }> = [];
+      let truncatedOutput = false;
 
       for (const connectionId of connections) {
+        if (
+          !activeCallsResultFits(
+            [...connectionsConsulted, connectionId],
+            allCalls,
+            perConnection,
+            warnings,
+            page,
+            maxConnections,
+            maxAggregateOutputBytes
+          )
+        ) {
+          truncatedOutput = true;
+          break;
+        }
+        connectionsConsulted.push(connectionId);
+
         try {
           const envelope = await client.listActiveCalls(connectionId, page);
-          const calls = dataArray(envelope).map((call) => attachConnectionId(call, connectionId));
-          allCalls.push(...calls);
-          perConnection.push({ connection_id: connectionId, active_call_count: calls.length, data: calls });
+          const calls = sanitizeVoiceMonitorValue(
+            dataArray(envelope).map((call) => attachConnectionId(call, connectionId))
+          ) as unknown[];
+          let includedCallCount = 0;
+
+          if (
+            !activeCallsResultFits(
+              connectionsConsulted,
+              allCalls,
+              [...perConnection, { connection_id: connectionId, active_call_count: 0 }],
+              warnings,
+              page,
+              maxConnections,
+              maxAggregateOutputBytes
+            )
+          ) {
+            truncatedOutput = true;
+            break;
+          }
+
+          if (
+            activeCallsResultFits(
+              connectionsConsulted,
+              [...allCalls, ...calls],
+              [...perConnection, { connection_id: connectionId, active_call_count: calls.length }],
+              warnings,
+              page,
+              maxConnections,
+              maxAggregateOutputBytes
+            )
+          ) {
+            includedCallCount = calls.length;
+          } else {
+            truncatedOutput = true;
+            let low = 0;
+            let high = calls.length;
+            while (low < high) {
+              const midpoint = Math.ceil((low + high) / 2);
+              const prefix = calls.slice(0, midpoint);
+              if (
+                activeCallsResultFits(
+                  connectionsConsulted,
+                  [...allCalls, ...prefix],
+                  [...perConnection, { connection_id: connectionId, active_call_count: midpoint }],
+                  warnings,
+                  page,
+                  maxConnections,
+                  maxAggregateOutputBytes
+                )
+              ) {
+                low = midpoint;
+              } else {
+                high = midpoint - 1;
+              }
+            }
+            includedCallCount = low;
+          }
+
+          allCalls.push(...calls.slice(0, includedCallCount));
+          perConnection.push({ connection_id: connectionId, active_call_count: includedCallCount });
+          if (includedCallCount < calls.length) break;
         } catch (error) {
-          warnings.push({ source: `active_calls:${connectionId}`, message: errorMessage(error) });
+          if (isTelnyxAuthFailure(error)) throw error;
+          const warning = { source: `active_calls:${connectionId}`, message: errorMessage(error) };
+          if (
+            !activeCallsResultFits(
+              connectionsConsulted,
+              allCalls,
+              perConnection,
+              [...warnings, warning],
+              page,
+              maxConnections,
+              maxAggregateOutputBytes
+            )
+          ) {
+            truncatedOutput = true;
+            break;
+          }
+          warnings.push(warning);
         }
       }
 
+      if (truncatedOutput) {
+        warnings.push({ source: "active_calls", message: ACTIVE_CALL_OUTPUT_LIMIT_WARNING });
+      }
+
       return sanitizeVoiceMonitorValue({
-        connections_consulted: connections,
+        connections_consulted: connectionsConsulted,
         truncated_connections: !requestedConnectionId && connections.length === maxConnections,
+        truncated_output: truncatedOutput,
         total_active_calls: allCalls.length,
         active_calls: allCalls,
         per_connection: perConnection,
         warnings,
-        limits: { page_size: page.pageSize, max_connections: maxConnections }
+        limits: {
+          page_size: page.pageSize,
+          max_connections: maxConnections,
+          max_output_bytes: maxAggregateOutputBytes
+        }
       });
     },
 
@@ -122,6 +231,39 @@ export function createVoiceMonitorService(client: VoiceMonitorClient, options: V
 
 export type VoiceMonitorService = ReturnType<typeof createVoiceMonitorService>;
 
+function activeCallsResultFits(
+  connectionsConsulted: string[],
+  activeCalls: unknown[],
+  perConnection: Array<{ connection_id: string; active_call_count: number }>,
+  warnings: Array<{ source: string; message: string }>,
+  page: Page,
+  maxConnections: number,
+  maxOutputBytes: number
+): boolean {
+  const candidate = sanitizeVoiceMonitorValue({
+    connections_consulted: connectionsConsulted,
+    truncated_connections: false,
+    truncated_output: true,
+    total_active_calls: activeCalls.length,
+    active_calls: activeCalls,
+    per_connection: perConnection,
+    warnings: [
+      ...warnings,
+      { source: "active_calls", message: ACTIVE_CALL_OUTPUT_LIMIT_WARNING }
+    ],
+    limits: {
+      page_size: page.pageSize,
+      max_connections: maxConnections,
+      max_output_bytes: maxOutputBytes
+    }
+  });
+  return serializedBytes(candidate) <= maxOutputBytes;
+}
+
+function serializedBytes(value: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+}
+
 type Page = { pageNumber: number; pageSize: number };
 type TimelineClientInput = Parameters<VoiceMonitorClient["listCallEvents"]>[0] & { notice?: string; appliedFilters?: Record<string, unknown> };
 type RecordingsClientInput = Parameters<VoiceMonitorClient["listRecordings"]>[0] & { appliedFilters?: Record<string, unknown> };
@@ -130,9 +272,16 @@ async function safeRead<T>(source: string, read: () => Promise<T>, warnings: Arr
   try {
     return await read();
   } catch (error) {
+    if (isTelnyxAuthFailure(error)) throw error;
     warnings.push({ source, message: errorMessage(error) });
     return undefined;
   }
+}
+
+function isTelnyxAuthFailure(error: unknown): boolean {
+  if (!error || typeof error !== "object" || !("status" in error)) return false;
+  const status = (error as { status?: unknown }).status;
+  return status === 401 || status === 403;
 }
 
 async function discoverActiveCallTargetIds(

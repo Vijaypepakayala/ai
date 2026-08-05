@@ -144,10 +144,12 @@ describe("guarded auto-recharge updates", () => {
     const { client, calls } = mutationClient();
     const service = createBillingService(client);
     const preview = await service.previewStoredPaymentTransaction({ amount: "25.00" });
+    const canonicalPreview = await service.previewStoredPaymentTransaction({ amount: "00025.00" });
 
     expect(preview.action).toBe("billing.create_stored_payment_transaction");
     expect(preview.financial_side_effect).toBe(true);
     expect(preview.after).toMatchObject({ amount: "25.00", transaction_processing_type: "stored_payment" });
+    expect(canonicalPreview.after).toMatchObject({ amount: "25.00" });
     await expect(service.createStoredPaymentTransaction({ amount: "30.00", confirmation_token: preview.confirmation_token })).rejects.toThrow("confirmation token");
 
     const result = await service.createStoredPaymentTransaction({ amount: "25.00", confirmation_token: preview.confirmation_token });
@@ -191,14 +193,24 @@ describe("guarded billing group mutations", () => {
     await expect(service.updateBillingGroup({ id: "bg_keep_for_followup", name: "Production", confirmation_token: preview.confirmation_token })).rejects.toThrow("confirmation token");
   });
 
-  it("requires explicit confirm=true and a valid name for billing group creation", async () => {
+  it("previews and confirms billing group creation with a name-specific token", async () => {
     const { client, calls } = mutationClient();
     const service = createBillingService(client);
 
-    await expect(service.createBillingGroup({ name: "New group", confirm: false })).rejects.toThrow("confirm=true");
-    await expect(service.createBillingGroup({ name: "   ", confirm: true })).rejects.toThrow("name is required");
-    const result = await service.createBillingGroup({ name: "New group", confirm: true });
+    const preview = await service.previewBillingGroupCreate({ name: "New group" });
+    await expect(
+      service.createBillingGroup({ name: "Different group", confirmation_token: preview.confirmation_token })
+    ).rejects.toThrow("confirmation token");
+    await expect(
+      service.createBillingGroup({ name: "   ", confirmation_token: preview.confirmation_token })
+    ).rejects.toThrow("name is required");
+    const result = await service.createBillingGroup({
+      name: "New group",
+      confirmation_token: preview.confirmation_token
+    });
 
+    expect(preview.before).toEqual({ resource: "not_created" });
+    expect(preview.after).toEqual({ name: "New group" });
     expect(result.data).toMatchObject({ id: "bg_new", name: "New group" });
     expect(calls).toEqual(["post-group"]);
   });

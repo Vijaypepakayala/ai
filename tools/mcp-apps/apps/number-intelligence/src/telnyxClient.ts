@@ -7,6 +7,9 @@ import type {
   TelnyxNumberLookupResponse,
   VoiceSignalInput
 } from "./types.js";
+import { fetchBoundedJson } from "./boundedFetch.js";
+
+const MAX_SAFE_MESSAGE_CHARS = 4096;
 
 export class TelnyxNumberLookupError extends Error {
   readonly status: number;
@@ -24,6 +27,9 @@ class TelnyxBaseClient {
   protected readonly apiKey: string;
   protected readonly baseUrl: string;
   protected readonly fetchImpl: typeof fetch;
+  protected readonly timeoutMs: number | undefined;
+  protected readonly maxResponseBytes: number | undefined;
+  protected readonly signal: AbortSignal | undefined;
 
   constructor(options: TelnyxClientOptions) {
     if (!options.apiKey) {
@@ -33,6 +39,9 @@ class TelnyxBaseClient {
     this.apiKey = options.apiKey;
     this.baseUrl = (options.baseUrl ?? "https://api.telnyx.com").replace(/\/+$/, "");
     this.fetchImpl = options.fetch ?? globalThis.fetch;
+    this.timeoutMs = options.timeoutMs;
+    this.maxResponseBytes = options.maxResponseBytes;
+    this.signal = options.signal;
 
     if (!this.fetchImpl) {
       throw new Error("A fetch implementation is required");
@@ -51,18 +60,26 @@ class TelnyxBaseClient {
       ...(init.headers as Record<string, string> | undefined)
     };
 
-    const response = await this.fetchImpl(url.toString(), {
-      ...init,
-      headers
-    });
-
-    const body = await parseJson(response);
+    const { response, body } = await fetchBoundedJson(
+      this.fetchImpl,
+      url.toString(),
+      { ...init, headers },
+      {
+        timeoutMs: this.timeoutMs,
+        maxResponseBytes: this.maxResponseBytes,
+        signal: this.signal
+      }
+    );
 
     if (!response.ok) {
+      const sanitizedDetails = sanitizeNumberIntelligenceValue(body);
       throw new TelnyxNumberLookupError(
-        extractTelnyxErrorMessage(body) ?? `Telnyx request failed with status ${response.status}`,
+        sanitizeMessage(
+          extractTelnyxErrorMessage(sanitizedDetails) ??
+            `Telnyx request failed with status ${response.status}`
+        ),
         response.status,
-        body
+        sanitizedDetails
       );
     }
 
@@ -233,19 +250,6 @@ interface TelnyxSingleResponse<T> {
   data?: T;
 }
 
-async function parseJson(response: Response): Promise<unknown> {
-  const text = await response.text();
-  if (!text) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return { text };
-  }
-}
-
 function extractTelnyxErrorMessage(body: unknown): string | undefined {
   if (!body || typeof body !== "object") {
     return undefined;
@@ -264,6 +268,67 @@ function extractTelnyxErrorMessage(body: unknown): string | undefined {
   const title = (first as { title?: unknown }).title;
   const detail = (first as { detail?: unknown }).detail;
   return [title, detail].filter((value): value is string => typeof value === "string" && value.length > 0).join(": ");
+}
+
+export function sanitizeError(error: unknown): Error {
+  const source = error instanceof Error ? error : new Error(String(error));
+  const sanitized = new Error(sanitizeMessage(source.message));
+  sanitized.name = source.name;
+  return sanitized;
+}
+
+export function sanitizeNumberIntelligenceValue(value: unknown, key = ""): unknown {
+  if (Array.isArray(value)) {
+    return value.map((nested) => sanitizeNumberIntelligenceValue(nested, key));
+  }
+  if (value && typeof value === "object") {
+    const output: Record<string, unknown> = {};
+    for (const [nestedKey, nestedValue] of Object.entries(value)) {
+      output[nestedKey] = isSecretKey(nestedKey)
+        ? "[redacted-secret]"
+        : sanitizeNumberIntelligenceValue(nestedValue, nestedKey);
+    }
+    return output;
+  }
+  if (typeof value === "string") {
+    return sanitizeMessage(value);
+  }
+  return value;
+}
+
+function isSecretKey(key: string): boolean {
+  const normalized = key.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
+  return (
+    /^auth(?!or)/.test(normalized) ||
+    /(authorization|apikey|secret|token|password|credential|privatekey|clientsecret|accesstoken|refreshtoken)/.test(
+      normalized
+    )
+  );
+}
+
+function sanitizeMessage(message: string): string {
+  const sanitized = message
+    .replace(
+      /Authorization\s*:\s*Bearer\s+[^\s;,)]+/gi,
+      "Authorization: Bearer [redacted-secret]"
+    )
+    .replace(/Bearer\s+[^\s;,)]+/gi, "Bearer [redacted-secret]")
+    .replace(
+      /\b(?:sk|pk|key|api)[_-]?(?:live|test|secret)?_[A-Za-z0-9_-]{6,}\b/gi,
+      "[redacted-secret]"
+    )
+    .replace(
+      /(["']?(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key|secret|token|password)["']?\s*[:=]\s*)(["'])[^"'\r\n]*\2/gi,
+      "$1$2[redacted-secret]$2"
+    )
+    .replace(
+      /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key|secret|token|password)\s*(?:[=:]|\s)\s*[^\s;,)]+/gi,
+      (match) => `${match.split(/[=:\s]/)[0]}=[redacted-secret]`
+    )
+    .replace(/\b(?:\d[ -]*?){13,19}\b/g, "[redacted-payment]");
+  return sanitized.length <= MAX_SAFE_MESSAGE_CHARS
+    ? sanitized
+    : `${sanitized.slice(0, MAX_SAFE_MESSAGE_CHARS)}…[truncated]`;
 }
 
 function normalizeE164ish(phoneNumber: string): string {

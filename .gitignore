@@ -37,5 +37,6 @@ coverage.xml
 .DS_Store
 Thumbs.db
 
-# MCP configuration with secrets
+# Local MCP configuration may contain secrets. The Codex plugin config is public.
 .mcp.json
+!/plugins/telnyx-developer-kit/.mcp.json
