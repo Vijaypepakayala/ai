@@ -47,9 +47,11 @@ metadata:
 - **US SMS delivered=false with no API error**: check sender-specific carrier
   readiness before blaming code — 10DLC for local long codes, toll-free
   verification for toll-free senders, and carrier approval for short codes.
-- **Webhooks not arriving**: webhook URL is configured on the application/
-  profile (not per-request); check the portal debugging tool for delivery
-  attempts + your endpoint's TLS and response time (slow 200 = retry storm).
+- **Webhooks not arriving**: first check the application/profile default and
+  any endpoint-supported per-request override. Messaging send requests can set
+  `webhook_url`/`webhook_failover_url`, which take priority over the profile.
+  Then check the portal debugging tool for delivery attempts + your endpoint's
+  TLS and response time (slow 200 = retry storm).
   API v2 events are JSON under `data.*`; TeXML POST callbacks are flat forms
   and configured GET callbacks use query parameters.
 - **Push notifications never arrive (WebRTC mobile)**: a push credential
