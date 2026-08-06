@@ -32,8 +32,10 @@ Caller → Telnyx number → TeXML app: <Connect><Stream url="wss://you"/></Conn
 
 ## High-volume messaging
 
-- One messaging profile per traffic class (marketing vs transactional vs
-  OTP) — profiles carry throughput and webhook config. For US A2P, local
+- One messaging profile per raw Messaging traffic class (for example,
+  marketing vs transactional) — profiles carry throughput and webhook config.
+  Route OTP and 2FA through the Verify API with a Verify profile instead of
+  hand-rolling codes over raw Messaging. For US A2P, local
   10-digit long-code senders use a messaging profile linked to a 10DLC
   campaign; toll-free senders need toll-free verification, while short-code
   senders need carrier approval/provisioning.
