@@ -20,7 +20,7 @@ product plugin (`/plugin install telnyx-<product>@telnyx`) for deep guidance.
 
 | You want to… | Product | API surface | Deep-dive |
 |---|---|---|---|
-| Send SMS/MMS notifications or 2FA texts | Messaging | `POST /v2/messages` | telnyx-messaging plugin |
+| Send SMS/MMS notifications | Messaging | `POST /v2/messages` | telnyx-messaging plugin |
 | Verify users by OTP (SMS, call, flash call) | Verify | `POST /v2/verifications/{sms\|call\|flashcall}` | telnyx-verify plugin |
 | Send WhatsApp messages | WhatsApp Business | WhatsApp API | telnyx-whatsapp plugin |
 | Serve voice menus / IVR from XML | TeXML | TeXML Application + XML docs | telnyx-platform plugin |
