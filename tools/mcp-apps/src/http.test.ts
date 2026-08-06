@@ -891,6 +891,76 @@ describe("hosted MCP Apps HTTP service", () => {
     expect(finalRetainedStatuses).toEqual([200, 200, 200]);
   });
 
+  it("evicts existing sessions only when successful concurrent initializations consume capacity", async () => {
+    let caseNumber = 0;
+
+    for (let capacity = 1; capacity <= 3; capacity += 1) {
+      for (let initialOccupancy = 0; initialOccupancy <= capacity; initialOccupancy += 1) {
+        for (let pendingCount = 1; pendingCount <= capacity; pendingCount += 1) {
+          for (let outcomeMask = 0; outcomeMask < 2 ** pendingCount; outcomeMask += 1) {
+            caseNumber += 1;
+            const app = createTestApp({ maxSessionsPerApp: capacity });
+            const originalSessionIds: string[] = [];
+
+            for (let index = 0; index < initialOccupancy; index += 1) {
+              const initialized = await app.request("/apps/number-intelligence/mcp", {
+                method: "POST",
+                headers: MCP_HEADERS,
+                body: JSON.stringify(initializeRequest())
+              });
+              expect(initialized.status).toBe(200);
+              originalSessionIds.push(initialized.headers.get("mcp-session-id") ?? "");
+            }
+
+            const expectedOutcomes = Array.from(
+              { length: pendingCount },
+              (_, index) => Boolean(outcomeMask & (1 << index))
+            );
+            const attempts = await Promise.all(
+              expectedOutcomes.map((shouldSucceed) =>
+                app.request("/apps/number-intelligence/mcp", {
+                  method: "POST",
+                  headers: {
+                    ...MCP_HEADERS,
+                    ...(shouldSucceed ? {} : { accept: "application/json" })
+                  },
+                  body: JSON.stringify(initializeRequest())
+                })
+              )
+            );
+            const successfulCount = attempts.filter((response) => response.status === 200).length;
+            expect(
+              successfulCount,
+              `capacity matrix case ${caseNumber} returned unexpected initialization statuses`
+            ).toBe(expectedOutcomes.filter(Boolean).length);
+
+            const retainedStatuses = await Promise.all(
+              originalSessionIds.map(async (sessionId) => {
+                const response = await app.request("/apps/number-intelligence/mcp", {
+                  method: "POST",
+                  headers: publicSessionHeaders(sessionId),
+                  body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })
+                });
+                return response.status;
+              })
+            );
+            const retainedCount = retainedStatuses.filter((status) => status === 200).length;
+            const expectedRetainedCount = Math.min(
+              initialOccupancy,
+              Math.max(0, capacity - successfulCount)
+            );
+            expect(
+              retainedCount,
+              `capacity matrix case ${caseNumber} evicted more sessions than required`
+            ).toBe(expectedRetainedCount);
+          }
+        }
+      }
+    }
+
+    expect(caseNumber).toBe(78);
+  });
+
   it("releases reserved initialization capacity when transport initialization fails", async () => {
     const app = createTestApp({ maxSessionsPerApp: 1 });
     const failed = await app.request("/apps/number-intelligence/mcp", {

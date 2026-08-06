@@ -303,11 +303,14 @@ function normalizeTimelineInput(input: CallTimelineRequest, page: Page, now: () 
   const applicationSessionId = normalizeOptionalString(input.applicationSessionId ?? input.callSessionId);
   const callLegId = normalizeOptionalString(input.callLegId);
   const hasLegOrSession = Boolean(callLegId || applicationSessionId);
+  const occurredAtEq = normalizeOptionalString(input.occurredAtEq);
+  const occurredAtGt = normalizeOptionalString(input.occurredAtGt);
   let occurredAtGte = normalizeOptionalString(input.occurredAtGte);
+  const occurredAtLt = normalizeOptionalString(input.occurredAtLt);
   let occurredAtLte = normalizeOptionalString(input.occurredAtLte);
   let notice: string | undefined;
 
-  if (!hasLegOrSession && !input.occurredAtEq && !input.occurredAtGt && !input.occurredAtLt && !occurredAtGte && !occurredAtLte) {
+  if (!hasLegOrSession && !occurredAtEq && !occurredAtGt && !occurredAtLt && !occurredAtGte && !occurredAtLte) {
     const end = now();
     const start = new Date(end.getTime() - 24 * 3_600_000);
     occurredAtGte = start.toISOString();
@@ -315,7 +318,27 @@ function normalizeTimelineInput(input: CallTimelineRequest, page: Page, now: () 
     notice = "No call_leg_id or application_session_id was supplied; defaulted to the last 24 hours for Telnyx call_events filtering.";
   }
 
-  enforceWindow(occurredAtGte, occurredAtLte, hasLegOrSession ? maxWindowHours : Math.min(24, maxWindowHours), "Call timeline");
+  const timelineWindowHours = hasLegOrSession ? maxWindowHours : Math.min(24, maxWindowHours);
+  const boundedWindow = enforceBoundedWindow(
+    {
+      equal: occurredAtEq,
+      lowerExclusive: occurredAtGt,
+      lowerInclusive: occurredAtGte,
+      upperExclusive: occurredAtLt,
+      upperInclusive: occurredAtLte
+    },
+    timelineWindowHours,
+    "Call timeline"
+  );
+  if (!occurredAtGte && boundedWindow.synthesizedStart) {
+    occurredAtGte = boundedWindow.synthesizedStart;
+  }
+  if (!occurredAtLte && boundedWindow.synthesizedEnd) {
+    occurredAtLte = boundedWindow.synthesizedEnd;
+  }
+  if (!notice && (boundedWindow.synthesizedStart || boundedWindow.synthesizedEnd)) {
+    notice = `Added the missing time bound so the Call timeline query stays within ${timelineWindowHours} hours.`;
+  }
 
   const normalized: TimelineClientInput = {
     callLegId,
@@ -328,10 +351,10 @@ function normalizeTimelineInput(input: CallTimelineRequest, page: Page, now: () 
     name: normalizeOptionalString(input.name),
     type: normalizeOptionalString(input.type),
     status: normalizeOptionalString(input.status),
-    occurredAtEq: normalizeOptionalString(input.occurredAtEq),
-    occurredAtGt: normalizeOptionalString(input.occurredAtGt),
+    occurredAtEq,
+    occurredAtGt,
     occurredAtGte,
-    occurredAtLt: normalizeOptionalString(input.occurredAtLt),
+    occurredAtLt,
     occurredAtLte,
     pageNumber: page.pageNumber,
     pageSize: page.pageSize,
@@ -368,7 +391,17 @@ function normalizeRecordingsInput(input: RecordingsRequest, page: Page, now: () 
     createdAtLte = end.toISOString();
     createdAtGte = new Date(end.getTime() - 24 * 3_600_000).toISOString();
   }
-  enforceWindow(createdAtGte, createdAtLte, maxWindowHours, "Recording search");
+  const boundedWindow = enforceBoundedWindow(
+    { lowerInclusive: createdAtGte, upperInclusive: createdAtLte },
+    maxWindowHours,
+    "Recording search"
+  );
+  if (!createdAtGte && boundedWindow.synthesizedStart) {
+    createdAtGte = boundedWindow.synthesizedStart;
+  }
+  if (!createdAtLte && boundedWindow.synthesizedEnd) {
+    createdAtLte = boundedWindow.synthesizedEnd;
+  }
   const normalized: RecordingsClientInput = {
     callControlId: normalizeOptionalString(input.callControlId),
     callLegId: normalizeOptionalString(input.callLegId),
@@ -392,15 +425,57 @@ function normalizeRecordingsInput(input: RecordingsRequest, page: Page, now: () 
   return normalized;
 }
 
-function enforceWindow(startText: string | undefined, endText: string | undefined, maxHours: number, label: string): void {
-  if (!startText || !endText) return;
-  const start = parseIsoDateTime(startText, "start time");
-  const end = parseIsoDateTime(endText, "end time");
+interface TimeWindowInput {
+  equal?: string;
+  lowerExclusive?: string;
+  lowerInclusive?: string;
+  upperExclusive?: string;
+  upperInclusive?: string;
+}
+
+interface BoundedWindow {
+  synthesizedStart?: string;
+  synthesizedEnd?: string;
+}
+
+function enforceBoundedWindow(input: TimeWindowInput, maxHours: number, label: string): BoundedWindow {
+  const equality = input.equal ? parseIsoDateTime(input.equal, "equality time") : undefined;
+  const lowerBounds = [
+    equality,
+    input.lowerExclusive ? parseIsoDateTime(input.lowerExclusive, "exclusive start time") : undefined,
+    input.lowerInclusive ? parseIsoDateTime(input.lowerInclusive, "start time") : undefined
+  ].filter((value): value is Date => Boolean(value));
+  const upperBounds = [
+    equality,
+    input.upperExclusive ? parseIsoDateTime(input.upperExclusive, "exclusive end time") : undefined,
+    input.upperInclusive ? parseIsoDateTime(input.upperInclusive, "end time") : undefined
+  ].filter((value): value is Date => Boolean(value));
+
+  if (lowerBounds.length === 0 && upperBounds.length === 0) return {};
+
+  let synthesizedStart: string | undefined;
+  let synthesizedEnd: string | undefined;
+  if (lowerBounds.length === 0) {
+    const earliestUpper = new Date(Math.min(...upperBounds.map((value) => value.getTime())));
+    const start = new Date(earliestUpper.getTime() - maxHours * 3_600_000);
+    synthesizedStart = start.toISOString();
+    lowerBounds.push(start);
+  }
+  if (upperBounds.length === 0) {
+    const latestLower = new Date(Math.max(...lowerBounds.map((value) => value.getTime())));
+    const end = new Date(latestLower.getTime() + maxHours * 3_600_000);
+    synthesizedEnd = end.toISOString();
+    upperBounds.push(end);
+  }
+
+  const start = new Date(Math.max(...lowerBounds.map((value) => value.getTime())));
+  const end = new Date(Math.min(...upperBounds.map((value) => value.getTime())));
   if (end < start) throw new Error(`${label} end time must be on or after start time.`);
   const hours = (end.getTime() - start.getTime()) / 3_600_000;
   if (hours > maxHours) {
     throw new Error(`${label} windows are capped at ${maxHours} hours by this app.`);
   }
+  return { synthesizedStart, synthesizedEnd };
 }
 
 function parseIsoDateTime(value: string, label: string): Date {

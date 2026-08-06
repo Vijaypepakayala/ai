@@ -185,6 +185,95 @@ describe("Voice Monitor service", () => {
     expect(JSON.stringify(result)).not.toContain("15551234567");
   });
 
+  it("enforces timeline windows across every lower and upper bound operator", async () => {
+    const service = createVoiceMonitorService(fakeClient());
+    const contexts = [{}, { callLegId: "leg_1" }, { applicationSessionId: "session_1" }];
+    const lowerBounds = ["occurredAtGt", "occurredAtGte"] as const;
+    const upperBounds = ["occurredAtLt", "occurredAtLte"] as const;
+    let checkedCases = 0;
+
+    for (const context of contexts) {
+      for (const lowerBound of lowerBounds) {
+        for (const upperBound of upperBounds) {
+          checkedCases += 1;
+          await expect(
+            service.callTimeline({
+              ...context,
+              [lowerBound]: "2026-05-01T00:00:00.000Z",
+              [upperBound]: "2026-05-10T00:00:00.000Z"
+            })
+          ).rejects.toThrow(/capped/i);
+        }
+      }
+    }
+
+    expect(checkedCases).toBe(12);
+  });
+
+  it("adds a complementary timeline bound for every one-sided time operator", async () => {
+    const inputs: Array<Record<string, unknown>> = [];
+    const service = createVoiceMonitorService(
+      fakeClient({
+        listCallEvents: async (input) => {
+          inputs.push(input as unknown as Record<string, unknown>);
+          return { data: [] };
+        }
+      })
+    );
+    const contexts = [
+      { input: {}, maxHours: 24 },
+      { input: { callLegId: "leg_1" }, maxHours: 168 },
+      { input: { applicationSessionId: "session_1" }, maxHours: 168 }
+    ] as const;
+    const oneSidedInputs = [
+      { input: { occurredAtGt: "2026-05-01T00:00:00.000Z" }, synthesized: "occurredAtLte" },
+      { input: { occurredAtGte: "2026-05-01T00:00:00.000Z" }, synthesized: "occurredAtLte" },
+      { input: { occurredAtLt: "2026-05-10T00:00:00.000Z" }, synthesized: "occurredAtGte" },
+      { input: { occurredAtLte: "2026-05-10T00:00:00.000Z" }, synthesized: "occurredAtGte" }
+    ] as const;
+
+    for (const context of contexts) {
+      for (const { input, synthesized } of oneSidedInputs) {
+        const result = await service.callTimeline({ ...context.input, ...input });
+        expect(result.filters_notice).toMatch(/missing time bound/i);
+        const applied = inputs.at(-1);
+        expect(applied?.[synthesized]).toEqual(expect.any(String));
+        const start = String(applied?.occurredAtGt ?? applied?.occurredAtGte);
+        const end = String(applied?.occurredAtLt ?? applied?.occurredAtLte);
+        expect((Date.parse(end) - Date.parse(start)) / 3_600_000).toBe(context.maxHours);
+      }
+    }
+
+    expect(inputs).toHaveLength(12);
+  });
+
+  it("adds a complementary bound to one-sided recording searches", async () => {
+    const inputs: Array<Record<string, unknown>> = [];
+    const service = createVoiceMonitorService(
+      fakeClient({
+        listRecordings: async (input) => {
+          inputs.push(input as unknown as Record<string, unknown>);
+          return { data: [] };
+        }
+      })
+    );
+
+    for (const context of [{}, { connectionId: "conn_1" }]) {
+      await service.recordings({ ...context, occurredAtGte: "2026-05-01T00:00:00.000Z" });
+      await service.recordings({ ...context, occurredAtLte: "2026-05-10T00:00:00.000Z" });
+    }
+
+    expect(inputs).toHaveLength(4);
+    for (const input of inputs) {
+      expect(input.createdAtGte).toEqual(expect.any(String));
+      expect(input.createdAtLte).toEqual(expect.any(String));
+      expect(
+        (Date.parse(String(input.createdAtLte)) - Date.parse(String(input.createdAtGte))) /
+          3_600_000
+      ).toBe(168);
+    }
+  });
+
   it("rejects blank call status IDs and caps recording search windows", async () => {
     const service = createVoiceMonitorService(fakeClient(), { now: () => new Date("2026-05-20T12:00:00.000Z") });
 

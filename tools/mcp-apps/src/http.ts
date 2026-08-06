@@ -466,7 +466,11 @@ function reserveInitializationCapacity(
       if (!active) throw new Error("Initialization reservation is no longer active");
 
       const evicted: SessionRecord[] = [];
-      if (evictionCandidate && sessions.get(evictionCandidate[0]) === evictionCandidate[1]) {
+      if (
+        sessions.size >= maxEntries &&
+        evictionCandidate &&
+        sessions.get(evictionCandidate[0]) === evictionCandidate[1]
+      ) {
         sessions.delete(evictionCandidate[0]);
         evicted.push(evictionCandidate[1]);
       }
