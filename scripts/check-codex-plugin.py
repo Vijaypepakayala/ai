@@ -2218,20 +2218,17 @@ if mark_path.is_file():
         "official Telnyx mark does not match its pinned developers.telnyx.com asset",
     )
 
-reject_unknown_fields(mcp_config, {"mcpServers"}, ".mcp.json")
-mcp_servers = mcp_config.get("mcpServers")
-if isinstance(mcp_servers, dict):
-    require(
-        mcp_servers == {
-            "telnyx": {
-                "type": "http",
-                "url": MCP_SERVER_URL,
-            }
-        },
-        "MCP config must contain only the hosted Telnyx HTTP endpoint",
-    )
-else:
-    errors.append("MCP config must define an mcpServers object")
+reject_unknown_fields(mcp_config, {"telnyx"}, ".mcp.json")
+require(
+    mcp_config == {
+        "telnyx": {
+            "type": "http",
+            "url": MCP_SERVER_URL,
+        }
+    },
+    "MCP config must be a direct server map containing only the hosted Telnyx "
+    "HTTP endpoint",
+)
 
 reject_unknown_fields(marketplace, {"name", "interface", "plugins"}, "marketplace")
 require(
