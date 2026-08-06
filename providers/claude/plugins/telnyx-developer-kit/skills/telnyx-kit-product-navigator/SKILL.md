@@ -33,7 +33,7 @@ product plugin (`/plugin install telnyx-<product>@telnyx`) for deep guidance.
 | Send/receive fax | Programmable Fax | `POST /v2/faxes` (requires `connection_id`) | telnyx-platform plugin |
 | Connect a PBX/SIP system | SIP Trunking | credential or IP connections | telnyx-platform plugin |
 | Cellular connectivity for devices | IoT SIM | `/v2/sim_cards` (eSIM buys use `amount`) | telnyx-platform plugin |
-| Video rooms | Video | `/v2/rooms` + top-level room resources | telnyx-platform plugin |
+| Video rooms | Video | `/v2/rooms` + top-level room resources | telnyx-webrtc plugin |
 | Move an existing Twilio app | Migration | — | telnyx-twilio-migration skill (in telnyx-platform) |
 
 ## Decision rules the tables cannot express

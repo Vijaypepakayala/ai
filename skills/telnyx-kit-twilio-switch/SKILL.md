@@ -50,12 +50,15 @@ code fail **silently**, with a 200 response and nothing happening.
 5. **Signatures are Ed25519, not HMAC-SHA1.** A ported verifier fails closed
    (or worse, is left disabled).
 
-Two more worth knowing: `<Pay>` has **no TeXML equivalent**. Keep that call leg
-on Twilio until you have designed and validated a PCI-compliant replacement;
-never silently drop or mechanically translate the payment step. Telnyx also
-returns HTTP `409` preconditions (e.g. `40312` profile disabled) that Twilio
-has no counterpart for — ported code usually has no 409 branch and surfaces it
-as an unhandled exception. Never retry a 409 in a backoff loop.
+Two more worth knowing: Telnyx supports payments through the TeXML `<Pay>`
+verb. Create a Telnyx Payment Connector, translate and validate the `<Pay>`
+attributes, then exercise the payment progress and completion callbacks in
+test mode before switching the connector to live mode. Follow the
+[Pay over Voice guide](https://developers.telnyx.com/docs/voice/programmable-voice/pay)
+instead of silently dropping the payment step. Telnyx also returns HTTP `409`
+preconditions (e.g. `40312` profile disabled) that Twilio has no counterpart
+for — ported code usually has no 409 branch and surfaces it as an unhandled
+exception. Never retry a 409 in a backoff loop.
 
 ## Choosing the voice path
 
