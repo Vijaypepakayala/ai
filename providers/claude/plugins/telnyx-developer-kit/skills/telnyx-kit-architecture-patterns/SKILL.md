@@ -44,8 +44,10 @@ Caller → Telnyx number → TeXML app: <Connect><Stream url="wss://you"/></Conn
 
 ## Webhook processing (all products)
 
-- Verify Ed25519 signatures on every webhook (`telnyx-public-key` +
-  `telnyx-signature-ed25519` + timestamp) — see telnyx-kit-guardrails.
+- Verify Ed25519 signatures on every webhook using the
+  `telnyx-signature-ed25519` and `telnyx-timestamp` request headers; load the
+  public key from portal/configuration (for example, `TELNYX_PUBLIC_KEY`) — see
+  telnyx-kit-guardrails.
 - Return 200 fast; enqueue work. Telnyx retries on timeout — dedupe on
   `data.id`.
 - Payloads are nested: `data.event_type`, `data.payload.*` — never assume
