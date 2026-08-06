@@ -423,8 +423,13 @@ class TelnyxSession {
 
   scheduleTokenRefresh(expiresAt) {
     // Refresh shortly before the backend-declared expiry. Do not hard-code a
-    // token lifetime.
-    const refreshDelay = Math.max(Date.parse(expiresAt) - Date.now() - 60_000, 0);
+    // token lifetime. Fail closed instead of turning a missing/expired value
+    // into an immediate reconnect loop.
+    const expiryMs = Date.parse(expiresAt);
+    if (!Number.isFinite(expiryMs) || expiryMs <= Date.now() + 60_000) {
+      throw new Error('Backend returned a missing, invalid, or near-expiry JWT expiry');
+    }
+    const refreshDelay = expiryMs - Date.now() - 60_000;
     this.tokenRefreshTimer = setTimeout(async () => {
       const { token, expires_at: nextExpiry } = await fetch('/api/telnyx/token', { method: 'POST' })
         .then(r => r.json());
@@ -454,23 +459,43 @@ app.post('/api/telnyx/token', async (req, res) => {
   // Authenticate req.user first, then load the credential ID that is bound to
   // that user from your own server-side store.
   const credentialId = await loadCredentialIdForUser(req.user.id);
-  const tokenResponse = await client.telephonyCredentials.createToken(
+  const token = await client.telephonyCredentials.createToken(
     credentialId
   );
 
-  // Return only the JWT (and its expiry, if provided) to the client.
-  res.json({ token: tokenResponse });
+  // The token endpoint returns a JWT string. Read its exp claim server-side so
+  // the browser can schedule one bounded refresh instead of guessing a TTL.
+  const encodedPayload = token.split('.')[1];
+  const claims = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'));
+  if (!Number.isFinite(claims.exp)) {
+    throw new Error('Telnyx JWT is missing a numeric exp claim');
+  }
+  res.json({
+    token,
+    expires_at: new Date(claims.exp * 1000).toISOString()
+  });
 });
 ```
 
 ```python
 # Flask endpoint (Python)
+import base64
+import json
 import os
+from datetime import datetime, timezone
 from telnyx import Telnyx
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 client = Telnyx(api_key=os.environ.get('TELNYX_API_KEY'))
+
+def jwt_expiry_iso(token):
+    encoded_payload = token.split('.')[1]
+    padded_payload = encoded_payload + '=' * (-len(encoded_payload) % 4)
+    claims = json.loads(base64.urlsafe_b64decode(padded_payload))
+    if not isinstance(claims.get('exp'), (int, float)):
+        raise ValueError('Telnyx JWT is missing a numeric exp claim')
+    return datetime.fromtimestamp(claims['exp'], tz=timezone.utc).isoformat()
 
 @app.route('/api/telnyx/token', methods=['POST'])
 def create_token():
@@ -480,8 +505,8 @@ def create_token():
         credential_id
     )
 
-    # Return only the JWT to the client (used with login_token on TelnyxRTC).
-    return jsonify({'token': token})
+    # Return the JWT and its real expiry; never make the browser guess the TTL.
+    return jsonify({'token': token, 'expires_at': jwt_expiry_iso(token)})
 ```
 
 > **Note**: If `create_token()` is not available in your SDK version, use the REST API directly:
@@ -492,6 +517,7 @@ def create_token():
 >     headers={"Authorization": f"Bearer {os.environ['TELNYX_API_KEY']}"}
 > )
 > token = resp.text  # JWT string returned directly
+> expires_at = jwt_expiry_iso(token)  # return both fields to the browser
 > ```
 
 ### Environment Variables Mapping
