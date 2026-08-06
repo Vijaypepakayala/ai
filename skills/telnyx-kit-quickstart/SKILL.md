@@ -66,9 +66,9 @@ traffic flows:
 |---|---|---|
 | Send/receive SMS | a **messaging profile** assigned | `PATCH /v2/phone_numbers/{id}/messaging` (separate sub-resource — not the base PATCH) |
 | Receive calls to your app | a **connection / Call Control app** assigned | `PATCH /v2/phone_numbers/{id}` with `connection_id` |
-| Make outbound calls | connection + an **outbound voice profile** attached to it | `PATCH /v2/{credential\|ip}_connections/{id}` with `outbound.outbound_voice_profile_id` |
+| Make outbound calls | application/connection + an **outbound voice profile** attached to it | Call Control: `PATCH /v2/call_control_applications/{id}`; TeXML: `PATCH /v2/texml_applications/{id}`; SIP: `PATCH /v2/{credential\|fqdn\|ip}_connections/{id}`; set `outbound.outbound_voice_profile_id` |
 | Send US A2P SMS | messaging profile plus sender-appropriate registration | 10DLC for local long codes; toll-free verification or short-code approval for those sender types |
-| Send/receive fax | a **fax application** (`connection_id` is required on send) | `POST /v2/fax_applications` |
+| Send/receive fax | a **fax application** assigned to the number (`connection_id` is also required on send); outbound fax also needs an **outbound voice profile** on the app | Create with `POST /v2/fax_applications`, assign the number with `PATCH /v2/phone_numbers/{id}` using the Fax Application ID as `connection_id`, and for outbound set `outbound.outbound_voice_profile_id` on the Fax Application |
 
 Note the internal id vs E.164 distinction: `PATCH`/`DELETE` on numbers take the
 **internal numeric id**, not the phone number. Look it up first:
@@ -98,7 +98,9 @@ send response. `queued` or `sending` is not delivered — poll or use the
 Voice (beyond fire-and-forget), inbound SMS, fax, and verify all deliver
 results by webhook. Before writing handlers:
 
-- Configure the webhook URL on the **application/profile**, not per request.
+- Configure the default webhook URL on the **application/profile**. Use a
+  per-request override only when that endpoint explicitly supports one (for
+  example, Messaging `webhook_url`).
 - Verify Ed25519 signatures before processing (`telnyx-kit-guardrails`).
 - API v2 event webhooks are JSON under `data.event_type` and `data.payload.*`.
   Return `200` fast, enqueue work, and dedupe on `data.id`.
