@@ -65,6 +65,26 @@ SOURCE_EXTS = (
     | XML_EXTS
 )
 
+LEXICAL_FAMILIES = (
+    "Python",
+    "JavaScript/TypeScript",
+    "Ruby",
+    "Go",
+    "Java/Kotlin",
+    "PHP",
+    "C#",
+    "Swift",
+    "XML/HTML",
+)
+SERVER_HANDLER_FAMILIES = 8
+ANALYSIS_LIMITATIONS = (
+    "runtime-generated or reflected method and route names",
+    "code executed only inside string interpolation, eval, macros, or templates",
+    "cross-file aliases and data-flow relationships",
+    "nonstandard framework route registration",
+    "XML generated only at runtime",
+)
+
 MESSAGING_EXTS = PYTHON_EXTS | JAVASCRIPT_EXTS | RUBY_EXTS | GO_EXTS | JAVA_EXTS | PHP_EXTS
 VOICE_EXTS = MESSAGING_EXTS | XML_EXTS
 VERIFY_EXTS = MESSAGING_EXTS
@@ -909,6 +929,16 @@ class CorrectnessLinter:
         result = {
             "project_root": str(self.root),
             "product_filter": self.product,
+            "analysis_scope": {
+                "kind": "dependency-free lexical analysis",
+                "source_suffixes": sorted(SOURCE_EXTS),
+                "source_suffix_count": len(SOURCE_EXTS),
+                "lexical_families": list(LEXICAL_FAMILIES),
+                "lexical_family_count": len(LEXICAL_FAMILIES),
+                "server_handler_family_count": SERVER_HANDLER_FAMILIES,
+                "emitted_check_count": len(self.checks),
+                "limitations": list(ANALYSIS_LIMITATIONS),
+            },
             "checks": self.checks,
             "summary": {
                 "issues": self.issue_count,

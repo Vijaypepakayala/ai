@@ -77,7 +77,7 @@ class LinterRegressionTests(unittest.TestCase):
         )
         self.assert_clean(completed, payload)
 
-    def test_multiline_body_is_detected_in_all_supported_sdk_grammars(self) -> None:
+    def test_multiline_body_is_detected_in_supported_named_argument_grammars(self) -> None:
         completed, payload = self.run_linter(
             {
                 "case.py": 'client.messages.send(\n to="+1",\n body="bad",\n)\n',
@@ -261,7 +261,7 @@ class LinterRegressionTests(unittest.TestCase):
         self.assertEqual(finding["status"], "issue")
         self.assertEqual(len(finding["details"]["files"]), 2)
 
-    def test_insecure_webhook_handlers_are_found_in_every_supported_server_grammar(self) -> None:
+    def test_insecure_webhook_handlers_are_found_in_every_declared_server_family(self) -> None:
         completed, payload = self.run_linter(
             {
                 "handler.py": '@app.post("/webhook")\ndef hook():\n return data["payload"]\n',
@@ -493,6 +493,15 @@ class LinterRegressionTests(unittest.TestCase):
                 "twilio_directory_names",
             },
         )
+        scope = payload["analysis_scope"]
+        self.assertEqual(scope["kind"], "dependency-free lexical analysis")
+        self.assertEqual(scope["source_suffix_count"], 23)
+        self.assertEqual(len(scope["source_suffixes"]), 23)
+        self.assertEqual(scope["lexical_family_count"], 9)
+        self.assertEqual(len(scope["lexical_families"]), 9)
+        self.assertEqual(scope["server_handler_family_count"], 8)
+        self.assertEqual(scope["emitted_check_count"], 17)
+        self.assertGreaterEqual(len(scope["limitations"]), 5)
 
     def test_product_filter_omits_unrelated_product_checks(self) -> None:
         completed, payload = self.run_linter({"case.py": "value = 1\n"}, product="messaging")

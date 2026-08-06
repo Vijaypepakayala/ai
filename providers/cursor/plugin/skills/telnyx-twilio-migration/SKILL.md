@@ -402,6 +402,20 @@ Also run the correctness linter across all products:
 bash {baseDir}/scripts/lint-telnyx-correctness.sh <project-root>
 ```
 
+**Finite linter scope:** This is a dependency-free lexical analyzer, not a
+compiler or full parser. Its declared universe is 23 source suffixes across 9
+lexical families (Python, JavaScript/TypeScript, Ruby, Go, Java/Kotlin, PHP, C#,
+Swift, and XML/HTML), 8 server-handler families, and 17 emitted checks. JSON
+output records these counts, the exact suffix list, and the limitations under
+`analysis_scope`.
+
+It does not prove correctness for runtime-generated or reflected method/route
+names, code executed only inside string interpolation, `eval`, macros, or
+templates, cross-file aliases/data flow, nonstandard route registration, or XML
+generated only at runtime. Manually inspect those constructs and verify them
+with the language runtime or a real parser. A clean result means none of the 17
+declared lexical checks fired; it is not proof of arbitrary-program correctness.
+
 **Gating rules:**
 - **FAIL/ISSUE** (exit code 1) = **CRITICAL** — must fix before proceeding to Phase 6.
 - **WARN** (exit code 0) = **informational** — review each WARN to confirm it's not a missed API call, document and proceed.
