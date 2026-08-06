@@ -408,7 +408,7 @@ class TelnyxSession {
   }
 
   async initialize() {
-    // Create credential (do this ONCE per session, not per call)
+    // Fetch a JWT for the user's pre-provisioned credential.
     const tokenResponse = await fetch('/api/telnyx/token', { method: 'POST' });
     const { token, expires_at: expiresAt } = await tokenResponse.json();
 
@@ -448,7 +448,8 @@ class TelnyxSession {
 
 Provision and bind a Telephony Credential to each application user ahead of
 time. At login/session refresh: authenticate the user → load that user's
-credential ID → generate a JWT → return only the JWT to the client.
+credential ID → generate a JWT → return the JWT plus its derived expiry to the
+client. Do not return the credential ID, SIP password, or API key.
 
 ```javascript
 // Express.js endpoint
