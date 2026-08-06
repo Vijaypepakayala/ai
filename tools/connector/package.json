@@ -1,0 +1,46 @@
+{
+  "name": "@telnyx/claude-connector",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Curated Telnyx MCP server for Claude: task-level messaging, number, lookup, and Call Control tools with directory-grade annotations and a spend-confirmation gate.",
+  "main": "dist/server.js",
+  "bin": {
+    "telnyx-claude-connector": "dist/cli.js"
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "test": "vitest run",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "pretest:live": "npm run build",
+    "test:live": "node test-live/live-contract.mjs",
+    "pretest:live:write": "npm run build",
+    "test:live:write": "node test-live/live-write.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/team-telnyx/ai",
+    "directory": "tools/connector"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.3.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.2.7"
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "name": "@telnyx/docs-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only Telnyx docs-search MCP server for Claude: search and retrieve over the Telnyx Agent Skills corpus. No auth, no account access — directory-parity with Twilio's docs connector, deployable over stdio or streamable HTTP.",
+  "main": "dist/server.js",
+  "bin": {
+    "telnyx-docs-mcp": "dist/cli.js"
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build:index": "node scripts/build-index.mjs",
+    "test": "npm run build && vitest run",
+    "dev": "npm run build:index && tsx src/cli.ts",
+    "start": "node dist/cli.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "npm run clean && tsc -p tsconfig.json && npm run build:index"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/team-telnyx/ai",
+    "directory": "tools/docs-mcp"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.3.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.2.7"
+  }
+}

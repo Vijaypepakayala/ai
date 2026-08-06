@@ -73,6 +73,32 @@ jobs:
         working-directory: cli
         run: npm test
 
+      # MCP connectors (tools/connector, tools/docs-mcp)
+      - name: Install connector deps
+        working-directory: tools/connector
+        run: npm ci
+      - name: Connector typecheck
+        working-directory: tools/connector
+        run: npm run typecheck
+      - name: Connector unit tests
+        working-directory: tools/connector
+        run: npm test
+      - name: Connector build
+        working-directory: tools/connector
+        run: npm run build
+      - name: Install docs-mcp deps
+        working-directory: tools/docs-mcp
+        run: npm ci
+      - name: docs-mcp typecheck
+        working-directory: tools/docs-mcp
+        run: npm run typecheck
+      - name: docs-mcp unit tests (builds the docs index)
+        working-directory: tools/docs-mcp
+        run: npm test
+      - name: docs-mcp build
+        working-directory: tools/docs-mcp
+        run: npm run build
+
       # Cross-package parity
       - name: Cross-package parity check
         run: |
@@ -129,6 +155,16 @@ jobs:
       - name: TS SDK API read-only tests
         working-directory: tools/typescript
         run: npx tsx tests/integration-ci.test.ts
+
+      # Focused Claude connector read contract. Its test-only launcher blocks
+      # every non-GET before network I/O; write tools are exercised only through
+      # zero-cap/fail-closed gates.
+      - name: Install Claude connector deps
+        working-directory: tools/connector
+        run: npm ci
+      - name: Claude connector live read-only contract
+        working-directory: tools/connector
+        run: npm run test:live
 
       # Install Go CLI (telnyx-cli)
       - name: Install telnyx CLI (Go)
@@ -205,5 +241,3 @@ jobs:
         continue-on-error: true
         working-directory: cli
         run: RUN_WRITE_TESTS=true npx tsx tests/integration-ci-write.test.ts
-
-
