@@ -43,9 +43,11 @@ product plugin (`/plugin install telnyx-<product>@telnyx`) for deep guidance.
   TwiML migration target). Call Control when code must decide mid-call
   (AI agents, complex routing): every action is a REST command against
   `call_control_id`, no XML round-trip.
-- **US A2P SMS requires 10DLC registration** before traffic flows. Not
-  optional. Check the number's messaging profile has a campaign before
-  building send paths (see telnyx-kit-guardrails).
+- **US A2P sender registration is sender-specific**: local 10-digit long
+  codes use a 10DLC brand and campaign linked to the sending number's
+  messaging profile; toll-free senders use toll-free verification; short
+  codes use carrier approval/provisioning. Consent and opt-out handling,
+  including STOP, apply to every sender type (see telnyx-kit-guardrails).
 - **A message needs a messaging profile via the sending number's assignment
   or an explicit `messaging_profile_id`** — per-request passing is an
   override, not a requirement.

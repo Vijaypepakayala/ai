@@ -67,14 +67,14 @@ traffic flows:
 | Send/receive SMS | a **messaging profile** assigned | `PATCH /v2/phone_numbers/{id}/messaging` (separate sub-resource — not the base PATCH) |
 | Receive calls to your app | a **connection / Call Control app** assigned | `PATCH /v2/phone_numbers/{id}` with `connection_id` |
 | Make outbound calls | connection + an **outbound voice profile** attached to it | `PATCH /v2/{credential\|ip}_connections/{id}` with `outbound.outbound_voice_profile_id` |
-| Send US A2P SMS | messaging profile linked to a **10DLC campaign** | 10DLC brand + campaign registration |
+| Send US A2P SMS | messaging profile plus sender-appropriate registration | 10DLC for local long codes; toll-free verification or short-code approval for those sender types |
 | Send/receive fax | a **fax application** (`connection_id` is required on send) | `POST /v2/fax_applications` |
 
 Note the internal id vs E.164 distinction: `PATCH`/`DELETE` on numbers take the
 **internal numeric id**, not the phone number. Look it up first:
 `GET /v2/phone_numbers?filter[phone_number]=+1...`.
 
-## 4. First verified call
+## 4. First verified send
 
 Send one message to your own phone and confirm delivery end to end. This is a
 billable action: first check the current price for the exact sender,
@@ -100,9 +100,12 @@ results by webhook. Before writing handlers:
 
 - Configure the webhook URL on the **application/profile**, not per request.
 - Verify Ed25519 signatures before processing (`telnyx-kit-guardrails`).
-- Return `200` fast and do work asynchronously; Telnyx retries on timeout, so
-  make handlers idempotent on `data.id`.
-- Payloads are nested: `data.event_type`, `data.payload.*`.
+- API v2 event webhooks are JSON under `data.event_type` and `data.payload.*`.
+  Return `200` fast, enqueue work, and dedupe on `data.id`.
+- TeXML POST callbacks are flat `application/x-www-form-urlencoded` PascalCase
+  fields; configured GET callbacks use query parameters. Verify the raw request
+  before parsing. Instruction URLs must return TeXML promptly; callback routes
+  should dedupe on TeXML identifiers rather than looking for `data.id`.
 
 For local development, expose a tunnel (ngrok or similar) and point the
 application's webhook URL at it — Telnyx must reach your endpoint from the
@@ -112,13 +115,16 @@ public internet.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `401` / `10009` | bad or missing key | check `TELNYX_API_KEY` |
-| `400` / `40305` | `from` number not on the sending messaging profile | assign the number to the profile |
-| `409` / `40312` | messaging profile disabled | enable it, do not retry |
-| `409` / `40300` | STOP/compliance block | terminal — do not work around |
-| `400` / `10004` | required parameter missing (e.g. fax `connection_id`) | add the parameter |
-| `404` / `10005` | resource or route not found | verify the resource id and API path |
-| API `200` but nothing arrives | provisioning or 10DLC filtering | check step 3, then `telnyx-kit-debugging` |
+| `10009` | bad or missing key | check `TELNYX_API_KEY` |
+| `40305` | `from` number not on the sending messaging profile | assign the number to the profile |
+| `40312` | messaging profile disabled | enable it, then retry deliberately |
+| `40300` | STOP/compliance block | terminal — do not work around |
+| `10004` | required parameter missing (e.g. fax `connection_id`) | add the parameter |
+| `10005` | resource or URL not found | verify the resource id and API path |
+| API success but nothing arrives | provisioning or sender-registration filtering | check step 3, then `telnyx-kit-debugging` |
+
+HTTP status can vary by endpoint and validation stage; use the structured
+`errors[].code` and detail together with the transport status.
 
 Deeper triage lives in `telnyx-kit-debugging`; product selection in
 `telnyx-kit-product-navigator`; the compliance and safety rules you should

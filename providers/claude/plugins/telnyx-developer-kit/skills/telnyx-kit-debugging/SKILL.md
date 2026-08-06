@@ -15,21 +15,21 @@ metadata:
 
 ## Error-code triage (memorize the retry column)
 
-| HTTP | Code | Meaning | Retry? |
-|---|---|---|---|
-| 401 | 10009 | Bad/missing API key | No — fix auth |
-| 400 | 40310 | Invalid phone number | No — fix input |
-| 400 | 40305 | `from` number not on the sending messaging profile | No — fix provisioning |
-| 409 | 40312 | Messaging profile disabled | No — enable profile (`PATCH /v2/messaging_profiles/{id}` `enabled:true`) |
-| 409 | 40300 | Blocked (STOP/org compliance) | Never — compliance stop |
-| 400 | 10004 | Missing required parameter | No — fix request |
-| 404 | 10005 | Resource or route not found | No — fix ID/path |
-| 429 | — | Rate limited | Yes — after `Retry-After` seconds, not before |
-| 5xx | — | Upstream | Yes — bounded backoff |
+| Code | Meaning | Retry? |
+|---|---|---|
+| 10009 | Bad/missing API key | No — fix auth |
+| 40310 | Invalid `to` number | No — fix input |
+| 40305 | `from` number not on the sending messaging profile | No — fix provisioning |
+| 40312 | Messaging profile disabled | No — enable the profile, then retry deliberately |
+| 40300 | Blocked by STOP/org compliance | Never — compliance stop |
+| 10004 | Missing required parameter | No — add the required field |
+| 10005 | Resource or URL not found | No — fix the ID or path |
+| HTTP 429 | Rate limited | Yes — after `Retry-After`, not before |
+| HTTP 5xx | Upstream failure | Yes — bounded backoff |
 
-- 409 is a PRECONDITION class with no Twilio counterpart — code ported
-  from Twilio usually lacks a 409 branch and surfaces it as an unhandled
-  exception. Add the branch; never blind-retry it.
+- The HTTP status for a structured Telnyx error can vary by endpoint and
+  validation stage. Branch on transport status and `errors[0].code`; never
+  infer retryability from the first two digits of the Telnyx code.
 - SDK errors (Node telnyx@6): HTTP status is `err.status`; the Telnyx code
   is `err.error?.errors?.[0]?.code`. (`err.statusCode` and `err.rawErrors`
   are undefined — dead branches if you use them.)
@@ -39,16 +39,19 @@ metadata:
 - **TeXML attributes are case-sensitive and unknown ones are silently
   ignored** — `transcribe=`, `Timeout=`, `numdigits=`, `speechModel=` are
   dead at runtime. Same for unknown verbs: silently dropped. Validate
-  documents against the 18-verb whitelist before deploying.
-- **Messages "sent" but never delivered**: delivery outcome only exists in
-  the `message.finalized` webhook (`data.payload.to[0].status`) — there is
-  no `message.delivered` event. If you keyed on one, your retries never
-  fire.
-- **US SMS delivered=false with no API error**: carrier 10DLC filtering.
-  Check campaign linkage before blaming code.
+  documents against the current TeXML Verbs & Nouns reference before
+  deploying; do not rely on a fixed verb count.
+- **Messages "sent" but never delivered**: use `message.finalized`
+  (`data.payload.to[0].status`) as final delivery truth. Treat the synchronous
+  send response and intermediate events as acceptance/progress, not delivery.
+- **US SMS delivered=false with no API error**: check sender-specific carrier
+  readiness before blaming code — 10DLC for local long codes, toll-free
+  verification for toll-free senders, and carrier approval for short codes.
 - **Webhooks not arriving**: webhook URL is configured on the application/
   profile (not per-request); check the portal debugging tool for delivery
   attempts + your endpoint's TLS and response time (slow 200 = retry storm).
+  API v2 events are JSON under `data.*`; TeXML POST callbacks are flat forms
+  and configured GET callbacks use query parameters.
 - **Push notifications never arrive (WebRTC mobile)**: a push credential
   that exists but is not ATTACHED to the credential connection delivers
   nothing — set `ios_push_credential_id`/`android_push_credential_id` on

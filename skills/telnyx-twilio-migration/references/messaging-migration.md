@@ -438,7 +438,7 @@ Telnyx provides 10DLC registration via the Mission Control Portal (**Messaging**
 | `Body` | `text` | `data.payload.text` |
 | `NumMedia` | `media.length` | `data.payload.media` (array) |
 | `MediaUrl0` | `media[0].url` | `data.payload.media[0].url` |
-| `MessageStatus` | `event_type` | `data.event_type` (e.g., `message.sent`, `message.delivered`) |
+| `MessageStatus` | final recipient status | `data.payload.to[0].status` in `message.finalized` |
 | `ErrorCode` | `errors` | `data.payload.errors` (array) |
 
 ## Error Code Mapping
@@ -516,7 +516,8 @@ def telnyx_messaging_webhook(request):
 
 **Key migration notes for async patterns:**
 - Replace `body` with `text` in the task function signature and call
-- Add `messaging_profile_id` to send calls
+- Ensure the sending number is assigned to a Messaging Profile; pass
+  `messaging_profile_id` only when an explicit per-request override is needed
 - Handle `telnyx.error.RateLimitError` (HTTP 429) with retry logic
 - Telnyx rate limit: 1 msg/sec per number for 10DLC — same retry pattern works
 

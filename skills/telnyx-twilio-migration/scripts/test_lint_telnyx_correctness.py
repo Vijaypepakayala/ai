@@ -203,8 +203,13 @@ class LinterRegressionTests(unittest.TestCase):
     def test_key_comment_cannot_make_an_insecure_webhook_pass(self) -> None:
         completed, payload = self.run_linter(
             {
-                "handler.py": '@app.route("/webhook", methods=["POST"])\ndef webhook():\n data["payload"]\n',
-                "config.py": '# TODO: load TELNYX_PUBLIC_KEY\n',
+                "handler.py": (
+                    '@app.route("/webhook", methods=["POST"])\n'
+                    "def webhook():\n"
+                    ' hint = "verify_signature(request)"\n'
+                    ' return data["payload"]\n'
+                ),
+                "config.py": '# TODO: load TELNYX_PUBLIC_KEY and call client.webhooks.unwrap(...)\n',
             }
         )
         self.assertEqual(completed.returncode, 1)
@@ -386,15 +391,15 @@ class LinterRegressionTests(unittest.TestCase):
         self.assert_clean(completed, payload)
         self.assertEqual(self.check(payload, "polly_non_neural")["status"], "warn")
 
-    def test_original_unvalidated_webhook_remains_a_warning_not_a_regression(self) -> None:
+    def test_original_unvalidated_webhook_is_still_a_blocking_issue(self) -> None:
         completed, payload = self.run_linter(
             {
                 "handler.py": '@app.route("/webhook", methods=["POST"])\ndef webhook():\n return data["payload"]\n'
             },
             scan={"has_webhook_validation": False},
         )
-        self.assert_clean(completed, payload)
-        self.assertEqual(self.check(payload, "webhook_ed25519_missing")["status"], "warn")
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(self.check(payload, "webhook_ed25519_missing")["status"], "issue")
 
     def test_diagnostics_count_unique_files_and_preserve_match_locations(self) -> None:
         completed, payload = self.run_linter(
@@ -510,6 +515,15 @@ class LinterRegressionTests(unittest.TestCase):
         self.assertIn("body_not_text", names)
         self.assertNotIn("voice_response_builder", names)
         self.assertNotIn("verify_status_approved", names)
+
+    def test_pay_filter_runs_voice_and_texml_checks(self) -> None:
+        completed, payload = self.run_linter(
+            {"pay.xml": '<Response><Pay/><Gather speechModel="phone_call" /></Response>\n'},
+            product="pay",
+        )
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(self.check(payload, "speech_model_attr")["status"], "issue")
+        self.assertEqual(payload["product_filter"], "pay")
 
     def test_invalid_product_is_a_usage_error(self) -> None:
         with tempfile.TemporaryDirectory(prefix="telnyx-linter-test-") as temp:

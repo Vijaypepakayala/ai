@@ -33,7 +33,10 @@ Caller → Telnyx number → TeXML app: <Connect><Stream url="wss://you"/></Conn
 ## High-volume messaging
 
 - One messaging profile per traffic class (marketing vs transactional vs
-  OTP) — profiles carry the 10DLC campaign, throughput, and webhook config.
+  OTP) — profiles carry throughput and webhook config. For US A2P, local
+  10-digit long-code senders use a messaging profile linked to a 10DLC
+  campaign; toll-free senders need toll-free verification, while short-code
+  senders need carrier approval/provisioning.
 - Queue sends (worker + retry with backoff on 429 reading `Retry-After`);
   never loop sends inline in a request handler.
 - Delivery truth: `message.finalized` webhook, outcome in
@@ -42,18 +45,32 @@ Caller → Telnyx number → TeXML app: <Connect><Stream url="wss://you"/></Conn
 - Store conversation state server-side keyed on BOTH numbers (user × your
   number), with a TTL.
 
-## Webhook processing (all products)
+## Webhook processing by API family
 
-- Verify Ed25519 signatures on every webhook using the
+For API v2 JSON event webhooks (including Messaging and Call Control):
+
+- Verify the raw request before parsing using the
   `telnyx-signature-ed25519` and `telnyx-timestamp` request headers; load the
   public key from portal/configuration (for example, `TELNYX_PUBLIC_KEY`) — see
   telnyx-kit-guardrails.
-- Return 200 fast; enqueue work. Telnyx retries on timeout — dedupe on
-  `data.id`.
-- Payloads are nested: `data.event_type`, `data.payload.*` — never assume
-  Twilio's flat form-encoded shape.
+- Return 200 fast; enqueue work. Telnyx retries on timeout — dedupe on the
+  event `data.id` before side effects.
+- The event envelope is nested: `data.event_type`, `data.payload.*`. Never
+  apply Twilio's flat form parser to this route.
 - One public webhook endpoint per app; route internally on `event_type`
   (explicit allowlist of handled events + a logged default arm).
+
+TeXML instruction requests and status callbacks use a different wire format:
+
+- A configured POST carries flat PascalCase form fields as
+  `application/x-www-form-urlencoded`; a configured GET carries them in the
+  query string. Verify the raw request before decoding it, then parse the
+  configured method rather than looking for `data.*`.
+- Instruction requests must return TeXML promptly. Status callbacks should
+  fast-ack after durable enqueue and dedupe on their TeXML identifiers (for
+  example, `CallSid` plus `SequenceNumber` when present), not `data.id`.
+- Keep API v2 JSON and TeXML routes separate so parsing, validation, response,
+  and idempotency rules cannot be confused.
 
 ## Multi-product apps (e.g. contact center)
 

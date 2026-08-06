@@ -42,8 +42,13 @@ debugging code.
 `telnyx-kit-guardrails` is mandatory for anything touching production:
 
 - API key from env or a secret manager, validated at startup, never logged
-- every webhook route verifies Ed25519 signatures before side effects
-- US SMS paths check 10DLC readiness; treat `40300` as a compliance stop
+- every webhook route verifies Ed25519 signatures before side effects, then
+  parses the correct family: API v2 JSON or TeXML form/query callbacks
+- US SMS paths check sender-appropriate registration (10DLC, toll-free
+  verification, or short-code approval); treat `40300` as a compliance stop
+- recording/transcription starts only after applicable notice and consent;
+  Pay over Voice uses a Payment Connector and never exposes payment data to
+  logs, recordings, transcripts, webhook dumps, or model context
 - billable actions (sends, calls, number purchases) re-query the authoritative
   current price immediately before approval, present a maximum charge and
   currency, and get explicit human approval; never trust a caller-supplied
@@ -56,8 +61,9 @@ debugging code.
 ## 5. Triage by code, not by guesswork
 
 When something fails, `telnyx-kit-debugging` gives exact error-code
-meanings and retryability. Never blind-retry a 4xx other than 429, and never
-retry a 409. If the API returns success but nothing happens, work the
+meanings and retryability. Never blind-retry a 4xx other than 429; branch on
+the structured Telnyx error code because transport status alone is not enough.
+If the API returns success but nothing happens, work the
 silent-failure section (TeXML attribute case, delivery event names, 10DLC
 filtering, unattached push credentials).
 

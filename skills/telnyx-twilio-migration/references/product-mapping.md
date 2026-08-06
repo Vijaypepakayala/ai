@@ -16,10 +16,12 @@
 | **Programmable Voice (REST)** | **Call Control API** | Medium | Different paradigm: Telnyx uses event-driven WebSocket/webhook commands vs Twilio's REST calls. More granular control. |
 | **Programmable Messaging** (SMS/MMS) | **Messaging API** | Medium | New SDK integration. Different payload structure. Same capabilities: SMS, MMS, long codes, toll-free, short codes. |
 | **Elastic SIP Trunking** | **SIP Trunking** | Low | Direct replacement. Telnyx owns its network (not resold). Configure in Mission Control Portal. |
-| **Voice SDK** (Client WebRTC) | **WebRTC SDKs** | Medium | SDKs for JS, iOS, Android, Flutter, React Native. Key difference: no mandatory backend server for tokens. |
+| **Voice SDK** (Client WebRTC) | **WebRTC SDKs** | Medium | SDKs for JS, iOS, Android, Flutter, React Native. In production, generate short-lived JWTs from per-user Telephony Credentials on your backend. |
 | **Phone Numbers** | **Number Management** | Low | Licensed carrier with direct inventory in 140+ countries. Numbers managed via API or portal. |
 | **Twilio Verify** | **Verify API** | Medium | 5 methods: SMS, vSMS (templated), Call, Flash Call, PSD2. Different API surface but same functionality. |
 | **Twilio Lookup** | **Number Lookup** | Low | Carrier lookup, line type detection, caller name. Direct API replacement. |
+| **Twilio Pay** | **Pay over Voice** | Medium | Configure a Payment Connector, then use TeXML `<Pay>`, the Voice API, or an AI Assistant. Start in test mode and preserve payment-data masking. |
+| **SendGrid** (Email) | **Email API** | Medium | Migrate transactional sends, domains, suppressions, and unsubscribe handling deliberately; assess any SendGrid-specific template or reputation features. |
 | **Twilio Conversations** | No direct equivalent | N/A | Telnyx provides messaging primitives; no multi-channel conversation orchestration product. |
 | **Twilio Notify** | No direct equivalent | N/A | Use Telnyx Messaging API directly for push/SMS notifications. |
 | **10DLC Registration** | **10DLC Campaign Registry** | Low | Same underlying TCR system. Register brands and campaigns via Telnyx portal or API. |
@@ -43,6 +45,7 @@ Use this table to find the detailed migration guide for each product:
 | Number Lookup | `lookup-migration.md` | `lookup` |
 | Number Porting | `number-porting.md` | `porting-in`, `porting-out` |
 | 10DLC | `messaging-migration.md` (section) | `10dlc` |
+| Pay over Voice | `voice-migration.md`, `texml-verbs.md` | `pay` |
 | Numbers | `numbers-migration.md` | `numbers`, `numbers-config`, `numbers-services`, `numbers-compliance` |
 
 ## Telnyx-Only Products
@@ -69,10 +72,8 @@ If you depend on these, you will need a third-party alternative or custom soluti
 | **Flex** (Contact Center) | Build custom with Telnyx Call Control + WebRTC, or use third-party CCaaS |
 | **Studio** (Visual Workflow Builder) | No equivalent. Use TeXML or Call Control API directly. |
 | **Segment** (Customer Data Platform) | No equivalent. Consider Segment independently or alternatives (Rudderstack, mParticle). |
-| **SendGrid** (Email) | No equivalent. Telnyx does not offer email. Use SendGrid independently or alternatives (Postmark, Resend, SES). |
 | **TaskRouter** (Task Distribution) | No equivalent. Build custom routing with Call Control API queue management. |
 | **Frontline** (deprecated by Twilio) | N/A |
-| **Twilio Pay** | No equivalent. No `<Pay>` verb in TeXML. |
 | **Twilio Conversations** | No direct equivalent. Telnyx provides messaging primitives (SMS/MMS API) but no multi-channel conversation orchestration layer. Build custom or use a third-party conversation platform. |
 
 ## Deprecated Twilio Products Telnyx Still Supports

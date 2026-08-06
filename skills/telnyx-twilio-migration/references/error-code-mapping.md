@@ -59,7 +59,10 @@ These appear in the immediate API response when sending a message.
 | 21612 | Messaging Service has no numbers | 40321 | No usable numbers on messaging profile | 400 |
 | 21610 | Message undeliverable (opt-out) | — | See delivery errors below (40008) | — |
 
-**Migration note**: Twilio's `MessagingServiceSid` → Telnyx's `messaging_profile_id`. Always include `messaging_profile_id` — messages without a profile will fail.
+**Migration note**: Twilio's `MessagingServiceSid` maps to a Telnyx Messaging
+Profile. Assign the sending number to that profile, or pass
+`messaging_profile_id` explicitly when an intentional per-request override is
+needed.
 
 ## Messaging Errors — Delivery Webhook (Asynchronous)
 

@@ -574,8 +574,24 @@ These capabilities exist in TeXML but have no TwiML equivalent:
 | Synchronous streaming | `<Connect>` verb (blocks until stream ends) |
 | Telnyx media storage | `mediaStorage="true"` on `<Play>` |
 
-## TwiML Verbs Not Supported
+## Pay over Voice
 
-| TwiML Verb | TeXML Status | Alternative |
-|---|---|---|
-| `<Pay>` | Not supported | No equivalent. Handle payments outside the call flow. |
+Telnyx supports payment collection on an active call through TeXML `<Pay>`,
+the Voice API, and AI Assistants. Create a Payment Connector first and begin
+with its test mode; do not mechanically move a live payment flow without
+validating processor behavior, callbacks, failure handling, and compliance.
+
+```xml
+<Response>
+  <Pay chargeAmount="10.00"
+       paymentConnector="my-payment-connector"
+       currency="USD"
+       paymentMethod="credit-card" />
+</Response>
+```
+
+During the Pay session, preserve Telnyx's sensitive-data boundary: never put
+card or bank data in recordings, transcripts, application logs, webhook debug
+dumps, or model context. Handle `call_payment_progress` and
+`call_payment_completed` callbacks as TeXML form/query callbacks, not API v2
+`data.*` envelopes.

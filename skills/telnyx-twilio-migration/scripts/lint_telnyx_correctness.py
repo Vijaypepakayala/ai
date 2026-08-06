@@ -316,19 +316,15 @@ class CorrectnessLinter:
         self.issue_count = 0
         self.warn_count = 0
         self.pass_count = 0
-        self.original_had_webhook_validation: object = "unknown"
         self.scan_products: Set[str] = set()
         if scan_json and scan_json.is_file():
             try:
                 scan = json.loads(scan_json.read_text(encoding="utf-8"))
-                self.original_had_webhook_validation = scan.get(
-                    "has_webhook_validation", False
-                )
                 self.scan_products = {
                     str(item).lower() for item in scan.get("products_used", [])
                 }
             except (OSError, ValueError, TypeError):
-                self.original_had_webhook_validation = "unknown"
+                pass
 
     def _load_sources(self) -> List[SourceFile]:
         sources: List[SourceFile] = []
@@ -349,7 +345,12 @@ class CorrectnessLinter:
         return sources
 
     def product_applies(self, product: str) -> bool:
-        return self.product == "all" or product == "all" or self.product == product
+        return (
+            self.product == "all"
+            or product == "all"
+            or self.product == product
+            or (self.product == "pay" and product == "voice")
+        )
 
     def scan_has_product(self, product: str) -> bool:
         return not self.scan_products or product in self.scan_products
@@ -792,16 +793,10 @@ class CorrectnessLinter:
                     insecure.append(make_match(source, handler.start() + payload.start()))
         insecure = dedupe_matches(insecure)
         if insecure:
-            status = "warn" if self.original_had_webhook_validation is False else "issue"
-            message = (
-                "Telnyx webhook handler(s) lack handler-local signature verification"
-                if status == "issue"
-                else "Webhook verification remains absent, matching the original application's behavior"
-            )
             self.emit(
                 "webhook_ed25519_missing",
-                status,
-                message,
+                "issue",
+                "Telnyx webhook handler(s) lack handler-local signature verification",
                 "Verify each handler with Ed25519 before parsing or side effects; configuration strings alone do not count",
                 insecure,
             )
@@ -969,7 +964,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("project_root", type=Path)
     parser.add_argument(
         "--product",
-        choices=("all", "messaging", "voice", "verify", "webrtc"),
+        choices=("all", "messaging", "voice", "verify", "webrtc", "pay"),
         default="all",
     )
     parser.add_argument("--json", action="store_true", dest="json_mode")

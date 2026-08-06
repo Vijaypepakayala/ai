@@ -28,9 +28,12 @@ code fail **silently**, with a 200 response and nothing happening.
 | Programmable Voice REST | Call Control API | imperative commands against a `call_control_id` |
 | Verify Service | Verify Profile | channel is chosen by the ENDPOINT (`/v2/verifications/sms\|call\|flashcall`), not a `type` body field |
 | Lookup `Fields=` | `?type=carrier` / `?type=caller-name` | data is null unless requested |
-| Access Token (Voice SDK) | SIP credential / credential connection | no backend token service required |
+| Access Token (Voice SDK) | Telephony Credential + short-lived JWT | generate JWTs on your backend; never expose the Telnyx API key or long-lived SIP password to clients |
+| Twilio Pay / `<Pay>` | Pay over Voice | configure a Payment Connector; trigger through TeXML `<Pay>`, Voice API, or an AI Assistant |
 | Studio flow | (no equivalent) | extract the logic, then migrate the code |
-| TaskRouter, Flex, Sync, Proxy, Autopilot | (no equivalent) | keep on Twilio or build custom |
+| TaskRouter, Flex, Sync | no direct managed equivalent | keep on Twilio, use a third party, or build on Call Control/WebRTC primitives |
+| Proxy | custom number masking | build with Call Control/Messaging plus a number pool |
+| Autopilot | AI Assistants or bring your own NLU | redesign and validate the conversation rather than mechanically translating it |
 
 ## The five silent breakers
 
@@ -38,33 +41,38 @@ code fail **silently**, with a 200 response and nothing happening.
    `transcribe=`, `Timeout=`, `numdigits=`, `speechModel=` are dead at runtime
    with no error — transcription and digit collection just never happen. Same
    for unknown verbs: dropped silently.
-2. **Recording defaults flipped.** Telnyx records dual-channel by default;
-   Twilio single. Set `channels="single"` (and `recordingChannels="single"`
-   on `<Dial>`) to preserve behavior.
-3. **Delivery events differ.** There is no `message.delivered`. Outcome
-   arrives in `message.finalized` at `data.payload.to[0].status`. Retry logic
-   keyed on Twilio's event names never fires.
-4. **Webhook payloads are nested JSON, not flat form-encoded.**
-   `data.event_type` and `data.payload.*` — code reading `req.body.From`
-   silently sees undefined.
+2. **Recording defaults vary by TeXML surface.** `<Record>` defaults to dual
+   channels, while `<Dial recordingChannels>` defaults to single. Set the
+   channel mode explicitly after reviewing the migrated flow; do not assume a
+   single Telnyx-wide default.
+3. **Delivery events differ.** Use `message.finalized` and
+   `data.payload.to[0].status` as final delivery truth. The synchronous send
+   response and intermediate events are not proof of delivery.
+4. **Webhook shape depends on the API family.** API v2 events are nested JSON
+   under `data.*`; TeXML POST callbacks remain flat
+   `application/x-www-form-urlencoded` PascalCase fields (or query parameters
+   for configured GET callbacks). Reusing either parser for the other route
+   silently loses fields.
 5. **Signatures are Ed25519, not HMAC-SHA1.** A ported verifier fails closed
    (or worse, is left disabled).
 
-Two more worth knowing: Telnyx supports payments through the TeXML `<Pay>`
-verb. Create a Telnyx Payment Connector, translate and validate the `<Pay>`
-attributes, then exercise the payment progress and completion callbacks in
-test mode before switching the connector to live mode. Follow the
+Two more worth knowing: Telnyx supports Pay over Voice through TeXML `<Pay>`,
+the Voice API, and AI Assistants, but it is not a blind text substitution.
+Configure a Payment Connector, start in test mode, preserve Telnyx's masking
+boundary, exercise payment progress and completion callbacks, and keep payment
+data out of recordings, logs, webhooks, and model context. Follow the
 [Pay over Voice guide](https://developers.telnyx.com/docs/voice/programmable-voice/pay)
-instead of silently dropping the payment step. Telnyx also returns HTTP `409`
-preconditions (e.g. `40312` profile disabled) that Twilio has no counterpart
-for — ported code usually has no 409 branch and surfaces it as an unhandled
-exception. Never retry a 409 in a backoff loop.
+before switching the connector to live mode. Telnyx also returns structured
+configuration/compliance failures
+(for example `40312` for a disabled messaging profile) that Twilio code may
+not handle. Branch on `errors[].code` and do not automatically back off and
+retry an error that requires intervention.
 
 ## Choosing the voice path
 
-- Twilio app is **TwiML-driven** → TeXML. Nearly a drop-in: same verbs, swap
-  the endpoint and auth, then validate the XML against the runtime's verb and
-  attribute rules.
+- Twilio app is **TwiML-driven** → TeXML. This is the closest migration path,
+  but not a blind drop-in: swap endpoint/auth, then validate every verb,
+  attribute, callback shape, and default against the current TeXML runtime.
 - Twilio app **drives calls from code** (dynamic routing, AI agents) → Call
   Control. Each action is a REST command; no XML round-trip.
 - Twilio **Media Streams** (`<Connect><Stream>`) → TeXML `<Connect><Stream>`

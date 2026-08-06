@@ -53,16 +53,17 @@ Mobile App → Twilio (connect with Access Token)
            → Twilio calls your TwiML App webhook → Server returns <Dial>
 ```
 
-**Telnyx (backend optional):**
+**Telnyx (production):**
 ```
-Mobile App → Telnyx (connect with SIP credentials or JWT, TTL ~24hr)
+Mobile App → Your Backend → Telnyx API (issue short-lived JWT)
+Mobile App → Telnyx (connect with JWT)
 Mobile App → client.newCall(destinationNumber) → Call connects directly to PSTN
 ```
 
 | Aspect | Twilio | Telnyx |
 |---|---|---|
-| Auth model | Access Token per session (~1hr TTL), requires backend | SIP credentials (static) or JWT (~24hr TTL) |
-| Backend requirement | Mandatory for every session | Only for dynamic credential management |
+| Auth model | Access Token per session, requires backend | Short-lived Telephony Credential JWT issued by a trusted backend in production |
+| Backend requirement | Mandatory for every session | Required in production to issue short-lived JWTs; static SIP credentials are only for controlled, trusted scenarios |
 | Outbound calls | Requires TwiML webhook round-trip | Direct PSTN dial from client |
 | Push config | Per-credential via API | Per-connection in Mission Control Portal |
 | Hold/Transfer | Server-side only | Built into client SDK |
