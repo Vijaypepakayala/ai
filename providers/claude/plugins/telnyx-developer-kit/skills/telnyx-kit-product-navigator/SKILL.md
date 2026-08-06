@@ -23,7 +23,7 @@ product plugin (`/plugin install telnyx-<product>@telnyx`) for deep guidance.
 | Send SMS/MMS notifications or 2FA texts | Messaging | `POST /v2/messages` | telnyx-messaging plugin |
 | Verify users by OTP (SMS, call, flash call) | Verify | `POST /v2/verifications/{sms\|call\|flashcall}` | telnyx-verify plugin |
 | Send WhatsApp messages | WhatsApp Business | WhatsApp API | telnyx-whatsapp plugin |
-| Serve voice menus / IVR from XML | TeXML | TeXML Application + XML docs | telnyx-voice plugin |
+| Serve voice menus / IVR from XML | TeXML | TeXML Application + XML docs | telnyx-platform plugin |
 | Drive calls imperatively from code (AI agents, dynamic flows) | Call Control | `POST /v2/calls` + per-call actions | telnyx-voice plugin |
 | Build a browser/mobile softphone | WebRTC SDKs | Credential connections + SDKs | telnyx-webrtc plugin |
 | Real-time media into your AI model | Media Streaming | `<Connect><Stream>` or Call Control streaming | telnyx-voice plugin |
