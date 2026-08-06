@@ -22,7 +22,8 @@ describe("Voice Monitor service", () => {
       fakeClient({
         listConnections: async () => ({
           data: [
-            { id: "conn_keep_for_followup", connection_name: "Production Voice", active: true, outbound: { outbound_voice_profile_id: "ovp_1" } }
+            { id: "conn_keep_for_followup", connection_name: "Production Voice", active: true, outbound: { outbound_voice_profile_id: "ovp_1" } },
+            { connection_name: "Missing identifier" }
           ]
         }),
         listCallControlApplications: async () => ({ data: [{ id: "app_keep_for_followup", application_name: "Support IVR", active: true }] }),
@@ -66,7 +67,15 @@ describe("Voice Monitor service", () => {
         }),
         listActiveCalls: async (connectionId) => {
           consulted.push(connectionId);
-          return { data: [{ call_control_id: `call_${connectionId}`, from: "+15551234567" }] };
+          return {
+            data: [
+              {
+                call_control_id: `call_${connectionId}`,
+                connection_id: "untrusted_upstream_value",
+                from: "+15551234567"
+              }
+            ]
+          };
         }
       }),
       { maxDiscoveryConnections: 2 }
@@ -84,6 +93,10 @@ describe("Voice Monitor service", () => {
       { connection_id: "app_2", active_call_count: 1 }
     ]);
     expect(result.per_connection.every((entry) => !("data" in entry))).toBe(true);
+    expect(result.active_calls.map((call) => call.connection_id)).toEqual([
+      "app_1",
+      "app_2"
+    ]);
     expect(JSON.stringify(result)).toContain("call_app_1");
     expect(JSON.stringify(result)).not.toContain("15551234567");
   });

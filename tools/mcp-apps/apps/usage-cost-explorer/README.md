@@ -2,6 +2,10 @@
 
 Read-first MCP app for Telnyx balance, usage, billing groups, and guarded billing controls.
 
+This package is an internal reference/local stdio implementation. It is not
+imported by the hosted HTTP catalog, has no hosted `/apps/:slug/mcp` route, and
+is not part of the public Telnyx Developer Kit federation.
+
 ## Scope
 
 Read tools:
@@ -27,7 +31,7 @@ Guarded mutation tools:
 ## Safety guardrails
 
 - Stored payment top-ups require a saved payment method in the Telnyx portal and a preview confirmation token. The token is reserved atomically before the charge attempt and an ambiguous outcome must be verified in Telnyx Portal transaction history or against account balance; do not retry automatically. New payment-method collection, invoice payment, card/bank management, and x402 operations are not exposed.
-- All mutation confirmation state is process-local (5-minute TTL, three outstanding previews per credential, 256 entries per guarded confirmation store). Capacity limits fail closed instead of evicting another credential's live token. A restart invalidates unused pending tokens and loses in-flight ambiguous-action tombstones. The hosted catalog therefore explicitly disables stored-payment and billing-group create previews and confirmations before any Telnyx request. Those four create-style tools require a durable shared confirmation coordinator or upstream idempotency before hosted enablement.
+- All mutation confirmation state is process-local (5-minute TTL, three outstanding previews per credential, 256 entries per guarded confirmation store). Capacity limits fail closed instead of evicting another credential's live token. A restart invalidates unused pending tokens and loses in-flight ambiguous-action tombstones. The entire app remains outside the hosted catalog. Its four create-style tools additionally require a durable shared confirmation coordinator or upstream idempotency before any future hosted review.
 - Auto-recharge and billing-group tokens are bound to the resolved credential, action, and exact requested fields. One logical preview may be outstanding at a time; confirmation reserves it synchronously before an upstream PATCH or POST, so same-token and distinct-preview duplicate mutations fail closed within the process. A known success releases the logical action only after the final MCP response passes sanitization, schema validation, and output-size enforcement. An ambiguous attempt stays blocked for the confirmation TTL in that process and requires the user to verify account state instead of retrying automatically.
 - Stored confirmation records retain only the normalized amount and a domain-separated SHA-256 fingerprint of the resolved credential. Raw credentials and internal service confirmation values are neither retained nor logged.
 - Live tools require `TELNYX_API_KEY`; missing keys return a safe MCP tool error without making network calls.
@@ -74,7 +78,6 @@ npm run dev --workspace @telnyx-mcp-apps/usage-cost-explorer
 For local-only mutation-safety testing, set
 `USAGE_COST_EXPLORER_ALLOW_UNSAFE_PROCESS_LOCAL_CREATE_MUTATIONS=true` while
 `NODE_ENV` is not `production`. This escape hatch must never be enabled in a
-hosted deployment; the app catalog passes an explicit `false` regardless of
-environment.
+hosted deployment. The current hosted catalog does not import this app at all.
 
 The UI resource is registered at `ui://usage-cost-explorer/index.html`.

@@ -75,8 +75,9 @@ processing:
   explicit human approval BEFORE the purchase call.
 - Cap loops that touch billable endpoints (max sends/calls per run); a bug
   or prompt injection must hit a ceiling, not a credit card.
-- 409 responses are preconditions (e.g. 40312 profile disabled) — never
-  retry them in a backoff loop; fix the resource state.
+- Treat terminal configuration errors such as 40312 (messaging profile
+  disabled) as non-retryable regardless of the accompanying HTTP status;
+  review and fix the intended resource state instead of blind backoff.
 
 ## Agent-safety rules (when AI writes or runs the code)
 

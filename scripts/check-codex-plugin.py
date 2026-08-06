@@ -814,6 +814,16 @@ def validate_kit_skill_semantics(skill_texts: dict[str, str]) -> None:
         and "notifications or 2FA texts" not in navigator,
         "product navigator must route OTP and 2FA to Verify instead of raw Messaging",
     )
+    require(
+        "| Serve voice menus / IVR from XML | TeXML | TeXML Application + XML docs | telnyx-platform plugin |"
+        in navigator
+        and "| Look up carrier/caller data for a number | Number Lookup | `GET /v2/number_lookup/{number}` | hosted catalog; Number Intelligence app |"
+        in navigator
+        and "| Video rooms | Video | `/v2/rooms` + top-level room resources | telnyx-webrtc plugin |"
+        in navigator,
+        "product navigator reference-pack routes must match the generated Claude "
+        "plugin trees and public focused-app contract",
+    )
 
     architecture_lower = re.sub(r"\s+", " ", architecture).lower()
     require(
@@ -828,18 +838,25 @@ def validate_kit_skill_semantics(skill_texts: dict[str, str]) -> None:
 
     require(
         re.search(
-            r"\|\s*422\s*\|\s*10004\s*\|\s*Missing required parameter\s*\|",
+            r"\|\s*10004\s*\|\s*Missing required parameter\s*\|",
             debugging,
         )
         is not None
         and re.search(
-            r"\|\s*404\s*\|\s*10005\s*\|\s*Resource or URL not found\s*\|",
+            r"\|\s*10005\s*\|\s*Resource or URL not found\s*\|",
             debugging,
         )
         is not None
         and "10004/10005" not in debugging,
         "debugging guidance must map 10004 to a missing parameter and 10005 "
         "to a missing resource/URL",
+    )
+    require(
+        "Do not infer the HTTP status from the Telnyx error-code prefix" in debugging
+        and "non-retryable regardless of the accompanying HTTP status" in guardrails
+        and "409 is a PRECONDITION" not in debugging,
+        "debugging and guardrail guidance must not invent a universal HTTP status "
+        "for product error codes",
     )
 
     texml_markers = (

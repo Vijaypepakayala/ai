@@ -48,7 +48,9 @@ export function createVoiceMonitorService(client: VoiceMonitorClient, options: V
       const connections = dataArray<ConnectionData>(connectionsEnvelope);
       const phoneNumbers = dataArray<VoiceNumberData>(phoneNumbersEnvelope);
       const numberCounts = countNumbersByConnection(phoneNumbers);
-      const connectionOptions = connections.map((connection) => connectionOption(connection, numberCounts));
+      const connectionOptions = connections
+        .map((connection) => connectionOption(connection, numberCounts))
+        .filter(Boolean) as DiscoveryOption[];
       const applicationOptions = dataArray<Record<string, unknown>>(applicationsEnvelope).map(applicationOption).filter(Boolean) as DiscoveryOption[];
       const voiceNumberOptions = phoneNumbers.map(voiceNumberOption).filter(Boolean) as DiscoveryOption[];
 
@@ -407,8 +409,12 @@ function parseIsoDateTime(value: string, label: string): Date {
   return date;
 }
 
-function connectionOption(connection: ConnectionData, counts: Map<string, number>): DiscoveryOption {
+function connectionOption(
+  connection: ConnectionData,
+  counts: Map<string, number>
+): DiscoveryOption | undefined {
   const value = String(connection.id ?? connection.connection_id ?? "").trim();
+  if (!value) return undefined;
   const label = String(connection.connection_name ?? connection.name ?? (value || "Unnamed connection"));
   return {
     kind: "connection",
@@ -465,7 +471,7 @@ function dataArray<T = unknown>(envelope: TelnyxEnvelope<T[] | T> | undefined): 
 
 function attachConnectionId(call: unknown, connectionId: string): unknown {
   if (call && typeof call === "object" && !Array.isArray(call)) {
-    return { connection_id: connectionId, ...(call as Record<string, unknown>) };
+    return { ...(call as Record<string, unknown>), connection_id: connectionId };
   }
   return { connection_id: connectionId, value: call };
 }

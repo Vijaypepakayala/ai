@@ -1,10 +1,9 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { createServer as createNumberIntelligenceServer } from "../apps/number-intelligence/src/server.js";
-import { createServer as createUsageCostExplorerServer } from "../apps/usage-cost-explorer/src/server.js";
 import { createServer as createVoiceMonitorServer } from "../apps/voice-monitor/src/server.js";
 
-export type McpAppSlug = "number-intelligence" | "usage-cost-explorer" | "voice-monitor";
+export type McpAppSlug = "number-intelligence" | "voice-monitor";
 
 export interface McpAppDefinition {
   slug: McpAppSlug;
@@ -17,6 +16,8 @@ export interface McpAppDefinition {
 export const MCP_PUBLIC_DISCOVERY_METHODS = [
   "initialize",
   "notifications/initialized",
+  "notifications/cancelled",
+  "ping",
   "tools/list",
   "resources/list",
   "resources/read"
@@ -39,19 +40,6 @@ export const MCP_APP_DEFINITIONS: readonly McpAppDefinition[] = [
     description: "Phone-number analysis using Telnyx Number Lookup and read-first readiness signals.",
     endpoint: "/apps/number-intelligence/mcp",
     createServer: createNumberIntelligenceServer
-  },
-  {
-    slug: "usage-cost-explorer",
-    name: "Usage & Cost Explorer",
-    description: "Balance, usage reports, billing groups, and guarded billing controls.",
-    endpoint: "/apps/usage-cost-explorer/mcp",
-    // Create-style billing mutations use process-local confirmation state in
-    // this reference implementation. Hosted mode keeps them fail-closed until
-    // a durable shared coordinator or upstream idempotency is deployed.
-    createServer: () =>
-      createUsageCostExplorerServer({
-        allowProcessLocalCreateMutations: false
-      })
   },
   {
     slug: "voice-monitor",
@@ -104,8 +92,22 @@ function joinPublicPath(prefix: string | undefined, path: string): string {
 function normalizePathPrefix(prefix: string | undefined): string {
   if (!prefix) return "";
   const trimmed = prefix.trim();
-  if (!trimmed) return "";
+  if (!trimmed || /[\\?#\u0000-\u001f\u007f]/.test(trimmed)) return "";
 
   const withoutBoundarySlashes = trimmed.replace(/^\/+|\/+$/g, "");
-  return withoutBoundarySlashes ? `/${withoutBoundarySlashes}` : "";
+  if (!withoutBoundarySlashes) return "";
+
+  const segments = withoutBoundarySlashes.split("/");
+  if (
+    segments.some(
+      (segment) =>
+        !segment ||
+        segment === "." ||
+        segment === ".." ||
+        !/^[A-Za-z0-9._~-]+$/.test(segment)
+    )
+  ) {
+    return "";
+  }
+  return `/${segments.join("/")}`;
 }

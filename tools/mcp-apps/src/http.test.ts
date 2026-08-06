@@ -237,7 +237,7 @@ describe("hosted MCP Apps HTTP service", () => {
     await expect(ready.json()).resolves.toMatchObject({
       status: "ready",
       service: "mcp-apps",
-      apps: ["number-intelligence", "usage-cost-explorer", "voice-monitor"]
+      apps: ["number-intelligence", "voice-monitor"]
     });
 
     const catalog = await app.request("https://internal.example/apps", {
@@ -249,7 +249,7 @@ describe("hosted MCP Apps HTTP service", () => {
     });
     expect(catalog.status).toBe(200);
     const body = await catalog.json();
-    expect(body.apps).toHaveLength(3);
+    expect(body.apps).toHaveLength(2);
     expect(body.apps[0]).not.toHaveProperty("createServer");
     expect(body.apps[0]).toMatchObject({
       slug: "number-intelligence",
@@ -263,6 +263,8 @@ describe("hosted MCP Apps HTTP service", () => {
         publicMethods: [
           "initialize",
           "notifications/initialized",
+          "notifications/cancelled",
+          "ping",
           "tools/list",
           "resources/list",
           "resources/read"
@@ -270,6 +272,17 @@ describe("hosted MCP Apps HTTP service", () => {
         authRequiredMethods: ["tools/call"]
       }
     });
+
+    expect(body.apps.map((entry: { slug: string }) => entry.slug)).not.toContain(
+      "usage-cost-explorer"
+    );
+
+    const billingRoute = await app.request("/apps/usage-cost-explorer/mcp", {
+      method: "POST",
+      headers: MCP_HEADERS,
+      body: JSON.stringify(initializeRequest())
+    });
+    expect(billingRoute.status).toBe(404);
   });
 
   it("rejects browser origins by default without affecting server-to-server requests", async () => {
@@ -404,6 +417,53 @@ describe("hosted MCP Apps HTTP service", () => {
     });
   });
 
+  it.each([
+    "/mcp?redirect=evil.example",
+    "/mcp#evil.example",
+    "/mcp\\evil",
+    "/mcp/../admin",
+    "/mcp/%2e%2e/admin",
+    "/mcp/%2Fadmin",
+    "/mcp//admin"
+  ])(
+    "ignores unsafe forwarded path prefix %s",
+    async (prefix) => {
+      const app = createTestApp();
+      const catalog = await app.request("https://internal.example/apps", {
+        headers: {
+          "x-forwarded-proto": "https",
+          "x-forwarded-host": "mcp.telnyx.com",
+          "x-forwarded-prefix": prefix
+        }
+      });
+      const body = await catalog.json();
+      expect(body.apps[0]).toMatchObject({
+        endpointPath: "/apps/number-intelligence/mcp",
+        endpointUrl: "https://mcp.telnyx.com/apps/number-intelligence/mcp"
+      });
+    }
+  );
+
+  it.each([
+    ["insecure non-loopback origin", "http", "mcp.telnyx.com"],
+    ["host containing a path", "https", "mcp.telnyx.com/evil"],
+    ["host containing credentials", "https", "attacker@mcp.telnyx.com"]
+  ])("ignores an unsafe forwarded %s", async (_caseName, proto, host) => {
+    const app = createTestApp();
+    const catalog = await app.request("https://internal.example/apps", {
+      headers: {
+        "x-forwarded-proto": proto,
+        "x-forwarded-host": host,
+        "x-forwarded-prefix": "/mcp-apps"
+      }
+    });
+    const body = await catalog.json();
+    expect(body.apps[0]).toMatchObject({
+      endpointPath: "/mcp-apps/apps/number-intelligence/mcp",
+      endpointUrl: "https://internal.example/mcp-apps/apps/number-intelligence/mcp"
+    });
+  });
+
   it("falls back to forwarded headers when MCP_APPS_PUBLIC_BASE_URL is malformed", async () => {
     process.env.MCP_APPS_PUBLIC_BASE_URL = "ftp://evil.example/v2/mcp";
     const app = createTestApp();
@@ -446,6 +506,49 @@ describe("hosted MCP Apps HTTP service", () => {
       endpointPath: "/mcp-apps/apps/number-intelligence/mcp",
       endpointUrl: "https://mcp.telnyx.com/mcp-apps/apps/number-intelligence/mcp"
     });
+  });
+
+  it("rejects non-loopback HTTP origins and public base URLs", async () => {
+    process.env.MCP_APPS_CORS_ALLOWED_ORIGINS =
+      "http://browser.example,http://127.0.0.1:5173";
+    process.env.MCP_APPS_PUBLIC_BASE_URL = "http://api.telnyx.com/v2/mcp";
+    const app = createTestApp();
+
+    const insecureBrowser = await app.request("/health", {
+      headers: { origin: "http://browser.example" }
+    });
+    expect(insecureBrowser.status).toBe(403);
+
+    const loopbackBrowser = await app.request("/health", {
+      headers: { origin: "http://127.0.0.1:5173" }
+    });
+    expect(loopbackBrowser.status).toBe(200);
+
+    const catalog = await app.request("https://internal.example/apps", {
+      headers: {
+        "x-forwarded-proto": "https",
+        "x-forwarded-host": "mcp.telnyx.com",
+        "x-forwarded-prefix": "/v2/mcp"
+      }
+    });
+    const body = await catalog.json();
+    expect(body.apps[0].endpointUrl).toBe(
+      "https://mcp.telnyx.com/v2/mcp/apps/number-intelligence/mcp"
+    );
+  });
+
+  it("rejects query strings on MCP app routes", async () => {
+    const app = createTestApp();
+    const response = await app.request(
+      "/apps/number-intelligence/mcp?catalog=usage-cost-explorer",
+      {
+        method: "POST",
+        headers: MCP_HEADERS,
+        body: JSON.stringify(initializeRequest())
+      }
+    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "query_not_allowed" });
   });
 
   it("allows unauthenticated MCP Apps discovery and UI resource introspection", async () => {
@@ -1002,12 +1105,103 @@ describe("hosted MCP Apps HTTP service", () => {
     });
     expect(pingWithoutUserKey.status).toBe(200);
 
+    const cancellationWithoutUserKey = await app.request(
+      "/apps/number-intelligence/mcp",
+      {
+        method: "POST",
+        headers: publicSessionHeaders(sessionId),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "notifications/cancelled",
+          params: { requestId: 2, reason: "User cancelled the lookup" }
+        })
+      }
+    );
+    expect(cancellationWithoutUserKey.status).toBe(202);
+
+    const unknownMethodWithoutUserKey = await app.request(
+      "/apps/number-intelligence/mcp",
+      {
+        method: "POST",
+        headers: publicSessionHeaders(sessionId),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 5,
+          method: "telnyx/unknown"
+        })
+      }
+    );
+    expect(unknownMethodWithoutUserKey.status).toBe(401);
+
     const differentUserKey = await app.request("/apps/number-intelligence/mcp", {
       method: "POST",
       headers: sessionHeaders(sessionId, "KEY_different_user_key_1234567890"),
-      body: JSON.stringify({ jsonrpc: "2.0", id: 5, method: "tools/list", params: {} })
+      body: JSON.stringify({ jsonrpc: "2.0", id: 6, method: "tools/list", params: {} })
     });
     expect(differentUserKey.status).toBe(404);
+  });
+
+  it("accepts credential-free cancellation and stops a billable batch before its next lookup", async () => {
+    delete process.env.TELNYX_API_KEY;
+    process.env.TELNYX_API_BASE_URL = "https://example.test";
+    let lookupCalls = 0;
+    let markFetchStarted: (() => void) | undefined;
+    let markFetchAborted: (() => void) | undefined;
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve;
+    });
+    const fetchAborted = new Promise<void>((resolve) => {
+      markFetchAborted = resolve;
+    });
+
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      lookupCalls += 1;
+      markFetchStarted?.();
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        const rejectForCancellation = () => {
+          markFetchAborted?.();
+          reject(signal?.reason ?? new Error("Telnyx request was cancelled"));
+        };
+        if (signal?.aborted) rejectForCancellation();
+        else signal?.addEventListener("abort", rejectForCancellation, { once: true });
+      });
+    }) as typeof fetch;
+
+    const app = createTestApp();
+    const sessionId = await initializeSession(app, "KEY_cancel_batch_1234567890");
+    const toolCallPromise = app.request("/apps/number-intelligence/mcp", {
+      method: "POST",
+      headers: sessionHeaders(sessionId, "KEY_cancel_batch_1234567890"),
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "number_intelligence_batch_analyze",
+          arguments: {
+            numbers: ["+15551234567", "+15557654321"],
+            sources: ["lookup"]
+          }
+        }
+      })
+    });
+
+    await fetchStarted;
+    const cancellation = await app.request("/apps/number-intelligence/mcp", {
+      method: "POST",
+      headers: publicSessionHeaders(sessionId),
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "notifications/cancelled",
+        params: { requestId: 2, reason: "User cancelled the batch" }
+      })
+    });
+    expect(cancellation.status).toBe(202);
+
+    await fetchAborted;
+    void toolCallPromise.catch(() => undefined);
+    expect(lookupCalls).toBe(1);
   });
 
   it("preserves the hidden upstream auth marker over MCP HTTP for proxy translation", async () => {

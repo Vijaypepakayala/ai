@@ -7,7 +7,6 @@ import { describe, expect, it } from "vitest";
 
 import { createServer } from "../src/server.js";
 import { AUTO_RECHARGE_SETUP_UI_HTML, STORED_PAYMENT_TOP_UP_UI_HTML, USAGE_COST_EXPLORER_UI_HTML } from "../src/ui.js";
-import { findMcpApp } from "../../../src/catalog.js";
 
 const SECURITY_META_MARKERS = [
   '<meta name="color-scheme" content="light dark" />',
@@ -33,8 +32,7 @@ describe("Usage Cost Explorer MCP server", () => {
     }) as typeof fetch;
 
     try {
-      const server = findMcpApp("usage-cost-explorer")?.createServer();
-      expect(server).toBeDefined();
+      const server = createServer({ allowProcessLocalCreateMutations: false });
       const tools = (
         server as unknown as {
           _registeredTools: Record<

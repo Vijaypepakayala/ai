@@ -8,10 +8,10 @@ These apps are separate from [`tools/mcp`](../mcp), which is the generic `@telny
 
 This reference tree is for app-specific MCP tools, UI resources, and safety flows. Generated broad API tooling and deployment-only infrastructure remain outside this directory, and customer secrets, API keys, wallet keys, or payment credentials must never be committed here.
 
-The hosted catalog explicitly disables the Usage app's stored-payment and
-billing-group create previews and confirmations until a durable shared
-confirmation coordinator or upstream idempotency is available. Local tests may
-exercise their process-local implementation; hosted deployments must not.
+The Usage and Cost Explorer remains available as an internal reference
+implementation and local stdio app, but it is excluded from the hosted catalog,
+readiness response, and `/apps/:slug/mcp` routing. Hosted public federation is
+limited to Number Intelligence and Voice Monitor.
 
 ## Apps
 
@@ -33,7 +33,7 @@ tools/mcp-apps/
   tsconfig.json
 ```
 
-The root package is an npm workspace package with `apps/*` workspaces. Each app is a private package with its own source, tests, and README. The root `src/` hosts all app servers behind `/apps/:slug/mcp` plus `/health`, `/readyz`, and `/apps` endpoints.
+The root package is an npm workspace package with `apps/*` workspaces. Each app is a private package with its own source, tests, and README. The root `src/` hosts only the two public app servers behind `/apps/:slug/mcp` plus `/health`, `/readyz`, and `/apps` endpoints. The billing app is intentionally not imported by that hosted entrypoint.
 
 ## Setup
 
@@ -78,7 +78,6 @@ Useful endpoints:
 - `GET /readyz` — readiness and app list
 - `GET /apps` — app catalog
 - `/apps/number-intelligence/mcp`
-- `/apps/usage-cost-explorer/mcp`
 - `/apps/voice-monitor/mcp`
 
 This service is an internal backend and must not be exposed directly to end users. Every request to `/apps/:slug/mcp`, including discovery and UI-resource reads, requires:
@@ -95,13 +94,13 @@ X-Telnyx-API-Key: <resolved-KEY_...-user-key>
 
 Set the service credential with `MCP_APPS_INTERNAL_TOKEN`. The public MCP proxy owns OAuth validation/exchange and must pass only a resolved Telnyx v2 API key in the documented `KEY_...` form; this backend rejects opaque OAuth tokens in the user-key header. The internal service credential is never forwarded to Telnyx.
 
-Every app tool's wire descriptor declares the public hosted OAuth policy as
+Every publicly hosted app tool's wire descriptor declares the OAuth policy as
 `[{"type":"oauth2","scopes":["admin"]}]` in top-level `securitySchemes` and
-an exact `_meta.securitySchemes` compatibility mirror. All 25 app tools also
-declare `_meta.ui.visibility: ["app"]`, including tools that bind one of the
-five UI resources with `resourceUri`. The public proxy therefore keeps these
-tools callable by their bundled apps without adding them to model tool
-selection. The broad `admin` scope is the only scope currently advertised by
+an exact `_meta.securitySchemes` compatibility mirror. The eight public tools
+also declare `_meta.ui.visibility: ["app"]`, including tools that bind one of
+the two public UI resources with `resourceUri`. The public proxy therefore
+keeps these tools callable by their bundled apps without adding them to model
+tool selection. The broad `admin` scope is the only scope currently advertised by
 the `api.telnyx.com` protected-resource and authorization-server metadata. Do
 not label these descriptors `read` or `write` until that resource server
 actually supports and enforces those scopes; granular OAuth scopes remain a
@@ -115,9 +114,9 @@ MCP_APPS_ALLOW_INSECURE_LOOPBACK=true MCP_APPS_HOST=127.0.0.1 PORT=8080 npm run 
 
 This bypasses only internal service authentication. Tool calls still require `X-Telnyx-API-Key`. In this mode, both the request URL and any supplied `Host` header must identify a loopback host (including valid ports and bracketed `::1`); a non-loopback `Host` is rejected.
 
-Browser requests with an `Origin` header are rejected with `403` by default because clients should reach these apps through the public MCP proxy. If a trusted browser deployment is intentionally required, set `MCP_APPS_CORS_ALLOWED_ORIGINS` to a comma-separated list of exact `http`/`https` origins. Wildcards and URL paths are ignored. A present origin outside that allowlist is rejected rather than merely omitting CORS response headers. Server-to-server MCP clients that do not send an `Origin` header are unaffected.
+Browser requests with an `Origin` header are rejected with `403` by default because clients should reach these apps through the public MCP proxy. If a trusted browser deployment is intentionally required, set `MCP_APPS_CORS_ALLOWED_ORIGINS` to a comma-separated list of exact HTTPS origins; HTTP is accepted only for loopback development. Wildcards and URL paths are ignored. A present origin outside that allowlist is rejected rather than merely omitting CORS response headers. Server-to-server MCP clients that do not send an `Origin` header are unaffected.
 
-The `/apps` catalog normally derives absolute `endpointUrl` values from forwarded headers. Set `MCP_APPS_PUBLIC_BASE_URL` (for example, `https://api.telnyx.com/v2/mcp`) when the gateway does not forward the public scheme, host, or path prefix.
+The `/apps` catalog normally derives absolute `endpointUrl` values from forwarded headers. Set `MCP_APPS_PUBLIC_BASE_URL` (for example, `https://api.telnyx.com/v2/mcp`) when the gateway does not forward the public scheme, host, or path prefix. Non-loopback configured base URLs must use HTTPS, and unsafe forwarded prefixes containing query, fragment, backslash, or control delimiters are ignored. MCP app routes reject query strings.
 
 Stateful MCP sessions expire after 15 minutes idle or one hour total and are bounded to 256 retained sessions per app. Initialization reserves capacity before asynchronous transport setup, so concurrent attempts cannot overflow the cap; additional attempts after all slots are reserved receive `429` and may retry. When a later initialization reaches the retained-session cap, the oldest retained session stays usable until the replacement succeeds and is only then closed. Failed initialization releases its reservation without evicting the original session. Set `MCP_APPS_MAX_SESSIONS_PER_APP` to a positive integer to tune the cap. Programmatic hosts can use the equivalent `maxSessionsPerApp` option on `createHostedMcpAppsHttpApp`.
 

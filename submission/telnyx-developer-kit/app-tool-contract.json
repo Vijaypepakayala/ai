@@ -38,18 +38,18 @@
         "readOnlyHint": false,
         "destructiveHint": true,
         "idempotentHint": false,
-        "openWorldHint": false
+        "openWorldHint": true
       }
     },
     {
       "name": "number_intelligence_batch_analyze",
       "title": "Batch analyze phone numbers",
-      "description": "Billable batch Number Intelligence for pasted CSV/newline input. Each unique accepted number performs a Telnyx Number Lookup that can incur lookup charges and affect account balance; selected enrichments can make additional Telnyx API requests. Runs sequentially, caps the batch at 25, redacts outputs, and does not create, change, or delete phone-number resources.",
+      "description": "Billable batch Number Intelligence for pasted CSV/newline input. Each unique accepted number performs a Telnyx Number Lookup that can incur lookup charges and affect account balance; selected enrichments can make additional Telnyx API requests. Runs sequentially, caps the batch at 25 and output near 1 MiB, omits raw payloads before stopping later lookups, reports partial output explicitly, redacts outputs, and does not create, change, or delete phone-number resources.",
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": true,
         "idempotentHint": false,
-        "openWorldHint": false
+        "openWorldHint": true
       }
     },
     {
@@ -77,7 +77,7 @@
     {
       "name": "voice_monitor_active_calls",
       "title": "List active calls",
-      "description": "List active calls for a selected Call Control Application ID. If omitted, discovers a bounded set of call-control applications and queries each; it never assumes a global active-calls endpoint.",
+      "description": "List active calls for a selected Call Control Application ID. If omitted, discovers a bounded set of call-control applications and queries each; it never assumes a global active-calls endpoint. Aggregate output is capped near 1 MiB, reports truncation explicitly, and stops querying later connections once the cap is reached.",
       "annotations": {
         "readOnlyHint": true,
         "destructiveHint": false,

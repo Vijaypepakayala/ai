@@ -245,8 +245,11 @@ See [MCP](/tools/mcp) for more details about the generic API MCP proxy.
 Current apps:
 
 - Number Intelligence (`tools/mcp-apps/apps/number-intelligence`)
-- Usage & Cost Explorer (`tools/mcp-apps/apps/usage-cost-explorer`)
 - Voice Monitor (`tools/mcp-apps/apps/voice-monitor`)
+
+The Usage & Cost Explorer implementation remains available under
+`tools/mcp-apps/apps/usage-cost-explorer` for internal/local stdio development,
+but it is excluded from the hosted public app catalog and federation.
 
 From `tools/mcp-apps`, use `npm install`, `npm run typecheck`, `npm run build`, and `npm test`.
 

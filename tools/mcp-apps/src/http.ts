@@ -6,7 +6,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 
-import { MCP_AUTH_REQUIRED_METHODS, findMcpApp, listPublicApps } from "./catalog.js";
+import { MCP_PUBLIC_DISCOVERY_METHODS, findMcpApp, listPublicApps } from "./catalog.js";
 
 const SERVICE_NAME = "mcp-apps";
 const INTERNAL_TOKEN_ENV = "MCP_APPS_INTERNAL_TOKEN";
@@ -16,7 +16,7 @@ const INTERNAL_AUTH_CHALLENGE = 'Bearer realm="Telnyx MCP Apps Internal"';
 const TELNYX_API_KEY_CHALLENGE = 'TelnyxApiKey realm="Telnyx MCP Apps"';
 const TELNYX_API_KEY_PATTERN = /^KEY_[A-Za-z0-9_-]{16,}$/;
 const CREDENTIAL_FREE_TOKEN_FINGERPRINT = "credential-free";
-const TELNYX_CREDENTIAL_REQUIRED_METHODS = new Set<string>(MCP_AUTH_REQUIRED_METHODS);
+const CREDENTIAL_FREE_METHODS = new Set<string>(MCP_PUBLIC_DISCOVERY_METHODS);
 const DEFAULT_SESSION_MAX_AGE_MS = 60 * 60 * 1000;
 const DEFAULT_SESSION_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_MAX_SESSIONS_PER_APP = 256;
@@ -154,6 +154,9 @@ export function createHostedMcpAppsHttpApp(options: HostedMcpAppsOptions = {}): 
     const definition = findMcpApp(c.req.param("slug"));
     if (!definition) {
       return c.json({ error: "app_not_found" }, 404);
+    }
+    if (new URL(c.req.url).search) {
+      return c.json({ error: "query_not_allowed" }, 400);
     }
 
     const serviceToken = parseBearerToken(c.req.header("authorization"));
@@ -382,7 +385,7 @@ function containsOnlyCredentialFreeMethods(message: unknown): boolean {
 function isCredentialFreeMessage(message: unknown): boolean {
   if (!message || typeof message !== "object") return false;
   const method = (message as { method?: unknown }).method;
-  return typeof method === "string" && !TELNYX_CREDENTIAL_REQUIRED_METHODS.has(method);
+  return typeof method === "string" && CREDENTIAL_FREE_METHODS.has(method);
 }
 
 function isInitializeMessage(message: unknown): boolean {
@@ -547,6 +550,7 @@ function normalizeCorsOrigin(value: string): string | undefined {
   try {
     const url = new URL(trimmed);
     if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+    if (url.protocol === "http:" && !isLoopbackHostname(url.hostname)) return undefined;
     if (url.username || url.password || url.pathname !== "/" || url.search || url.hash) return undefined;
     return url.origin;
   } catch {
@@ -586,6 +590,7 @@ function parsePublicBaseUrl(value: string | undefined): URL | undefined {
   try {
     const url = new URL(trimmed);
     if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+    if (url.protocol === "http:" && !isLoopbackHostname(url.hostname)) return undefined;
     if (!url.host || url.username || url.password || url.search || url.hash) return undefined;
     return url;
   } catch {
@@ -593,7 +598,7 @@ function parsePublicBaseUrl(value: string | undefined): URL | undefined {
   }
 }
 
-function resolvePublicEndpointContext(request: Request): { publicOrigin: string; publicPathPrefix?: string } {
+function resolvePublicEndpointContext(request: Request): { publicOrigin?: string; publicPathPrefix?: string } {
   const requestUrl = new URL(request.url);
   const forwarded = parseForwardedHeader(request.headers.get("forwarded"));
   const proto = firstHeaderValue(request.headers.get("x-forwarded-proto")) ?? forwarded.proto;
@@ -629,17 +634,32 @@ function parseForwardedHeader(value: string | null): { proto?: string; host?: st
   return parsed;
 }
 
-function resolvePublicOrigin(proto: string | undefined, host: string | undefined, fallbackOrigin: string): string {
-  if (!proto && !host) return fallbackOrigin;
+function resolvePublicOrigin(
+  proto: string | undefined,
+  host: string | undefined,
+  fallbackOrigin: string
+): string | undefined {
+  const safeFallbackOrigin = parseAdvertisedOrigin(fallbackOrigin);
+  if (!proto && !host) return safeFallbackOrigin;
 
   const protocol = normalizeProtocol(proto ?? new URL(fallbackOrigin).protocol);
-  if (protocol !== "https:" && protocol !== "http:") return fallbackOrigin;
-  if (!host) return fallbackOrigin;
+  if (protocol !== "https:" && protocol !== "http:") return safeFallbackOrigin;
+  if (!host) return safeFallbackOrigin;
 
+  return parseAdvertisedOrigin(`${protocol}//${host}`) ?? safeFallbackOrigin;
+}
+
+function parseAdvertisedOrigin(value: string): string | undefined {
   try {
-    return new URL(`${protocol}//${host}`).origin;
+    const url = new URL(value);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+    if (url.protocol === "http:" && !isLoopbackHostname(url.hostname)) return undefined;
+    if (!url.host || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
+      return undefined;
+    }
+    return url.origin;
   } catch {
-    return fallbackOrigin;
+    return undefined;
   }
 }
 

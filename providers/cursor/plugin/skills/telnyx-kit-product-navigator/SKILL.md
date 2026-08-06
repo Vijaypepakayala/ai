@@ -41,17 +41,17 @@ Answer three questions, then jump to the row that matches.
 | Send SMS/MMS notifications or alerts | Messaging | `POST /v2/messages` | telnyx-messaging plugin |
 | Verify users by OTP (SMS, call, flash call) | Verify | `POST /v2/verifications/{sms\|call\|flashcall}` | telnyx-verify plugin |
 | Send WhatsApp messages | WhatsApp Business | WhatsApp API | telnyx-whatsapp plugin |
-| Serve voice menus / IVR from XML | TeXML | TeXML Application + XML docs | telnyx-voice plugin |
+| Serve voice menus / IVR from XML | TeXML | TeXML Application + XML docs | telnyx-platform plugin |
 | Drive calls imperatively from code (AI agents, dynamic flows) | Call Control | `POST /v2/calls` + per-call actions | telnyx-voice plugin |
 | Build a browser/mobile softphone | WebRTC SDKs | Credential connections + SDKs | telnyx-webrtc plugin |
 | Real-time media into your AI model | Media Streaming | `<Connect><Stream>` or Call Control streaming | telnyx-voice plugin |
 | Speech-to-text / text-to-speech | STT / TTS | OpenAI-compatible + TTS API | telnyx-stt / telnyx-tts plugins |
 | Buy, configure, port numbers | Numbers | `/v2/available_phone_numbers`, `/v2/number_orders`, porting | telnyx-numbers plugin |
-| Look up carrier/caller data for a number | Number Lookup | `GET /v2/number_lookup/{number}` | telnyx-numbers plugin |
+| Look up carrier/caller data for a number | Number Lookup | `GET /v2/number_lookup/{number}` | hosted catalog; Number Intelligence app |
 | Send/receive fax | Programmable Fax | `POST /v2/faxes` (requires `connection_id`) | telnyx-platform plugin |
 | Connect a PBX/SIP system | SIP Trunking | credential or IP connections | telnyx-platform plugin |
 | Cellular connectivity for devices | IoT SIM | `/v2/sim_cards` (eSIM buys use `amount`) | telnyx-platform plugin |
-| Video rooms | Video | `/v2/rooms` + top-level room resources | telnyx-platform plugin |
+| Video rooms | Video | `/v2/rooms` + top-level room resources | telnyx-webrtc plugin |
 | Move an existing Twilio app | Migration | — | telnyx-twilio-migration skill (in telnyx-platform) |
 
 ## Decision rules the tables cannot express

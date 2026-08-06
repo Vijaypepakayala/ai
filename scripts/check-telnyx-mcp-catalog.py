@@ -179,6 +179,7 @@ EXPECTED_APP_TOOL_WIRE_CONTRACT = {
 EXPECTED_ENDPOINT_COUNT = 812
 EXPECTED_READ_COUNT = 382
 EXPECTED_WRITE_COUNT = 430
+MAX_HTTP_RESPONSE_BYTES = 8 * 1024 * 1024
 EXPECTED_CATALOG_NAMES_SHA256 = (
     "b7337124b89bb50a7e388c81141ddb545af5de8434315f7f0b617f6b7da6780d"
 )
@@ -445,17 +446,12 @@ def parse_json_rpc_response(raw: bytes) -> dict[str, Any]:
     except UnicodeDecodeError as exc:
         raise AuditError("MCP response is not valid UTF-8") from exc
 
-    candidates: list[str]
-    if text.lstrip().startswith(("event:", "data:")):
-        candidates = [
-            line.removeprefix("data:").strip()
-            for line in text.splitlines()
-            if line.startswith("data:") and line.removeprefix("data:").strip()
-        ]
+    if text.lstrip().startswith(("event:", "data:", ":")):
+        candidates = parse_sse_data_events(text)
     else:
         candidates = [text]
 
-    first_payload: dict[str, Any] | None = None
+    payloads: list[dict[str, Any]] = []
     for candidate in candidates:
         try:
             payload = strict_json_loads(candidate)
@@ -463,13 +459,70 @@ def parse_json_rpc_response(raw: bytes) -> dict[str, Any]:
             raise AuditError(
                 "MCP response contains non-standard or ambiguous JSON"
             ) from exc
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict) and first_payload is None:
-            first_payload = payload
-    if first_payload is not None:
-        return first_payload
+        except json.JSONDecodeError as exc:
+            raise AuditError("MCP response contains malformed JSON") from exc
+        if not isinstance(payload, dict):
+            raise AuditError("MCP response JSON-RPC payload must be an object")
+        payloads.append(payload)
+    for payload in payloads:
+        if "id" in payload and ("result" in payload or "error" in payload):
+            return payload
+    if payloads:
+        return payloads[0]
     raise AuditError("MCP response did not contain a JSON-RPC object")
+
+
+def parse_sse_data_events(text: str) -> list[str]:
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    candidates: list[str] = []
+    data_lines: list[str] = []
+
+    def finish_event() -> None:
+        if data_lines:
+            candidates.append("\n".join(data_lines))
+            data_lines.clear()
+
+    for line in normalized.split("\n"):
+        if line == "":
+            finish_event()
+            continue
+        if line.startswith(":"):
+            continue
+        field, separator, value = line.partition(":")
+        if field != "data":
+            continue
+        if separator and value.startswith(" "):
+            value = value[1:]
+        data_lines.append(value)
+    finish_event()
+    return candidates
+
+
+def read_bounded_response(response: Any, label: str) -> bytes:
+    raw = response.read(MAX_HTTP_RESPONSE_BYTES + 1)
+    if len(raw) > MAX_HTTP_RESPONSE_BYTES:
+        raise AuditError(
+            f"{label} exceeded the {MAX_HTTP_RESPONSE_BYTES:,}-byte response limit"
+        )
+    return raw
+
+
+def require_response_content_type(
+    headers: Any,
+    allowed: set[str],
+    label: str,
+) -> None:
+    raw_content_type = headers.get("Content-Type") if headers is not None else None
+    media_type = (
+        raw_content_type.split(";", 1)[0].strip().casefold()
+        if isinstance(raw_content_type, str)
+        else ""
+    )
+    if media_type not in allowed:
+        raise AuditError(
+            f"{label} has unsupported Content-Type {raw_content_type!r}; "
+            f"expected one of {sorted(allowed)}"
+        )
 
 
 def retry_delay(headers: Any, attempt: int) -> float:
@@ -499,7 +552,12 @@ def get_json_document(
     for attempt in range(retries):
         try:
             with opener.open(request, timeout=timeout) as response:
-                raw = response.read()
+                require_response_content_type(
+                    response.headers,
+                    {"application/json"},
+                    "metadata response",
+                )
+                raw = read_bounded_response(response, "metadata response")
             break
         except HTTPError as exc:
             if exc.code != 429 and exc.code < 500:
@@ -689,18 +747,27 @@ def validate_oauth_metadata(
 
 
 def parse_bearer_parameters(challenge: str) -> dict[str, str]:
-    normalized = challenge.strip().strip("'")
+    normalized = challenge.strip()
     scheme, separator, raw_parameters = normalized.partition(" ")
     if not separator or scheme.casefold() != "bearer":
         raise AuditError("authentication challenge must use the Bearer scheme")
     parameters: dict[str, str] = {}
-    for match in AUTH_PARAMETER_PATTERN.finditer(raw_parameters):
+    position = 0
+    while position < len(raw_parameters):
+        match = AUTH_PARAMETER_PATTERN.match(raw_parameters, position)
+        if match is None:
+            raise AuditError("authentication challenge has malformed parameters")
         key = match.group(1).casefold()
         raw_value = match.group(2) if match.group(2) is not None else match.group(3)
         value = re.sub(r"\\(.)", r"\1", raw_value)
         if key in parameters:
             raise AuditError(f"authentication challenge repeats {key}")
         parameters[key] = value
+        position = match.end()
+        while position < len(raw_parameters) and raw_parameters[position].isspace():
+            position += 1
+    if not parameters:
+        raise AuditError("authentication challenge must include parameters")
     return parameters
 
 
@@ -794,7 +861,7 @@ def validate_unauthenticated_challenge(
     )
     try:
         with build_opener(RejectRedirects()).open(request, timeout=timeout) as response:
-            response.read()
+            read_bounded_response(response, "unauthenticated MCP response")
     except HTTPError as exc:
         if exc.code != 401:
             raise AuditError(
@@ -806,7 +873,14 @@ def validate_unauthenticated_challenge(
             require_runtime_error=False,
         )
         try:
-            raw_error_body = exc.read()
+            require_response_content_type(
+                exc.headers,
+                {"application/json", "text/event-stream"},
+                "unauthenticated MCP error response",
+            )
+            raw_error_body = read_bounded_response(
+                exc, "unauthenticated MCP error response"
+            )
         except OSError as body_error:
             raise AuditError(
                 "unauthenticated MCP probe body cannot be read"
@@ -871,7 +945,14 @@ def post_json_rpc(
     for attempt in range(retries):
         try:
             with opener.open(request, timeout=timeout) as response:
-                payload = parse_json_rpc_response(response.read())
+                require_response_content_type(
+                    response.headers,
+                    {"application/json", "text/event-stream"},
+                    "MCP JSON-RPC response",
+                )
+                payload = parse_json_rpc_response(
+                    read_bounded_response(response, "MCP JSON-RPC response")
+                )
                 response_session_id = response.headers.get("MCP-Session-Id")
             break
         except HTTPError as exc:
@@ -935,7 +1016,7 @@ def send_initialized_notification(
     for attempt in range(retries):
         try:
             with opener.open(request, timeout=timeout) as response:
-                response.read()
+                read_bounded_response(response, "MCP notification response")
             return
         except HTTPError as exc:
             if exc.code == 401:
@@ -2436,6 +2517,7 @@ def run_self_tests() -> None:
         )
     valid_json_rpc = '{"jsonrpc":"2.0","id":1,"result":{}}'
     for label, invalid_frame in (
+        ("malformed JSON SSE frame", '{"jsonrpc":"2.0","id":1,"result":'),
         ("NaN SSE frame", '{"jsonrpc":"2.0","id":1,"result":{"value":NaN}}'),
         (
             "duplicate-member SSE frame",
@@ -2455,6 +2537,42 @@ def run_self_tests() -> None:
                     mixed_sse.encode("utf-8")
                 ),
             )
+
+    multiline_sse = (
+        ": keepalive\r\n"
+        "event: message\r\n"
+        'data: {"jsonrpc":"2.0",\r\n'
+        'data: "id":1,\r\n'
+        'data: "result":{}}\r\n\r\n'
+    )
+    if parse_json_rpc_response(multiline_sse.encode("utf-8")) != {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {},
+    }:
+        raise AuditError("self-test multiline SSE parsing changed")
+
+    notification_then_response = (
+        'event: message\ndata: {"jsonrpc":"2.0","method":"notifications/progress"}\n\n'
+        f"event: message\ndata: {valid_json_rpc}\n\n"
+    )
+    if parse_json_rpc_response(notification_then_response.encode("utf-8")).get(
+        "id"
+    ) != 1:
+        raise AuditError("self-test SSE response selection changed")
+    require_response_content_type(
+        {"Content-Type": "application/json; charset=utf-8"},
+        {"application/json"},
+        "self-test response",
+    )
+    expect_audit_error(
+        "HTML response Content-Type",
+        lambda: require_response_content_type(
+            {"Content-Type": "text/html"},
+            {"application/json", "text/event-stream"},
+            "self-test response",
+        ),
+    )
 
     recursive_schema: dict[str, Any] = {
         "type": "object",
@@ -2551,6 +2669,21 @@ def run_self_tests() -> None:
             f'Bearer resource_metadata="{PROTECTED_RESOURCE_URL}", '
             'error="invalid_token"',
             require_runtime_error=True,
+        ),
+    )
+    expect_audit_error(
+        "runtime challenge ignored malformed prefix",
+        lambda: validate_bearer_parameters(
+            f'Bearer ignored-junk, resource_metadata="{PROTECTED_RESOURCE_URL}", '
+            'error="invalid_token", error_description="Login required"',
+            require_runtime_error=True,
+        ),
+    )
+    expect_audit_error(
+        "runtime challenge trailing delimiter",
+        lambda: validate_bearer_parameters(
+            f'Bearer resource_metadata="{PROTECTED_RESOURCE_URL}",',
+            require_runtime_error=False,
         ),
     )
 

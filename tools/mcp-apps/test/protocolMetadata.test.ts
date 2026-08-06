@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
@@ -21,6 +24,21 @@ const EXPECTED_UI_METADATA = {
 const EXPECTED_TOOL_SECURITY_SCHEMES = [
   { type: "oauth2", scopes: ["admin"] }
 ];
+const REVIEWED_PUBLIC_APP_TOOLS = JSON.parse(
+  readFileSync(
+    fileURLToPath(
+      new URL("../../../submission/telnyx-developer-kit/app-tool-contract.json", import.meta.url)
+    ),
+    "utf8"
+  )
+) as {
+  tools: Array<{
+    name: string;
+    title: string;
+    description: string;
+    annotations: Record<string, boolean>;
+  }>;
+};
 
 const fixtures = [
   {
@@ -147,6 +165,44 @@ describe.each(fixtures)("$name MCP wire metadata", ({
       await server.close();
     }
   });
+});
+
+it("keeps the two public app servers byte-for-byte aligned with the reviewed tool contract", async () => {
+  const actualTools: Array<{
+    name: string;
+    title?: string;
+    description?: string;
+    annotations?: Record<string, boolean>;
+  }> = [];
+
+  for (const createServer of [
+    createNumberIntelligenceServer,
+    createVoiceMonitorServer
+  ]) {
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    const server = createServer();
+    const client = new Client(
+      { name: "telnyx-reviewed-contract-test", version: "1.0.0" },
+      { capabilities: {} }
+    );
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      const listed = await client.listTools();
+      actualTools.push(
+        ...listed.tools.map(({ name, title, description, annotations }) => ({
+          name,
+          title,
+          description,
+          annotations
+        }))
+      );
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  }
+
+  expect(actualTools).toEqual(REVIEWED_PUBLIC_APP_TOOLS.tools);
 });
 
 function extractWireTools(messages: JSONRPCMessage[]): Record<string, unknown>[] {

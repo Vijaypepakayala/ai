@@ -673,7 +673,14 @@ function parseBatchNumbers(numbers: string | string[]): string[] {
     parsed.push(firstCsvCell);
   }
 
-  return Array.from(new Set(parsed));
+  const uniqueByNormalizedNumber = new Map<string, string>();
+  for (const phoneNumber of parsed) {
+    const normalized = normalizePhoneNumber(phoneNumber);
+    if (!uniqueByNormalizedNumber.has(normalized)) {
+      uniqueByNormalizedNumber.set(normalized, normalized);
+    }
+  }
+  return Array.from(uniqueByNormalizedNumber.values());
 }
 
 function splitCsvRow(row: string): string[] {

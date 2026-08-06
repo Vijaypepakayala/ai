@@ -169,6 +169,39 @@ describe("phase 2 batch analysis", () => {
     expect(JSON.stringify(result)).not.toContain("+14155552671");
   });
 
+  it("deduplicates equivalent number formats before any billable lookup", async () => {
+    const lookedUpNumbers: string[] = [];
+    const result = await analyzeBatchNumbers(
+      {
+        numbers: [
+          "+1 (312) 555-0123",
+          "+13125550123",
+          "312-555-0123",
+          "+1 415 555 2671"
+        ],
+        sources: ["lookup"]
+      },
+      {
+        lookupClient: {
+          async lookupNumber(phoneNumber) {
+            lookedUpNumbers.push(phoneNumber);
+            return {
+              data: {
+                ...lookupResponse.data,
+                phone_number: phoneNumber
+              }
+            };
+          }
+        }
+      }
+    );
+
+    expect(lookedUpNumbers).toEqual(["+13125550123", "+14155552671"]);
+    expect(result.requested_total).toBe(2);
+    expect(result.queried_total).toBe(2);
+    expect(result.total).toBe(2);
+  });
+
   it("enforces a conservative max batch size before making lookups", async () => {
     let lookupCalls = 0;
     await expect(

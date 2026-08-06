@@ -16,21 +16,21 @@ metadata:
 
 ## Error-code triage (memorize the retry column)
 
-| HTTP | Code | Meaning | Retry? |
-|---|---|---|---|
-| 401 | 10009 | Bad/missing API key | No — fix auth |
-| 400 | 40310 | Invalid phone number | No — fix input |
-| 400 | 40305 | `from` number not on the sending messaging profile | No — fix provisioning |
-| 409 | 40312 | Messaging profile disabled | No — enable profile (`PATCH /v2/messaging_profiles/{id}` `enabled:true`) |
-| 409 | 40300 | Blocked (STOP/org compliance) | Never — compliance stop |
-| 422 | 10004 | Missing required parameter | No — add the required field |
-| 404 | 10005 | Resource or URL not found | No — fix the ID or path |
-| 429 | — | Rate limited | Yes — after `Retry-After` seconds, not before |
-| 5xx | — | Upstream | Yes — bounded backoff |
+| Code | Meaning | Retry? |
+|---|---|---|
+| 10009 | Bad/missing API key | No — fix auth |
+| 40310 | Invalid `to` address | No — fix input |
+| 40305 | Invalid `from` address or sender/profile association | No — fix provisioning |
+| 40312 | Messaging profile disabled | No — enable the intended profile only after reviewing that change |
+| 40300 | Blocked due to STOP | Never — compliance stop |
+| 10004 | Missing required parameter | No — add the required field |
+| 10005 | Resource or URL not found | No — fix the ID or path |
+| — | Rate limited | Yes — after `Retry-After` seconds, not before |
+| — | Upstream 5xx | Yes — bounded backoff |
 
-- 409 is a PRECONDITION class with no Twilio counterpart — code ported
-  from Twilio usually lacks a 409 branch and surfaces it as an unhandled
-  exception. Add the branch; never blind-retry it.
+- Do not infer the HTTP status from the Telnyx error-code prefix or hard-code
+  one status for every endpoint. Branch on both the response status and the
+  exact `errors[0].code`; the code carries the product-specific meaning.
 - SDK errors (Node telnyx@6): HTTP status is `err.status`; the Telnyx code
   is `err.error?.errors?.[0]?.code`. (`err.statusCode` and `err.rawErrors`
   are undefined — dead branches if you use them.)
