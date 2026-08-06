@@ -29,18 +29,14 @@ Browser/App → Twilio (connect with Access Token)
 
 Every outbound call requires a round-trip to your server to get TwiML instructions, even for a simple dial.
 
-**Telnyx architecture (no per-call instruction webhook):**
+**Telnyx architecture (optional backend):**
 ```
-Browser/App → Your Backend Server → Telnyx API (issue short-lived JWT)
-           ← JWT ←
-Browser/App → Telnyx (connect with JWT)
+Browser/App → Telnyx (connect with SIP credentials or JWT)
 Browser/App → client.newCall({destinationNumber}) → Call connects directly to PSTN
 ```
 
-A backend server is still required in production to authenticate the user and
-issue a short-lived JWT without exposing the Telnyx API key or a long-lived SIP
-password. Unlike Twilio, a simple outbound call does not require a separate
-per-call instruction webhook. Additional backend logic is needed for:
+A backend server is only needed for:
+- Dynamic credential management
 - Complex call flows (IVR, recording, conferencing)
 - Business logic that can't live in the client
 
@@ -80,7 +76,7 @@ Does it ONLY do simple dial?
 | Twilio Concept | Telnyx Concept | Notes |
 |---|---|---|
 | TwiML App | SIP Connection | Routes calls to your application logic |
-| Access Token | Telephony Credential JWT | Issue a short-lived JWT from a trusted backend in production |
+| Access Token | SIP Credentials or JWT | Direct auth, no mandatory backend |
 | Twilio.Device | TelnyxRTC.TelnyxRTC | Client SDK entry point |
 | device.connect() | client.newCall() | Initiate outbound call |
 | device.on('incoming') | client.on('telnyx.notification') | Receive inbound call |
@@ -215,7 +211,7 @@ Key SIP connection parameters:
 | `sip_subdomain_receive_settings` | `"from_anyone"` or `"only_my_connections"` |
 | `outbound_voice_profile_id` | Controls caller ID policy for outbound calls |
 
-### 2. Create a Telephony Credential and issue JWTs
+### 2. Create SIP Credentials (replaces Access Token generation)
 
 ```bash
 curl -X POST https://api.telnyx.com/v2/telephony_credentials \
@@ -227,12 +223,9 @@ curl -X POST https://api.telnyx.com/v2/telephony_credentials \
   }'
 ```
 
-The response includes `sip_username` and `sip_password`, but do not ship that
-long-lived password to an untrusted browser or mobile client. Keep the
-credential server-side and issue a short-lived JWT for each authenticated user
-session.
+Response includes `sip_username` and `sip_password`. These can be used directly by the client SDK — no backend token exchange required.
 
-Generate the client JWT from a trusted backend:
+For JWT-based auth (optional, more secure):
 ```bash
 curl -X POST "https://api.telnyx.com/v2/telephony_credentials/YOUR_CREDENTIAL_ID/token" \
   -H "Authorization: Bearer $TELNYX_API_KEY"
@@ -302,18 +295,22 @@ const device = new Device(token);
 await device.register();
 ```
 
-### Telnyx (backend-issued JWT, direct calling)
+### Telnyx (direct connection)
 
 ```javascript
-// Backend: authenticate the application user, then issue a short-lived token
-// for that user's pre-provisioned Telephony Credential. The Telnyx API key
-// stays on the server.
-const token = await issueTelnyxTokenForAuthenticatedUser();
-
-// Client: connect with the returned JWT
+// Client: connect directly with SIP credentials
 const { TelnyxRTC } = require('@telnyx/webrtc');
 const client = new TelnyxRTC({
-  login_token: token
+  login: 'sip_username',
+  password: 'sip_password'
+});
+client.connect();
+```
+
+Or with JWT:
+```javascript
+const client = new TelnyxRTC({
+  login_token: 'jwt_token_from_api'
 });
 client.connect();
 ```
@@ -394,13 +391,10 @@ Telnyx provides built-in hold, unhold, and transfer — features that require se
 
 **Twilio pattern** (per-call): Twilio documentation suggests creating a new Access Token for each call or short session. Tokens expire quickly (typically 1 hour).
 
-**Telnyx pattern**: provision a Telephony Credential per user/identity, then
-issue a short-lived JWT for each authenticated session. Reuse that JWT only for
-its intended session and lifetime; do not create a credential per call or
-expose the credential password.
+**Telnyx pattern** (per-session): Generate credentials once per user session and reuse them for the session duration. Do NOT create new credentials for every call.
 
 ```javascript
-// RECOMMENDED: Fetch a short-lived JWT once per authenticated session
+// RECOMMENDED: Generate credentials once per session
 class TelnyxSession {
   constructor() {
     this.client = null;
@@ -408,9 +402,9 @@ class TelnyxSession {
   }
 
   async initialize() {
-    // Fetch a JWT for the user's pre-provisioned credential.
-    const tokenResponse = await fetch('/api/telnyx/token', { method: 'POST' });
-    const { token, expires_at: expiresAt } = await tokenResponse.json();
+    // Create credential (do this ONCE per session, not per call)
+    const credential = await fetch('/api/telnyx/credential', { method: 'POST' });
+    const { token } = await credential.json();
 
     this.client = new TelnyxRTC({ login_token: token });
     this.client.remoteElement = document.getElementById('remoteAudio');
@@ -418,107 +412,88 @@ class TelnyxSession {
 
     // Store client in your app's state management (React state, Redux, etc.)
     // so it persists across component renders
-    this.scheduleTokenRefresh(expiresAt);
+    this.scheduleTokenRefresh();
   }
 
-  scheduleTokenRefresh(expiresAt) {
-    // Refresh shortly before the backend-declared expiry. Do not hard-code a
-    // token lifetime. Fail closed instead of turning a missing/expired value
-    // into an immediate reconnect loop.
-    const expiryMs = Date.parse(expiresAt);
-    if (!Number.isFinite(expiryMs) || expiryMs <= Date.now() + 60_000) {
-      throw new Error('Backend returned a missing, invalid, or near-expiry JWT expiry');
-    }
-    const refreshDelay = expiryMs - Date.now() - 60_000;
+  scheduleTokenRefresh() {
+    // JWT tokens expire after 24 hours — refresh at 23 hours
+    // Telnyx has NO tokenWillExpire event (unlike Twilio)
     this.tokenRefreshTimer = setTimeout(async () => {
-      const { token, expires_at: nextExpiry } = await fetch('/api/telnyx/token', { method: 'POST' })
+      const { token } = await fetch('/api/telnyx/credential', { method: 'POST' })
         .then(r => r.json());
       // Must disconnect and reconnect with new token (no updateToken method)
       this.client.disconnect();
       this.client = new TelnyxRTC({ login_token: token });
       this.client.remoteElement = document.getElementById('remoteAudio');
       this.client.connect();
-      this.scheduleTokenRefresh(nextExpiry);
-    }, refreshDelay);
+      this.scheduleTokenRefresh();
+    }, 23 * 60 * 60 * 1000); // 23 hours
   }
 }
 ```
 
-**Server-side JWT generation (recommended):**
+**Server-side credential + JWT generation (recommended: dynamic credentials):**
 
-Provision and bind a Telephony Credential to each application user ahead of
-time. At login/session refresh: authenticate the user → load that user's
-credential ID → generate a JWT → return the JWT plus its derived expiry to the
-client. Do not return the credential ID, SIP password, or API key.
+The pattern is: create a credential → generate a JWT token → return the token to the client.
 
 ```javascript
 // Express.js endpoint
-app.post('/api/telnyx/token', async (req, res) => {
+app.post('/api/telnyx/credential', async (req, res) => {
   const Telnyx = require('telnyx');
   const client = new Telnyx({ apiKey: process.env.TELNYX_API_KEY });
 
-  // Authenticate req.user first, then load the credential ID that is bound to
-  // that user from your own server-side store.
-  const credentialId = await loadCredentialIdForUser(req.user.id);
-  const token = await client.telephonyCredentials.createToken(
-    credentialId
+  // 1. Create a dynamic credential for this session
+  const credential = await client.telephonyCredentials.create({
+    connection_id: process.env.TELNYX_CONNECTION_ID,
+    name: `session-${req.user.id}-${Date.now()}`
+  });
+
+  // 2. Generate a JWT login token for the credential
+  const tokenResponse = await client.telephonyCredentials.createToken(
+    credential.data.id
   );
 
-  // The token endpoint returns a JWT string. Read its exp claim server-side so
-  // the browser can schedule one bounded refresh instead of guessing a TTL.
-  const encodedPayload = token.split('.')[1];
-  const claims = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'));
-  if (!Number.isFinite(claims.exp)) {
-    throw new Error('Telnyx JWT is missing a numeric exp claim');
-  }
-  res.json({
-    token,
-    expires_at: new Date(claims.exp * 1000).toISOString()
-  });
+  // 3. Return the JWT to the client (used with login_token on TelnyxRTC)
+  res.json({ token: tokenResponse });
 });
 ```
 
 ```python
 # Flask endpoint (Python)
-import base64
-import json
 import os
-from datetime import datetime, timezone
+import time
 from telnyx import Telnyx
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 client = Telnyx(api_key=os.environ.get('TELNYX_API_KEY'))
 
-def jwt_expiry_iso(token):
-    encoded_payload = token.split('.')[1]
-    padded_payload = encoded_payload + '=' * (-len(encoded_payload) % 4)
-    claims = json.loads(base64.urlsafe_b64decode(padded_payload))
-    if not isinstance(claims.get('exp'), (int, float)):
-        raise ValueError('Telnyx JWT is missing a numeric exp claim')
-    return datetime.fromtimestamp(claims['exp'], tz=timezone.utc).isoformat()
-
-@app.route('/api/telnyx/token', methods=['POST'])
-def create_token():
-    # Authenticate the user, then load their bound credential ID server-side.
-    credential_id = load_credential_id_for_user(request.user_id)
-    token = client.telephony_credentials.create_token(
-        credential_id
+@app.route('/api/telnyx/credential', methods=['POST'])
+def create_credential():
+    # 1. Create a credential for this session
+    credential = client.telephony_credentials.create(
+        connection_id=os.environ['TELNYX_CONNECTION_ID'],
+        name=f"session-{request.user_id}-{int(time.time())}"
     )
 
-    # Return the JWT and its real expiry; never make the browser guess the TTL.
-    return jsonify({'token': token, 'expires_at': jwt_expiry_iso(token)})
+    # 2. Generate a JWT token for the credential
+    #    POST /v2/telephony_credentials/{id}/token
+    token = client.telephony_credentials.create_token(
+        credential.data.id
+    )
+
+    # 3. Return JWT to client (used with login_token on TelnyxRTC)
+    return jsonify({'token': token})
 ```
 
 > **Note**: If `create_token()` is not available in your SDK version, use the REST API directly:
 > ```python
 > import requests
 > resp = requests.post(
->     f"https://api.telnyx.com/v2/telephony_credentials/{credential_id}/token",
+>     f"https://api.telnyx.com/v2/telephony_credentials/{credential.id}/token",
 >     headers={"Authorization": f"Bearer {os.environ['TELNYX_API_KEY']}"}
 > )
 > token = resp.text  # JWT string returned directly
-> expires_at = jwt_expiry_iso(token)  # return both fields to the browser
 > ```
 
 ### Environment Variables Mapping
@@ -529,7 +504,7 @@ def create_token():
 | `TWILIO_API_SECRET` | *(not needed)* | Single key for auth |
 | `TWILIO_TWIML_APP_SID` | `TELNYX_CONNECTION_ID` | SIP Connection ID |
 | `TWILIO_CALLER_ID` | `TELNYX_PHONE_NUMBER` | Must be in Outbound Voice Profile |
-| *(none)* | user-bound Telephony Credential ID | Stored server-side; used to issue client JWTs |
+| *(none)* | `TELNYX_CREDENTIAL_ID` | For SIP credential auth |
 
 > **Complete credential CRUD examples** are in `sdk-reference/{language}/webrtc.md`.
 

@@ -243,7 +243,7 @@ npx skills add team-telnyx/ai --skill telnyx-twilio-migration --agent <AGENT>
 |--------|---------|
 | `preflight-check.sh` | Pre-migration environment and dependency validation |
 | `scan-twilio-usage.sh` | Detect all Twilio usage across the codebase |
-| `lint-telnyx-correctness.sh` | Language-aware lexical analysis for common Telnyx SDK mistakes |
+| `lint-telnyx-correctness.sh` | Static analysis for common Telnyx SDK mistakes |
 | `validate-migration.sh` | Post-migration validation (webhooks, env vars, API patterns) |
 | `smoke-test.sh` | Runtime smoke tests against the live Telnyx API |
 | `test-*.sh` | Product-specific integration tests (messaging, voice, verify, SIP, WebRTC, fax, lookup) |

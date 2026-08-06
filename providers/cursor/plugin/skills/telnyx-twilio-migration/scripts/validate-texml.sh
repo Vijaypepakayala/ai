@@ -60,13 +60,13 @@ INFO=0
 OK=0
 
 # --- Supported top-level verbs ---
-SUPPORTED_VERBS="Say Play Gather AIGather AIAssistant Dial Record Pay Hangup Pause Redirect Reject Refer Enqueue Leave Start Stop Connect ConversationRelay HttpRequest"
+SUPPORTED_VERBS="Say Play Gather Dial Record Hangup Pause Redirect Reject Refer Enqueue Leave Start Stop Connect"
 
 # --- Supported nouns ---
 SUPPORTED_NOUNS="Number Sip Queue Conference Stream Transcription Suppression Siprec"
 
-# --- Unsupported TwiML verbs with no current TeXML migration path ---
-UNSUPPORTED_VERBS=""
+# --- Unsupported TwiML verbs ---
+UNSUPPORTED_VERBS="Pay"
 
 # --- Check for unsupported verbs ---
 for verb in $UNSUPPORTED_VERBS; do
@@ -101,9 +101,11 @@ if grep -q '<Record' "$FILE"; then
   fi
 fi
 
-if grep -q '<Pay' "$FILE"; then
-  echo -e "${BLUE}[INFO]${NC}  <Pay> — Supported through Pay over Voice. Verify the Payment Connector, start in test mode, and validate callbacks before live traffic."
-  INFO=$((INFO + 1))
+if grep -q '<Dial' "$FILE" && grep -q 'record=' "$FILE"; then
+  if ! grep -q 'recordingChannels=' "$FILE" 2>/dev/null; then
+    echo -e "${YELLOW}[WARN]${NC}  <Dial record=...> — No 'recordingChannels' attribute. Telnyx defaults to dual-channel. Add recordingChannels=\"single\" to match Twilio."
+    WARNINGS=$((WARNINGS + 1))
+  fi
 fi
 
 # Polly voice compatibility — warn about non-Neural variants

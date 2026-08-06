@@ -1,7 +1,7 @@
 {
   "name": "telnyx-developer-kit",
   "version": "0.2.0",
-  "description": "Telnyx Developer Kit \u2014 everything to build with Telnyx in one install: quickstart, product navigator, architecture patterns, security guardrails, error triage, and a Twilio-switch guide, plus the telnyx-builder agent and the hosted Telnyx MCP server for live API access. Covers messaging, voice/Call Control, TeXML, WebRTC, Verify, numbers, fax, IoT, video, and Twilio migration.",
+  "description": "Telnyx Developer Kit \u2014 a curated front door for building with Telnyx: quickstart, product navigator, architecture patterns, security guardrails, error triage, and a Twilio-switch guide, plus the telnyx-builder agent and the hosted Telnyx MCP server for live API access. Covers messaging, email, voice/Call Control, TeXML, WebRTC, Verify, numbers, fax, IoT, video, and Twilio migration.",
   "author": {
     "name": "Telnyx",
     "url": "https://telnyx.com"

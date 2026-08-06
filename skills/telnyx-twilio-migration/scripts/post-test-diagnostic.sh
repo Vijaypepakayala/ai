@@ -203,15 +203,13 @@ echo -e "${BOLD}6. Lint results${NC}"
 LINT_SCRIPT="$SCRIPT_DIR/lint-telnyx-correctness.sh"
 LINT_JSON=""
 if [ -f "$LINT_SCRIPT" ]; then
-  LINT_ARGS=(--json)
-  if [ -f "$PROJECT_ROOT/twilio-scan.json" ]; then
-    LINT_ARGS+=(--scan-json "$PROJECT_ROOT/twilio-scan.json")
-  fi
-  LINT_JSON=$(bash "$LINT_SCRIPT" "${LINT_ARGS[@]}" "$PROJECT_ROOT" 2>/dev/null || echo "")
+  SCAN_ARG=""
+  [ -f "$PROJECT_ROOT/twilio-scan.json" ] && SCAN_ARG="--scan-json $PROJECT_ROOT/twilio-scan.json"
+  LINT_JSON=$(bash "$LINT_SCRIPT" --json $SCAN_ARG "$PROJECT_ROOT" 2>/dev/null || echo "")
   if [ -n "$LINT_JSON" ]; then
-    LINT_ISSUES=$(echo "$LINT_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('summary',{}).get('issues',d.get('issues',0)))" 2>/dev/null || echo "?")
-    LINT_WARNS=$(echo "$LINT_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('summary',{}).get('warnings',d.get('warnings',0)))" 2>/dev/null || echo "?")
-    LINT_PASSES=$(echo "$LINT_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('summary',{}).get('passes',d.get('passes',0)))" 2>/dev/null || echo "?")
+    LINT_ISSUES=$(echo "$LINT_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('issues',0))" 2>/dev/null || echo "?")
+    LINT_WARNS=$(echo "$LINT_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('warnings',0))" 2>/dev/null || echo "?")
+    LINT_PASSES=$(echo "$LINT_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('passes',0))" 2>/dev/null || echo "?")
     echo "  Issues: $LINT_ISSUES  Warnings: $LINT_WARNS  Passes: $LINT_PASSES"
 
     # Show issue details

@@ -32,7 +32,7 @@ scripts, never in request paths.
 
 ## 3. Set up correctly
 
-`telnyx-kit-quickstart` has the account-to-first-verified-call path
+`telnyx-kit-quickstart` has the account-to-first-verified-request path
 and the per-product provisioning table. Most first-call failures are a
 skipped provisioning step, not a code bug — check that table before
 debugging code.
@@ -72,7 +72,7 @@ filtering, unattached push credentials).
 These six skills are the front door. For per-product API detail install the
 product plugins (`telnyx-messaging`, `telnyx-voice`, `telnyx-numbers`,
 `telnyx-verify`, `telnyx-webrtc`, `telnyx-tts`, `telnyx-stt`,
-`telnyx-whatsapp`, `telnyx-ai`, `telnyx-platform`) for hundreds of focused
+`telnyx-whatsapp`, `telnyx-email`, `telnyx-ai`, `telnyx-platform`) for hundreds of focused
 skills across curl, Python, JavaScript, Go, Java, and Ruby. Migrate existing
 Twilio apps with the `telnyx-twilio-migration` skill in `telnyx-platform`.
 

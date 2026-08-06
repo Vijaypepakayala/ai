@@ -10,7 +10,7 @@ user_invocable: true
 metadata:
   author: telnyx
   product: migration
-  compatibility: "Requires bash 4+, Python 3.8+, jq, curl. macOS ships bash 3.2 — scripts auto-upgrade via Homebrew bash if available (brew install bash)."
+  compatibility: "Requires bash 4+, jq, curl. macOS ships bash 3.2 — scripts auto-upgrade via Homebrew bash if available (brew install bash)."
 ---
 
 # Twilio to Telnyx Migration
@@ -31,8 +31,8 @@ Track progress in `migration-state.json` via `bash {baseDir}/scripts/migration-s
 
 1. **Authentication**: Basic Auth (`AccountSID:AuthToken`) → Bearer Token (`Authorization: Bearer $TELNYX_API_KEY`). Get key at https://portal.telnyx.com/#/app/api-keys
 2. **Webhook Signatures**: HMAC-SHA1 → Ed25519. Get public key at https://portal.telnyx.com/#/app/account/public-key
-3. **Webhook Payloads**: API v2 events are nested JSON under `data.payload`, but TeXML instruction requests and callbacks remain flat form/query fields. Keep those routes and parsers separate. See `{baseDir}/references/webhook-migration.md`
-4. **Recording Defaults**: Defaults vary by TeXML surface (`<Record>` and `<Dial>` are not the same). Set channel behavior explicitly after validating the migrated instruction.
+3. **Webhook Payloads**: Flat form-encoded → nested JSON under `data.payload`. See `{baseDir}/references/webhook-migration.md`
+4. **Recording Defaults**: Single → dual-channel. Set `channels="single"` to match Twilio behavior.
 
 ---
 
@@ -103,8 +103,8 @@ Review scan results and classify each match:
 
 **Do NOT ask the user to confirm scope.** Migrate ALL detected Twilio products. Apply these rules automatically:
 
-- **Supported products** (voice, messaging, verify, webrtc, sip, fax, video, lookup, numbers, porting, pay): migrate
-- **Unsupported products** (Flex, Studio, TaskRouter, Conversations, Sync, Notify, Proxy, Autopilot): automatically keep on Twilio — record in state and continue:
+- **Supported products** (voice, messaging, verify, webrtc, sip, fax, video, lookup, numbers, porting): migrate
+- **Unsupported products** (Flex, Studio, TaskRouter, Conversations, Sync, Notify, Proxy, Pay, Autopilot): automatically keep on Twilio — record in state and continue:
 
 ```bash
 # Automatically record each unsupported product as kept on Twilio:
@@ -141,7 +141,6 @@ For each product detected in the scan, read the corresponding reference file:
 | `lookup` | `{baseDir}/references/lookup-migration.md` |
 | `numbers`, `numbers-config` | `{baseDir}/references/numbers-migration.md` |
 | `porting-in`, `porting-out` | `{baseDir}/references/number-porting.md` |
-| `pay` | `{baseDir}/references/voice-migration.md` and `{baseDir}/references/texml-verbs.md` |
 | *(all products)* | `{baseDir}/references/webhook-migration.md` |
 
 ### Step 2.2: Apply Decision Matrix (Autonomous)
@@ -270,7 +269,7 @@ Process each product area in priority order: **messaging → voice → verify �
 **After all source files in the product area:**
 
 7. **Migrate tests**: Find ALL test files for this product — `grep -rl -i "twilio\|TwilioVoice\|TwilioClient\|twilio_" *test* *Test* *spec* *Spec* 2>/dev/null`. Migrate every one: update imports, mock objects, mock payloads, assertions, and type references. Do NOT defer test files as "remaining manual steps" — they are part of the migration. Run the test suite to confirm.
-8. **Lint**: `bash {baseDir}/scripts/lint-telnyx-correctness.sh <project-root> --product {product}` — catches common anti-patterns (wrong method names, wrong parameter names, stale verification statuses, and insecure webhook handling). Fix all ISSUE items before proceeding.
+8. **Lint**: `bash {baseDir}/scripts/lint-telnyx-correctness.sh <project-root> --product {product}` — catches common anti-patterns (wrong method names, wrong parameter names, missing profile IDs). Fix all ISSUE items before proceeding.
 9. **Validate**: `bash {baseDir}/scripts/validate-migration.sh <project-root> --product {product} --scan-json <project-root>/twilio-scan.json`
 10. **Fix** any validation failures or lint issues, re-run until both exit code 0
 11. **Commit**: `git add <changed-files> && git commit -m "migrate: {product} — Twilio to Telnyx"`
@@ -308,8 +307,7 @@ If validation fails and you cannot fix the issue, document it and continue to th
 - Validate with: `bash {baseDir}/scripts/validate-texml.sh <file>`
 - API calls: Change base URL from `api.twilio.com/2010-04-01/Accounts/{SID}` to `api.telnyx.com/v2/texml`
 - Auth: Basic Auth → Bearer Token
-- Recording: Set `channels="single"` on `<Record>` if expecting mono; review
-  `<Dial recordingChannels>` separately because its default is already single
+- Recording: Set `channels="single"` if expecting mono
 - **`speechModel` does NOT exist in TeXML** — remove it or replace with `transcriptionEngine` (e.g., `transcriptionEngine="Google"`). Using `speechModel` will be silently ignored.
 - **Polly voices**: TeXML supports `voice="Polly.{VoiceId}"` and `voice="Polly.{VoiceId}-Neural"`. Always prefer Neural variants (e.g., `Polly.Amy-Neural` instead of `Polly.Amy`) — non-Neural voices may silently fall back to the default voice. If a specific Polly voice is unavailable, use `voice="woman"` with the appropriate `language` attribute.
 - **Outbound calls**: Use the Telnyx SDK — do NOT use raw `fetch()` to the TeXML API. The SDK handles auth, retries, and response parsing. Pass the **TeXML Application ID** (from `TELNYX_CONNECTION_ID`, NOT a SIP connection ID) as the `connection_id` parameter. See `{baseDir}/sdk-reference/{language}/texml.md` for the exact method signature.
@@ -324,19 +322,14 @@ If validation fails and you cannot fix the issue, document it and continue to th
 - `from_` → `from` (same in most SDKs)
 - `StatusCallback` per-message → configure on Messaging Profile
 - `MessagingServiceSid` → `messaging_profile_id`
-- Ensure the sending number is assigned to a messaging profile, or pass
-  `messaging_profile_id` explicitly as an override
+- **Always include `messaging_profile_id`** in send requests — messages without a profile will fail
 - Webhook payload: flat `{From, Body}` → nested `{data.payload.from.phone_number, data.payload.text}`
-- **US A2P sender readiness**: local long codes require 10DLC; toll-free
-  senders require toll-free verification; short codes require carrier
-  approval/provisioning. See `{baseDir}/references/messaging-migration.md`.
+- **10DLC blocker**: US A2P SMS requires 10DLC campaign registration. See `{baseDir}/references/messaging-migration.md` → "10DLC Registration".
 
 **WebRTC:**
 - Delete simple dial TwiML endpoints (use `client.newCall()` instead)
 - Convert complex TwiML endpoints to TeXML
-- Replace Access Token generation with a backend-issued, short-lived Telnyx JWT
-  created for a per-user Telephony Credential. Never ship the Telnyx API key or
-  a long-lived SIP password to an untrusted browser/mobile client.
+- Replace Access Token generation with SIP credentials
 - Update client SDK: `@twilio/voice-sdk` → `@telnyx/webrtc`
 - **Client-side files**: Migrate browser JavaScript/HTML files that import `Twilio.Device`, `@twilio/voice-sdk`, or `twilio-client`. These are in frontend directories (e.g., `public/`, `src/`, `static/`, CDN `<script>` tags in HTML). Replace with `TelnyxRTC` — see `{baseDir}/sdk-reference/webrtc-client/javascript.md` for the full client API.
 - **Mobile platforms**: Migrate `.swift`, `.kt`, `.java`, `.dart`, `.tsx` files that import Twilio mobile SDKs. Update `Podfile` (iOS), `build.gradle` (Android), `pubspec.yaml` (Flutter) dependencies. See `{baseDir}/references/mobile-sdk-migration.md`
@@ -348,19 +341,13 @@ If validation fails and you cannot fix the issue, document it and continue to th
 - `to` → `phone_number`
 - Check response status mapping (when verifying a code): Twilio `approved` → Telnyx `accepted` (code correct), Twilio `pending` (code incorrect) → Telnyx `rejected` (code incorrect). Note: both platforms use `pending` when a verification is *created* (OTP sent, waiting for code) — the mapping above applies only to the code *check* response.
 
-**Webhook Receivers (choose by API family):**
+**Webhook Receivers (all products):**
 - **You MUST migrate webhook handlers** — this is half the migration for most apps. See `{baseDir}/references/webhook-migration.md` for complete receive + parse + verify examples in Python (Flask, Django), JavaScript (Express), Ruby (Sinatra, **Rails**), and Go (net/http).
-- For API v2 events (Messaging and Call Control), parse JSON and access
-  `data.payload.*`; `from` may be an object and `to` may be an array depending
-  on the product event.
-- For TeXML instruction requests and status callbacks, keep the configured
-  flat PascalCase `application/x-www-form-urlencoded` POST fields (or query
-  parameters for GET). Do not look for a `data.*` envelope on those routes.
+- Parse JSON body instead of form data: `request.json['data']['payload']` not `request.form`
+- Access fields via `data.payload.*` — `from` is an object (`from.phone_number`), `to` is an array
 - Replace HMAC-SHA1 (`RequestValidator`) with Ed25519 signature verification using `telnyx-signature-ed25519` + `telnyx-timestamp` headers
 - **If the original code used `twilio.webhook()` middleware**, check the `validate` option:
-  - If `validate: false` (or `enforce_https=False` in Python) was set, the
-    middleware was a **no-op**. Replace that insecure state with Telnyx Ed25519
-    verification and fail startup/deployment if the public key is missing.
+  - If `validate: false` (or `enforce_https=False` in Python) was set, the middleware was a **no-op** — it performed no validation. Remove it entirely. Do NOT add Ed25519 verification (the original app intentionally skipped validation, so adding it would change behavior and risk breaking the app if misconfigured).
   - If `validate: true` (or no `validate` option, since `true` is the default), replace it with Telnyx Ed25519 verification. Do NOT just delete it — removing real webhook validation leaves endpoints unprotected in production.
 - **Rails `before_action`**: If the original code used a Twilio `before_action` filter (e.g., `before_action :validate_twilio_request`), replace it with a Telnyx Ed25519 `before_action`. Also add `skip_before_action :verify_authenticity_token` since webhooks don't carry CSRF tokens. See `{baseDir}/references/webhook-migration.md` → "Rails" for the complete pattern.
 - **Use the exact signature verification pattern from `webhook-migration.md`** — do NOT use patterns from your own training data. Do NOT use `new TelnyxWebhook()`.
@@ -414,20 +401,6 @@ Also run the correctness linter across all products:
 ```bash
 bash {baseDir}/scripts/lint-telnyx-correctness.sh <project-root>
 ```
-
-**Finite linter scope:** This is a dependency-free lexical analyzer, not a
-compiler or full parser. Its declared universe is 23 source suffixes across 9
-lexical families (Python, JavaScript/TypeScript, Ruby, Go, Java/Kotlin, PHP, C#,
-Swift, and XML/HTML), 8 server-handler families, and 17 emitted checks. JSON
-output records these counts, the exact suffix list, and the limitations under
-`analysis_scope`.
-
-It does not prove correctness for runtime-generated or reflected method/route
-names, code executed only inside string interpolation, `eval`, macros, or
-templates, cross-file aliases/data flow, nonstandard route registration, or XML
-generated only at runtime. Manually inspect those constructs and verify them
-with the language runtime or a real parser. A clean result means none of the 17
-declared lexical checks fired; it is not proof of arbitrary-program correctness.
 
 **Gating rules:**
 - **FAIL/ISSUE** (exit code 1) = **CRITICAL** — must fix before proceeding to Phase 6.
@@ -540,7 +513,7 @@ All scripts are in `{baseDir}/scripts/`. Run them — do not substitute your own
 **State tracking**: `migration-state.sh init|status|show|set-phase|set|add-product|add-file|set-commit <root> [args]`
 **Phase wrappers**: `run-discovery.sh <root>` (Phase 1), `run-validation.sh <root>` (Phase 5)
 **Scanners (free)**: `preflight-check.sh [--quick]`, `scan-twilio-usage.sh <root>`, `scan-twilio-deep.py <root>`
-**Validators (free)**: `validate-migration.sh <root> [--product X] [--json] [--exclude-dir D] [--scan-json F] [--state-file <path>]`, `validate-texml.sh <file>`, `lint-telnyx-correctness.sh <root> [--product X] [--json] [--scan-json F]`
+**Validators (free)**: `validate-migration.sh <root> [--product X] [--json] [--exclude-dir D] [--scan-json F] [--state-file <path>]`, `validate-texml.sh <file>`, `lint-telnyx-correctness.sh <root> [--product X] [--json]`
 **Tests (free)**: `test-migration/smoke-test.sh`, `test-migration/webhook-receiver.py`, `test-migration/test-webhooks-local.py`
 **Tests (paid, --confirm)**: `test-migration/test-voice.sh` (~$0.01), `test-migration/test-messaging.sh` (~$0.004), `test-migration/test-verify.sh` (~$0.05), `test-migration/test-lookup.sh` (~$0.01), `test-migration/test-fax.sh` (~$0.07)
 **Tests (free, --confirm)**: `test-migration/test-sip.sh` (SIP trunking setup), `test-migration/test-webrtc.sh` (WebRTC credentials/tokens)

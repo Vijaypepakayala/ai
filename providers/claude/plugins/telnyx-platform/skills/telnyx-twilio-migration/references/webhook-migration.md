@@ -1,8 +1,6 @@
 # Webhook Migration: Twilio to Telnyx
 
-Comprehensive guide for migrating webhook handlers from Twilio. Telnyx API v2
-event webhooks use nested JSON, while TeXML instruction requests and callbacks
-use flat form/query fields. Keep those routes and parsers separate.
+Comprehensive guide for migrating webhook handlers from Twilio's flat form-encoded payloads to Telnyx's nested JSON event structure.
 
 ## Payload Structure
 
@@ -11,7 +9,7 @@ use flat form/query fields. Keep those routes and parsers separate.
 MessageSid=SM123&From=%2B15551234567&To=%2B15559876543&Body=Hello
 ```
 
-**Telnyx API v2 event webhooks** send nested JSON (`application/json`):
+**Telnyx** sends nested JSON (`application/json`):
 ```json
 {
   "data": {
@@ -28,10 +26,7 @@ MessageSid=SM123&From=%2B15551234567&To=%2B15559876543&Body=Hello
 }
 ```
 
-**Key change for API v2 routes**: parse JSON and access fields via
-`data.payload.*`. Do not apply this rule to TeXML: configured TeXML POST routes
-receive flat PascalCase `application/x-www-form-urlencoded` fields, while GET
-routes receive query parameters.
+**Key change**: Your webhook handler must parse JSON body instead of form data, and access fields via `data.payload.*` instead of flat keys.
 
 ## Messaging Webhook Field Mapping
 
@@ -49,11 +44,11 @@ routes receive query parameters.
 | `AccountSid` | N/A | Not included |
 | `ApiVersion` | N/A | Not included |
 
-### Delivery Status (`message.sent`, `message.finalized`)
+### Delivery Status (`message.sent`, `message.delivered`, `message.failed`)
 
 | Twilio Field | Telnyx Field | Access Path |
 |---|---|---|
-| `MessageStatus` | recipient status | `data.payload.to[0].status` in `message.finalized` |
+| `MessageStatus` | `event_type` suffix | `data.event_type` (e.g., `message.delivered`) |
 | `MessageSid` | `id` | `data.payload.id` |
 | `ErrorCode` | `errors[0].code` | `data.payload.errors[0].code` |
 | `ErrorMessage` | `errors[0].title` | `data.payload.errors[0].title` |
@@ -62,11 +57,11 @@ routes receive query parameters.
 
 | Twilio Status | Telnyx Event Type | Notes |
 |---|---|---|
-| `queued` | synchronous response / `message.sent` | Accepted or sent toward the carrier; not final delivery proof |
-| `sent` | `message.sent` | Progress event; not final delivery proof |
-| `delivered` | `message.finalized` | Check `data.payload.to[0].status === "delivered"` |
-| `undelivered` | `message.finalized` | Check final recipient status and `errors` |
-| `failed` | `message.finalized` | Check final recipient status and `errors` |
+| `queued` | `message.queued` | Message accepted |
+| `sent` | `message.sent` | Sent to carrier |
+| `delivered` | `message.delivered` | Carrier confirmed delivery |
+| `undelivered` | `message.failed` | Delivery failed (check `errors`) |
+| `failed` | `message.failed` | Send failed |
 | `received` | `message.received` | Inbound message |
 
 ## Voice Webhook Field Mapping
@@ -198,13 +193,12 @@ def messaging_webhook():
         from_number = payload['from']['phone_number']
         text = payload['text']
         # Process inbound message...
-    elif event_type == 'message.finalized':
-        recipient = payload['to'][0]
-        if recipient['status'] == 'delivered':
-            pass  # Handle delivery confirmation...
-        else:
-            errors = payload.get('errors', [])
-            # Handle final failure...
+    elif event_type == 'message.delivered':
+        msg_id = payload['id']
+        # Handle delivery confirmation...
+    elif event_type == 'message.failed':
+        errors = payload.get('errors', [])
+        # Handle failure...
 
     return jsonify({"status": "ok"}), 200
 ```
@@ -241,14 +235,11 @@ app.post('/webhooks/messaging', async (req, res) => {
     const from = payload.from.phone_number;
     const text = payload.text;
     // Process inbound message...
-  } else if (event_type === 'message.finalized') {
-    const recipient = payload.to[0];
-    if (recipient.status === 'delivered') {
-      // Handle delivery confirmation...
-    } else {
-      const errors = payload.errors || [];
-      // Handle final failure...
-    }
+  } else if (event_type === 'message.delivered') {
+    // Handle delivery confirmation...
+  } else if (event_type === 'message.failed') {
+    const errors = payload.errors || [];
+    // Handle failure...
   }
 
   res.sendStatus(200);
@@ -288,14 +279,11 @@ post '/webhooks/messaging' do
     from_number = data.dig('from', 'phone_number')
     text = data['text']
     # Process inbound message...
-  when 'message.finalized'
-    recipient = data.fetch('to').first
-    if recipient['status'] == 'delivered'
-      # Handle delivery confirmation...
-    else
-      errors = data['errors'] || []
-      # Handle final failure...
-    end
+  when 'message.delivered'
+    # Handle delivery confirmation...
+  when 'message.failed'
+    errors = data['errors'] || []
+    # Handle failure...
   end
 
   content_type :json
@@ -323,14 +311,11 @@ class WebhooksController < ApplicationController
       from_number = payload.dig('from', 'phone_number')
       text = payload['text']
       # Process inbound message...
-    when 'message.finalized'
-      recipient = payload.fetch('to').first
-      if recipient['status'] == 'delivered'
-        # Handle delivery confirmation...
-      else
-        errors = payload['errors'] || []
-        # Handle final failure...
-      end
+    when 'message.delivered'
+      # Handle delivery confirmation...
+    when 'message.failed'
+      errors = payload['errors'] || []
+      # Handle failure...
     end
 
     render json: { status: 'ok' }
@@ -409,7 +394,6 @@ type TelnyxEvent struct {
 			} `json:"from"`
 			To []struct {
 				PhoneNumber string `json:"phone_number"`
-				Status      string `json:"status"`
 			} `json:"to"`
 			Text   string `json:"text"`
 			Errors []struct {
@@ -436,12 +420,10 @@ func messagingWebhook(w http.ResponseWriter, r *http.Request) {
 		from := event.Data.Payload.From.PhoneNumber
 		text := event.Data.Payload.Text
 		fmt.Printf("SMS from %s: %s\n", from, text)
-	case "message.finalized":
-		if len(event.Data.Payload.To) > 0 && event.Data.Payload.To[0].Status == "delivered" {
-			// Handle delivery confirmation...
-		} else {
-			// Inspect event.Data.Payload.Errors and handle final failure...
-		}
+	case "message.delivered":
+		// Handle delivery confirmation...
+	case "message.failed":
+		// Handle failure...
 	}
 
 	w.WriteHeader(200)
@@ -456,9 +438,7 @@ func main() {
 
 ## Common Webhook Migration Mistakes
 
-1. **Using one parser for both families** — API v2 event routes use nested
-   JSON; TeXML routes use flat form/query fields. Separate them instead of
-   assuming every Telnyx callback has the same body shape.
+1. **Still parsing form data** — Telnyx sends JSON, not form-encoded. Use `request.json` (Flask) or `req.body` with JSON middleware (Express), not `request.form`.
 
 2. **Missing `data` wrapper** — Telnyx nests everything under `data`. The event type is at `data.event_type`, not at the top level.
 

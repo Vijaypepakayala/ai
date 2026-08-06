@@ -40,8 +40,9 @@ Caller → Telnyx number → TeXML app: <Connect><Stream url="wss://you"/></Conn
 - Queue sends (worker + retry with backoff on 429 reading `Retry-After`);
   never loop sends inline in a request handler.
 - Delivery truth: `message.finalized` webhook, outcome in
-  `data.payload.to[0].status`. Key retries on the message `id`; make
-  handlers idempotent (webhooks redeliver).
+  `data.payload.to[0].status`. Dedupe deliveries on the event `data.id` and
+  correlate business state on `data.payload.id`; do not collapse distinct
+  lifecycle events merely because they reference the same message.
 - Store conversation state server-side keyed on BOTH numbers (user × your
   number), with a TTL.
 

@@ -13,6 +13,8 @@ These Twilio products have no direct Telnyx replacement. When the scanner detect
 | **TaskRouter** (Queue Routing) | No equivalent | Build custom routing with Call Control events + your own queue logic |
 | **Conversations** (Multi-channel) | No equivalent | Use Telnyx Messaging for SMS + your own chat backend |
 | **Sync** (Real-time State) | No equivalent | Use Redis, Firebase, or another real-time data store |
+| **SendGrid** (Email) | No equivalent | Use a dedicated email provider (SendGrid can remain alongside Telnyx) |
+| **Twilio Pay** | No equivalent | Use Stripe/Braintree for payment processing. No `<Pay>` verb in TeXML. |
 | **Autopilot** (NLU) | No equivalent | Use Telnyx AI Assistants for voice AI, or bring your own NLU |
 | **Notify** (Push/SMS Notifications) | No equivalent | Use Telnyx Messaging API directly for SMS notifications. For push, use FCM/APNs directly. |
 | **Proxy** (Phone Masking) | No equivalent | Build custom number masking with Telnyx Messaging API + number pool |

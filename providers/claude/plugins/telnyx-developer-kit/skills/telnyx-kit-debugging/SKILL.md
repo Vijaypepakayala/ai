@@ -3,7 +3,7 @@ name: telnyx-kit-debugging
 description: >-
   Triage Telnyx API errors and runtime failures fast: exact error-code
   meanings, retryability, silent-failure traps (TeXML attribute case, dead
-  webhooks, 10DLC filtering), and where to look when calls or messages fail
+  webhooks, sender-registration filtering), and where to look when calls or messages fail
   with no error at all.
 metadata:
   author: telnyx
@@ -63,5 +63,5 @@ metadata:
   specific; `detail` names the offending field via `source.pointer`).
 - Emit metrics per error code, not per HTTP status — 40305 and 40310 are
   different bugs.
-- Keep a replayable store of webhook payloads (they are the ground truth
-  for delivery disputes).
+- Keep an encrypted, access-controlled, retention-limited store of the minimum
+  webhook data needed for replay and delivery disputes.

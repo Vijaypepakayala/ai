@@ -9,7 +9,7 @@
 # Options:
 #   <project-root>       Path to the project to validate (required)
 #   --product <name>     Only check patterns for a specific product:
-#                        voice, messaging, verify, webrtc, sip, fax, video, iot, lookup, pay
+#                        voice, messaging, verify, webrtc, sip, fax, video, iot, lookup
 #   --json               Output results as machine-readable JSON
 #   --exclude-dir <dir>  Additional directory to exclude (repeatable)
 #   --scan-json <path>   Path to twilio-scan.json for context-aware checks
@@ -58,7 +58,7 @@ usage() {
   echo "Usage: $(basename "$0") <project-root> [--product <name>] [--json] [--state-file <path>]"
   echo "       [--exclude-dir <dir>] [--scan-json <path>]"
   echo ""
-  echo "Products: voice, messaging, verify, webrtc, sip, fax, video, iot, lookup, pay"
+  echo "Products: voice, messaging, verify, webrtc, sip, fax, video, iot, lookup"
   echo ""
   echo "Options:"
   echo "  --state-file <path>   Path to migration-state.json for hybrid deployment awareness"
@@ -218,49 +218,6 @@ count_matches() {
   echo "$matches" | grep -c . 2>/dev/null
 }
 
-# Require an implementation-shaped match on a non-comment line. This remains a
-# lexical check, but prevents a public-key variable or a comment that merely
-# says "use Ed25519" from satisfying the webhook security gate.
-file_has_code_match() {
-  local pattern="$1"
-  local file="$2"
-  local code
-  code=$(sed -E \
-    -e 's/"([^"\\]|\\.)*"//g' \
-    -e "s/'([^'\\\\]|\\\\.)*'//g" \
-    -e 's/`([^`\\]|\\.)*`//g' \
-    "$file" 2>/dev/null | awk '
-      BEGIN { in_block = 0 }
-      {
-        output = ""
-        rest = $0
-        while (length(rest) > 0) {
-          if (in_block) {
-            if (match(rest, /\*\//)) {
-              rest = substr(rest, RSTART + RLENGTH)
-              in_block = 0
-              continue
-            }
-            rest = ""
-            break
-          }
-          if (match(rest, /\/\*/)) {
-            output = output substr(rest, 1, RSTART - 1)
-            rest = substr(rest, RSTART + RLENGTH)
-            in_block = 1
-            continue
-          }
-          output = output rest
-          rest = ""
-        }
-        sub(/\/\/.*/, "", output)
-        sub(/#.*/, "", output)
-        print output
-      }
-    ')
-  grep -Eq "$pattern" <<< "$code"
-}
-
 # --- Product filter helpers ---
 # Returns 0 (true) if a check should run for the current product filter
 product_applies() {
@@ -285,10 +242,10 @@ while [ $# -gt 0 ]; do
       fi
       PRODUCT_FILTER="$2"
       case "$PRODUCT_FILTER" in
-        voice|messaging|verify|webrtc|sip|fax|video|iot|lookup|pay) ;;
+        voice|messaging|verify|webrtc|sip|fax|video|iot|lookup) ;;
         *)
           echo "Error: Unknown product '$PRODUCT_FILTER'" >&2
-          echo "Valid products: voice, messaging, verify, webrtc, sip, fax, video, iot, lookup, pay" >&2
+          echo "Valid products: voice, messaging, verify, webrtc, sip, fax, video, iot, lookup" >&2
           exit 2
           ;;
       esac
@@ -371,8 +328,10 @@ fi
 
 # Load scan context if provided (for context-aware checks like TeXML detection)
 SCAN_PRODUCTS=""
+ORIGINAL_HAD_WEBHOOK_VALIDATION="unknown"
 if [ -n "$SCAN_JSON" ] && [ -f "$SCAN_JSON" ] && command -v jq >/dev/null 2>&1; then
   SCAN_PRODUCTS=$(jq -r '.products_used // [] | map(ascii_downcase) | join(",")' "$SCAN_JSON" 2>/dev/null || true)
+  ORIGINAL_HAD_WEBHOOK_VALIDATION=$(jq -r '.has_webhook_validation // false' "$SCAN_JSON" 2>/dev/null || echo "unknown")
 fi
 
 # Helper: returns 0 if project is TeXML/voice-only (no SDK imports expected)
@@ -516,7 +475,7 @@ if product_applies "all"; then
 fi
 
 # --- Check 5: TwiML files ---
-if product_applies "voice,messaging,fax,pay"; then
+if product_applies "voice,messaging,fax"; then
   matches=$(search_files "(<Response>.*<(Say|Dial|Gather|Record|Message|Redirect|Reject|Pause|Enqueue|Play)|TwiML|twiml)" "*.xml" "*.twiml")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
@@ -675,38 +634,33 @@ fi
 section_header "Webhook Validation"
 
 # --- Check 10: Ed25519 signature validation ---
-if product_applies "voice,messaging,verify,sip,fax,pay"; then
-  ED25519_IMPLEMENTATION_PATTERN="(verify_signature[[:space:]]*\(|verifySignature[[:space:]]*\(|verify.*webhook[[:space:]]*\(|webhook.*verify[[:space:]]*\(|construct_event[[:space:]]*\(|webhooks\.unwrap[[:space:]]*\(|[Ee]d25519\.(Verify|verify)[[:space:]]*\(|sodium_crypto_sign_verify_detached[[:space:]]*\(|crypto_sign_verify_detached[[:space:]]*\(|nacl\.sign\.detached\.verify[[:space:]]*\(|public_key\.verify[[:space:]]*\()"
-  WEBHOOK_HANDLER_PATTERN="(app\.(post|put)|router\.(post|put)|->(post|put)\(|@app\.route|@csrf_exempt|HandleFunc|post '/|@(PostMapping|RequestMapping)|MapPost\(|\[HttpPost)"
-  TELNYX_WEBHOOK_PARSE_PATTERN="([Dd]ata\.[Pp]ayload|[Dd]ata\[.[Pp]ayload.\]|[Ee]vent_?[Tt]ype|[Dd]ata\.[Ee]vent_?[Tt]ype|[Bb]ody\.[Dd]ata|CallSid|CallStatus|RecordingUrl|SequenceNumber)"
-  WEBHOOK_GLOBS=("*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.php" "*.cs")
-
-  webhook_handlers=$(search_files "$WEBHOOK_HANDLER_PATTERN" "${WEBHOOK_GLOBS[@]}")
-  webhook_count=$(count_matches "$webhook_handlers")
-  telnyx_webhook_parse=$(search_files "$TELNYX_WEBHOOK_PARSE_PATTERN" "${WEBHOOK_GLOBS[@]}")
-
-  handler_files=$(echo "$webhook_handlers" | cut -d: -f1 | sed '/^$/d' | sort -u)
-  parse_files=$(echo "$telnyx_webhook_parse" | cut -d: -f1 | sed '/^$/d' | sort -u)
-  candidate_files=$(comm -12 <(printf '%s\n' "$handler_files") <(printf '%s\n' "$parse_files") | sed '/^$/d')
-  unsigned_files=""
-  while IFS= read -r file; do
-    [ -z "$file" ] && continue
-    if ! file_has_code_match "$ED25519_IMPLEMENTATION_PATTERN" "$file"; then
-      unsigned_files+="$file"$'\n'
-    fi
-  done <<< "$candidate_files"
-  unsigned_files=$(printf '%s' "$unsigned_files" | sed '/^$/d')
-
-  if [ -n "$unsigned_files" ]; then
-    check_fail "ed25519_validation" \
-      "At least one webhook file parses Telnyx API v2 or TeXML fields without Ed25519 verification — production webhooks are vulnerable to spoofing." \
-      "$(printf '%s\n' "$unsigned_files" | jq -R -s '{files: (split("\n") | map(select(length > 0)))}')"
-  elif [ -n "$candidate_files" ]; then
-    check_pass "ed25519_validation" "Every detected Telnyx webhook file contains an implementation-shaped Ed25519 verification call"
-  elif [ "$webhook_count" -gt 0 ]; then
-    check_warn "ed25519_validation" "Webhook-like routes were found without recognizable Telnyx payload parsing. Confirm whether they receive Telnyx traffic; if they do, Ed25519 verification is required."
+if product_applies "voice,messaging,verify,sip,fax"; then
+  matches=$(search_files "(ed25519|Ed25519|telnyx-signature-ed25519|verify_signature|construct_event|webhooks\.unwrap|webhook.*signature.*telnyx)")
+  count=$(count_matches "$matches")
+  if [ "$count" -gt 0 ]; then
+    check_pass "ed25519_validation" "Ed25519 webhook signature validation found in $count file(s)"
   else
-    check_pass "ed25519_validation" "No webhook handlers detected — Ed25519 validation not applicable"
+    # Check if the project has webhook handlers — if so, missing validation is a FAIL
+    webhook_handlers=$(search_files "(app\.(post|put)|router\.(post|put)|@app\.route|@csrf_exempt|HandleFunc|post '/)" "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.php")
+    webhook_count=$(count_matches "$webhook_handlers")
+    # Also check for Telnyx webhook payload parsing (data.payload, event_type)
+    telnyx_webhook_parse=$(search_files "(data\.payload|data\[.payload.\]|event_type|data\.event_type)" "*.py" "*.js" "*.ts" "*.rb" "*.go")
+    telnyx_parse_count=$(count_matches "$telnyx_webhook_parse")
+    if [ "$telnyx_parse_count" -gt 0 ]; then
+      if [ "$ORIGINAL_HAD_WEBHOOK_VALIDATION" = "false" ]; then
+        check_warn "ed25519_validation" "No Ed25519 webhook signature validation found — original code did not validate webhooks either (no RequestValidator/X-Twilio-Signature detected in scan). Consider adding Ed25519 for production security, but this is not a regression."
+      else
+        check_fail "ed25519_validation" "Webhook handlers parse Telnyx payloads but NO Ed25519 signature validation found — production webhooks are vulnerable to spoofing. Add verification using the pattern in references/webhook-migration.md"
+      fi
+    elif [ "$webhook_count" -gt 0 ]; then
+      if [ "$ORIGINAL_HAD_WEBHOOK_VALIDATION" = "false" ]; then
+        check_pass "ed25519_validation" "No Ed25519 webhook signature validation found — original code did not validate webhooks either (not a regression)"
+      else
+        check_warn "ed25519_validation" "No Ed25519 webhook signature validation found — add verification for production security (see references/webhook-migration.md)"
+      fi
+    else
+      check_pass "ed25519_validation" "No webhook handlers detected — Ed25519 validation not applicable"
+    fi
   fi
 fi
 

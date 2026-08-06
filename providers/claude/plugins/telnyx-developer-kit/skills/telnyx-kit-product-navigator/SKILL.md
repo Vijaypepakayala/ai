@@ -3,7 +3,7 @@ name: telnyx-kit-product-navigator
 description: >-
   Pick the right Telnyx product and API for a job before writing code. Use at
   the START of any Telnyx build: maps use cases (notifications, 2FA, voice
-  agents, contact centers, IoT, video, fax, Twilio migration) to the correct
+  agents, contact centers, email, IoT, video, fax, Twilio migration) to the correct
   product, API surface, and companion skill.
 metadata:
   author: telnyx
@@ -23,6 +23,7 @@ product plugin (`/plugin install telnyx-<product>@telnyx`) for deep guidance.
 | Send SMS/MMS notifications | Messaging | `POST /v2/messages` | telnyx-messaging plugin |
 | Verify users by OTP (SMS, call, flash call) | Verify | `POST /v2/verifications/{sms\|call\|flashcall}` | telnyx-verify plugin |
 | Send WhatsApp messages | WhatsApp Business | WhatsApp API | telnyx-whatsapp plugin |
+| Send or receive email | Email | `/v2/email_messages` + inbox/domain APIs | telnyx-email plugin |
 | Serve voice menus / IVR from XML | TeXML | TeXML Application + XML docs | telnyx-platform plugin |
 | Drive calls imperatively from code (AI agents, dynamic flows) | Call Control | `POST /v2/calls` + per-call actions | telnyx-voice plugin |
 | Build a browser/mobile softphone | WebRTC SDKs | Credential connections + SDKs | telnyx-webrtc plugin |

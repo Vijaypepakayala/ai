@@ -23,7 +23,7 @@ code fail **silently**, with a 200 response and nothing happening.
 |---|---|---|
 | Account SID + Auth Token | API key v2 (`Authorization: Bearer`) | one credential, not a pair |
 | Messaging Service SID | `messaging_profile_id` | per-request passing is an OVERRIDE; the sending number's assignment is the norm |
-| TwiML | TeXML | same verb vocabulary, different runtime — see silent breakage below |
+| TwiML | TeXML | overlapping verb vocabulary, different runtime — see silent breakage below |
 | TwiML App | TeXML Application | |
 | Programmable Voice REST | Call Control API | imperative commands against a `call_control_id` |
 | Verify Service | Verify Profile | channel is chosen by the ENDPOINT (`/v2/verifications/sms\|call\|flashcall`), not a `type` body field |
