@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import math
 import re
 import struct
 import sys
@@ -290,6 +291,13 @@ def reject_non_finite_json_constant(value: str) -> None:
     raise NonFiniteJSONConstant(f"non-finite numeric constant {value!r}")
 
 
+def parse_finite_json_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise NonFiniteJSONConstant(f"non-finite numeric value {value!r}")
+    return parsed
+
+
 def reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     value: dict[str, Any] = {}
     for key, item in pairs:
@@ -304,11 +312,16 @@ def strict_json_loads(document: str) -> Any:
         document,
         object_pairs_hook=reject_duplicate_json_keys,
         parse_constant=reject_non_finite_json_constant,
+        parse_float=parse_finite_json_float,
     )
 
 
 def validate_strict_json_regressions() -> None:
-    for document in ('{"value":NaN}', '{"value":1,"value":2}'):
+    for document in (
+        '{"value":NaN}',
+        '{"value":1e9999}',
+        '{"value":1,"value":2}',
+    ):
         try:
             strict_json_loads(document)
         except (DuplicateJSONKey, NonFiniteJSONConstant):
@@ -794,6 +807,12 @@ def validate_kit_skill_semantics(skill_texts: dict[str, str]) -> None:
         and "Treat any separate migration package as an explicit user choice"
         in navigator_flat,
         "product navigator must not auto-install product or migration packages",
+    )
+    require(
+        "| Send SMS/MMS notifications or alerts | Messaging |" in navigator
+        and "| Verify users by OTP (SMS, call, flash call) | Verify |" in navigator
+        and "notifications or 2FA texts" not in navigator,
+        "product navigator must route OTP and 2FA to Verify instead of raw Messaging",
     )
 
     architecture_lower = re.sub(r"\s+", " ", architecture).lower()

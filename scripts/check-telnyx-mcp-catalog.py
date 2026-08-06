@@ -283,24 +283,34 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def validate_mcp_config(payload: Any) -> str:
+    """Enforce this package's pinned direct-map form and production endpoint."""
+
+    expected = {
+        "telnyx": {
+            "type": "http",
+            "url": EXPECTED_MCP_URL,
+        }
+    }
+    if payload != expected:
+        raise AuditError(
+            "Telnyx MCP config must be a direct server map containing only "
+            "the production HTTP endpoint"
+        )
+    return EXPECTED_MCP_URL
+
+
 def load_mcp_url() -> str:
     try:
         payload = strict_json_loads(MCP_CONFIG_PATH.read_text(encoding="utf-8"))
-        server = payload["mcpServers"]["telnyx"]
     except (
         OSError,
         UnicodeDecodeError,
         json.JSONDecodeError,
         StrictJSONError,
-        KeyError,
-        TypeError,
     ) as exc:
         raise AuditError(f"cannot read Telnyx MCP config: {exc}") from exc
-    if server != {"type": "http", "url": EXPECTED_MCP_URL}:
-        raise AuditError(
-            "Telnyx MCP config does not match the production HTTP endpoint"
-        )
-    return EXPECTED_MCP_URL
+    return validate_mcp_config(payload)
 
 
 def load_expected_root_annotations() -> dict[str, dict[str, bool]]:
@@ -2300,6 +2310,65 @@ def expect_strict_json_error(label: str, document: str) -> None:
 
 
 def run_self_tests() -> None:
+    if load_mcp_url() != EXPECTED_MCP_URL:
+        raise AuditError("self-test MCP config URL changed")
+    valid_mcp_config = {
+        "telnyx": {
+            "type": "http",
+            "url": EXPECTED_MCP_URL,
+        }
+    }
+    if validate_mcp_config(valid_mcp_config) != EXPECTED_MCP_URL:
+        raise AuditError("self-test direct MCP config changed")
+    for label, invalid_mcp_config in (
+        ("obsolete camel-case wrapper", {"mcpServers": valid_mcp_config}),
+        ("alternate snake-case wrapper", {"mcp_servers": valid_mcp_config}),
+        (
+            "extra server",
+            {
+                **valid_mcp_config,
+                "unexpected": {
+                    "type": "http",
+                    "url": "https://example.com/mcp",
+                },
+            },
+        ),
+        (
+            "extra server field",
+            {
+                "telnyx": {
+                    **valid_mcp_config["telnyx"],
+                    "headers": {"X-Test": "value"},
+                }
+            },
+        ),
+        (
+            "wrong transport",
+            {
+                "telnyx": {
+                    "type": "stdio",
+                    "url": EXPECTED_MCP_URL,
+                }
+            },
+        ),
+        (
+            "query-string URL drift",
+            {
+                "telnyx": {
+                    "type": "http",
+                    "url": f"{EXPECTED_MCP_URL}?tools=all",
+                }
+            },
+        ),
+        ("non-object config", [valid_mcp_config]),
+    ):
+        expect_audit_error(
+            f"MCP config {label}",
+            lambda invalid_mcp_config=invalid_mcp_config: validate_mcp_config(
+                invalid_mcp_config
+            ),
+        )
+
     expected_root_contract = load_expected_root_annotations()
     if len(expected_root_contract) != EXPECTED_MODEL_VISIBLE_TOOL_COUNT:
         raise AuditError("self-test model-visible tool fixture count changed")
