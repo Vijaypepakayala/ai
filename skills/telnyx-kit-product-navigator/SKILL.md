@@ -19,26 +19,24 @@ Answer three questions, then jump to the row that matches.
 
 ## Continue in your client
 
-- **Codex with the Telnyx Developer Kit installed**: Do not try to install the
-  product plugins in the last column; they are not published in the Codex
-  marketplace. Use the installed `telnyx` hosted MCP instead: call
+- **Claude or Codex with the Telnyx Developer Kit installed**: Use the
+  installed `telnyx` hosted MCP: call
   `list_api_endpoints` to discover the relevant operation, then call
   `get_api_endpoint_schema` for the selected endpoint before writing a request.
   The public catalog is documentation-only and cannot execute account API
   operations. Use its exact schema to generate implementation guidance or SDK
   code; use only a separately reviewed focused MCP App when account inspection
-  is required.
+  is required. Do not ask for or accept a Telnyx API key in chat. Do not install
+  another product plugin unless the user explicitly asks to add that separate
+  package after reviewing its capabilities.
 - **Cursor**: Matching canonical product skills are already bundled in the
   flat Telnyx Cursor plugin. Load the relevant `telnyx-<product>-*` skill or
   skills from the current installation; do not run Claude `/plugin install`
   commands.
-- **Claude Code**: The last column lists optional product-specific deep dives.
-  If the named plugin is available, install it with
-  `/plugin install telnyx-<product>@telnyx`.
 
 ## Use case → product
 
-| You want to… | Product | API surface | Optional Claude Code deep-dive |
+| You want to… | Product | API surface | Optional reference pack |
 |---|---|---|---|
 | Send SMS/MMS notifications or 2FA texts | Messaging | `POST /v2/messages` | telnyx-messaging plugin |
 | Verify users by OTP (SMS, call, flash call) | Verify | `POST /v2/verifications/{sms\|call\|flashcall}` | telnyx-verify plugin |
@@ -80,12 +78,11 @@ Answer three questions, then jump to the row that matches.
   policy is explicit.
 - **Coming from Twilio**: product names map non-obviously (Messaging Service
   → messaging profile, TwiML App → TeXML Application, Verify Service →
-  Verify profile). In Codex, use `list_api_endpoints` for the corresponding
-  Messaging, TeXML, Verify, Numbers, or other Telnyx operation, then inspect
-  each selected operation with `get_api_endpoint_schema`; do not try to
-  install `telnyx-platform` or a standalone migration skill. In Claude Code,
-  the optional `telnyx-twilio-migration` skill in `telnyx-platform` provides
-  the complete mapping plus automated scanners.
+  Verify profile). In the Telnyx Developer Kit, use `list_api_endpoints` for
+  the corresponding Messaging, TeXML, Verify, Numbers, or other Telnyx
+  operation, then inspect each selected operation with
+  `get_api_endpoint_schema`. Treat any separate
+  migration package as an explicit user choice, not an automatic dependency.
 
 ## Anti-patterns
 

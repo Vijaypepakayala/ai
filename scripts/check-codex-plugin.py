@@ -742,8 +742,9 @@ def validate_kit_skill_semantics(skill_texts: dict[str, str]) -> None:
     architecture = skill_texts["telnyx-kit-architecture-patterns"]
     guardrails = skill_texts["telnyx-kit-guardrails"]
     debugging = skill_texts["telnyx-kit-debugging"]
+    navigator_flat = re.sub(r"\s+", " ", navigator)
 
-    codex_marker = "**Codex with the Telnyx Developer Kit installed**"
+    codex_marker = "**Claude or Codex with the Telnyx Developer Kit installed**"
     codex_position = navigator.find(codex_marker)
     list_position = navigator.find("`list_api_endpoints`", codex_position)
     schema_position = navigator.find("`get_api_endpoint_schema`", list_position)
@@ -760,35 +761,39 @@ def validate_kit_skill_semantics(skill_texts: dict[str, str]) -> None:
         < list_position
         < schema_position
         < catalog_only_position,
-        "product navigator must route Codex through list_api_endpoints, then "
+        "product navigator must route Claude and Codex through list_api_endpoints, then "
         "get_api_endpoint_schema, and identify the catalog as documentation-only",
     )
     require(
         "cannot execute account API" in navigator,
         "product navigator must prohibit account API execution through the catalog",
     )
+    require(
+        "Do not ask for or accept a Telnyx API key in chat" in navigator_flat
+        and "Do not install another product plugin unless the user explicitly asks"
+        in navigator_flat,
+        "product navigator must refuse chat credentials and automatic plugin installs",
+    )
 
     cursor_position = navigator.find("**Cursor**")
-    claude_position = navigator.find("**Claude Code**")
-    claude_install = "/plugin install telnyx-<product>@telnyx"
-    install_position = navigator.find(claude_install)
+    use_case_position = navigator.find("## Use case", cursor_position)
     require(
         cursor_position != -1
-        and claude_position > cursor_position
-        and "already bundled" in navigator[cursor_position:claude_position]
-        and "`telnyx-<product>-*`" in navigator[cursor_position:claude_position]
+        and use_case_position > cursor_position
+        and "already bundled" in navigator[cursor_position:use_case_position]
+        and "`telnyx-<product>-*`" in navigator[cursor_position:use_case_position]
         and "do not run Claude `/plugin install`" in navigator[
-            cursor_position:claude_position
+            cursor_position:use_case_position
         ],
         "product navigator must tell Cursor to use bundled canonical product "
         "skills without running Claude install commands",
     )
     require(
-        claude_position != -1
-        and install_position > claude_position
-        and navigator.count(claude_install) == 1,
-        "the product plugin install command must appear exactly once and only "
-        "in the Claude Code route",
+        "/plugin install telnyx-<product>@telnyx" not in navigator
+        and "codex plugin add telnyx-" not in navigator.lower()
+        and "Treat any separate migration package as an explicit user choice"
+        in navigator_flat,
+        "product navigator must not auto-install product or migration packages",
     )
 
     architecture_lower = re.sub(r"\s+", " ", architecture).lower()
