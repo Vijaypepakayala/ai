@@ -10,7 +10,7 @@ user_invocable: true
 metadata:
   author: telnyx
   product: migration
-  compatibility: "Requires bash 4+, jq, curl. macOS ships bash 3.2 — scripts auto-upgrade via Homebrew bash if available (brew install bash)."
+  compatibility: "Requires bash 4+, Python 3.8+, jq, curl. macOS ships bash 3.2 — scripts auto-upgrade via Homebrew bash if available (brew install bash)."
 ---
 
 # Twilio to Telnyx Migration
@@ -269,7 +269,7 @@ Process each product area in priority order: **messaging → voice → verify �
 **After all source files in the product area:**
 
 7. **Migrate tests**: Find ALL test files for this product — `grep -rl -i "twilio\|TwilioVoice\|TwilioClient\|twilio_" *test* *Test* *spec* *Spec* 2>/dev/null`. Migrate every one: update imports, mock objects, mock payloads, assertions, and type references. Do NOT defer test files as "remaining manual steps" — they are part of the migration. Run the test suite to confirm.
-8. **Lint**: `bash {baseDir}/scripts/lint-telnyx-correctness.sh <project-root> --product {product}` — catches common anti-patterns (wrong method names, wrong parameter names, missing profile IDs). Fix all ISSUE items before proceeding.
+8. **Lint**: `bash {baseDir}/scripts/lint-telnyx-correctness.sh <project-root> --product {product}` — catches common anti-patterns (wrong method names, wrong parameter names, stale verification statuses, and insecure webhook handling). Fix all ISSUE items before proceeding.
 9. **Validate**: `bash {baseDir}/scripts/validate-migration.sh <project-root> --product {product} --scan-json <project-root>/twilio-scan.json`
 10. **Fix** any validation failures or lint issues, re-run until both exit code 0
 11. **Commit**: `git add <changed-files> && git commit -m "migrate: {product} — Twilio to Telnyx"`
@@ -513,7 +513,7 @@ All scripts are in `{baseDir}/scripts/`. Run them — do not substitute your own
 **State tracking**: `migration-state.sh init|status|show|set-phase|set|add-product|add-file|set-commit <root> [args]`
 **Phase wrappers**: `run-discovery.sh <root>` (Phase 1), `run-validation.sh <root>` (Phase 5)
 **Scanners (free)**: `preflight-check.sh [--quick]`, `scan-twilio-usage.sh <root>`, `scan-twilio-deep.py <root>`
-**Validators (free)**: `validate-migration.sh <root> [--product X] [--json] [--exclude-dir D] [--scan-json F] [--state-file <path>]`, `validate-texml.sh <file>`, `lint-telnyx-correctness.sh <root> [--product X] [--json]`
+**Validators (free)**: `validate-migration.sh <root> [--product X] [--json] [--exclude-dir D] [--scan-json F] [--state-file <path>]`, `validate-texml.sh <file>`, `lint-telnyx-correctness.sh <root> [--product X] [--json] [--scan-json F]`
 **Tests (free)**: `test-migration/smoke-test.sh`, `test-migration/webhook-receiver.py`, `test-migration/test-webhooks-local.py`
 **Tests (paid, --confirm)**: `test-migration/test-voice.sh` (~$0.01), `test-migration/test-messaging.sh` (~$0.004), `test-migration/test-verify.sh` (~$0.05), `test-migration/test-lookup.sh` (~$0.01), `test-migration/test-fax.sh` (~$0.07)
 **Tests (free, --confirm)**: `test-migration/test-sip.sh` (SIP trunking setup), `test-migration/test-webrtc.sh` (WebRTC credentials/tokens)
