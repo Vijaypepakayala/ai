@@ -22,8 +22,9 @@ Caller → Telnyx number → TeXML app: <Connect><Stream url="wss://you"/></Conn
 
 - Answer + stream in one TeXML response; keep the webhook fast (<2s) —
   heavy work happens on the WebSocket, never in the webhook handler.
-- Interruption handling: send `{"event":"clear","stream_id":...}` to flush
-  queued audio when the caller barges in.
+- Interruption handling: send `{"event":"clear"}` to flush queued audio when
+  the caller barges in. `stream_id` appears on server-to-client events but is
+  not part of the client clear frame.
 - For fully managed flows, `<Connect>` supports AI assistant nouns
   (AIAssistant, ConversationRelay) — no WebSocket server needed.
 - Scale unit = concurrent streams; keep per-call state keyed on

@@ -27,9 +27,10 @@ A `200` with a balance object means auth works. `401` with code `10009` means
 the key is wrong or missing — fix that before anything else. Put the key in an
 env var or secret manager, never in source (see `telnyx-kit-guardrails`).
 
-Check the balance value too: a negative balance blocks billable actions
-(sends, calls, number purchases) with errors that do not obviously say
-"you are out of money".
+Check `available_credit`, not the sign of `balance`: credit accounts can report
+a negative balance while still having usable credit. If `available_credit` is
+absent, compute `balance + credit_limit`. Billable actions are blocked when
+the resulting available credit is negative.
 
 ## 2. A number, with the right capability
 
@@ -115,7 +116,8 @@ public internet.
 | `400` / `40305` | `from` number not on the sending messaging profile | assign the number to the profile |
 | `409` / `40312` | messaging profile disabled | enable it, do not retry |
 | `409` / `40300` | STOP/compliance block | terminal — do not work around |
-| `422` / `10004` | required parameter missing (e.g. fax `connection_id`) | add the parameter |
+| `400` / `10004` | required parameter missing (e.g. fax `connection_id`) | add the parameter |
+| `404` / `10005` | resource or route not found | verify the resource id and API path |
 | API `200` but nothing arrives | provisioning or 10DLC filtering | check step 3, then `telnyx-kit-debugging` |
 
 Deeper triage lives in `telnyx-kit-debugging`; product selection in

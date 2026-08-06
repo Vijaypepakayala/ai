@@ -22,7 +22,8 @@ metadata:
 | 400 | 40305 | `from` number not on the sending messaging profile | No — fix provisioning |
 | 409 | 40312 | Messaging profile disabled | No — enable profile (`PATCH /v2/messaging_profiles/{id}` `enabled:true`) |
 | 409 | 40300 | Blocked (STOP/org compliance) | Never — compliance stop |
-| 422 | 10004/10005 | Missing/invalid required param | No — fix request |
+| 400 | 10004 | Missing required parameter | No — fix request |
+| 404 | 10005 | Resource or route not found | No — fix ID/path |
 | 429 | — | Rate limited | Yes — after `Retry-After` seconds, not before |
 | 5xx | — | Upstream | Yes — bounded backoff |
 
