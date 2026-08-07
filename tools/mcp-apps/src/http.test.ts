@@ -1211,6 +1211,70 @@ describe("hosted MCP Apps HTTP service", () => {
     expect(differentUserKey.status).toBe(404);
   });
 
+  it.each(["https://example.test", "https://example.test/v2/"])(
+    "routes the shared API base %s through exactly one /v2 segment for both public apps",
+    async (baseUrl) => {
+      const upstreamUrls: string[] = [];
+      delete process.env.TELNYX_API_KEY;
+      process.env.TELNYX_API_BASE_URL = baseUrl;
+      globalThis.fetch = (async (input: string | URL | Request) => {
+        const url = String(input);
+        upstreamUrls.push(url);
+        return new Response(
+          JSON.stringify(
+            url.includes("/number_lookup/")
+              ? { data: { phone_number: "+155****4567" } }
+              : { data: [] }
+          ),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }) as typeof fetch;
+
+      const app = createTestApp();
+      const token = "KEY_shared_base_test_1234567890";
+      const numberSessionId = await initializeSession(
+        app,
+        token,
+        "/apps/number-intelligence/mcp"
+      );
+      const voiceSessionId = await initializeSession(app, token, "/apps/voice-monitor/mcp");
+
+      const numberCall = await app.request("/apps/number-intelligence/mcp", {
+        method: "POST",
+        headers: sessionHeaders(numberSessionId, token),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: {
+            name: "number_intelligence_analyze",
+            arguments: { phone_number: "+155****4567", sources: ["lookup"] }
+          }
+        })
+      });
+      const voiceCall = await app.request("/apps/voice-monitor/mcp", {
+        method: "POST",
+        headers: sessionHeaders(voiceSessionId, token),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: {
+            name: "voice_monitor_active_calls",
+            arguments: { connection_id: "conn_shared_base" }
+          }
+        })
+      });
+
+      expect(numberCall.status).toBe(200);
+      expect(voiceCall.status).toBe(200);
+      expect(upstreamUrls).toEqual([
+        "https://example.test/v2/number_lookup/%2B1554567?type=carrier&type=caller-name",
+        "https://example.test/v2/connections/conn_shared_base/active_calls?page%5Bnumber%5D=1&page%5Bsize%5D=100"
+      ]);
+    }
+  );
+
   it("accepts credential-free cancellation and stops a billable batch before its next lookup", async () => {
     delete process.env.TELNYX_API_KEY;
     process.env.TELNYX_API_BASE_URL = "https://example.test";
@@ -1325,8 +1389,12 @@ describe("hosted MCP Apps HTTP service", () => {
   });
 });
 
-async function initializeSession(app: ReturnType<typeof createHostedMcpAppsHttpApp>, token: string): Promise<string> {
-  const initialize = await app.request("/apps/number-intelligence/mcp", {
+async function initializeSession(
+  app: ReturnType<typeof createHostedMcpAppsHttpApp>,
+  token: string,
+  endpoint = "/apps/number-intelligence/mcp"
+): Promise<string> {
+  const initialize = await app.request(endpoint, {
     method: "POST",
     headers: {
       ...MCP_HEADERS,
@@ -1339,7 +1407,7 @@ async function initializeSession(app: ReturnType<typeof createHostedMcpAppsHttpA
   const sessionId = initialize.headers.get("mcp-session-id");
   expect(sessionId).toMatch(/[0-9a-f-]{36}/);
 
-  const initialized = await app.request("/apps/number-intelligence/mcp", {
+  const initialized = await app.request(endpoint, {
     method: "POST",
     headers: sessionHeaders(sessionId, token),
     body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })

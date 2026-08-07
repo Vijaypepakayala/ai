@@ -49,7 +49,7 @@ export class TelnyxVoiceMonitorClient {
       throw new Error("Telnyx API key is required for live Voice Monitor calls");
     }
     this.apiKey = options.apiKey;
-    this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+    this.baseUrl = normalizeTelnyxV2BaseUrl(options.baseUrl ?? DEFAULT_BASE_URL);
     this.fetchImpl = options.fetch ?? globalThis.fetch;
     this.timeoutMs = options.timeoutMs;
     this.maxResponseBytes = options.maxResponseBytes;
@@ -148,6 +148,55 @@ export class TelnyxVoiceMonitorClient {
     }
     return body as T;
   }
+}
+
+function normalizeTelnyxV2BaseUrl(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) throw new Error("Telnyx API base URL must not be empty");
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new Error("Telnyx API base URL must be an absolute HTTP(S) URL");
+  }
+
+  if (!/^https?:$/.test(url.protocol) || url.username || url.password || url.search || url.hash) {
+    throw new Error("Telnyx API base URL must be an absolute HTTP(S) URL without credentials, query, or fragment");
+  }
+
+  const pathname = url.pathname.replace(/\/+$/, "");
+  if (pathname.includes("//")) {
+    throw new Error("Telnyx API base URL path must not contain empty segments");
+  }
+
+  const rawSegments = pathname.split("/").filter(Boolean);
+  let decodedSegments: string[];
+  try {
+    decodedSegments = rawSegments.map((segment) => decodeURIComponent(segment));
+  } catch {
+    throw new Error("Telnyx API base URL path must use valid percent encoding");
+  }
+
+  if (decodedSegments.some((segment) => /[\/\\\u0000-\u001f\u007f]/.test(segment))) {
+    throw new Error("Telnyx API base URL path contains an invalid encoded segment");
+  }
+
+  const versionSegments = decodedSegments
+    .map((segment, index) => ({ segment, index }))
+    .filter(({ segment }) => /^v\d+$/i.test(segment));
+  if (versionSegments.some(({ segment }) => segment !== "v2")) {
+    throw new Error("Telnyx API base URL supports only a literal lowercase /v2 version segment");
+  }
+  if (versionSegments.length > 1 || (versionSegments.length === 1 && versionSegments[0]?.index !== decodedSegments.length - 1)) {
+    throw new Error("Telnyx API base URL must contain at most one trailing /v2 segment");
+  }
+  if (decodedSegments.at(-1)?.toLowerCase() === "v2" && rawSegments.at(-1) !== "v2") {
+    throw new Error("Telnyx API base URL version segment must be literal lowercase /v2");
+  }
+
+  url.pathname = rawSegments.at(-1) === "v2" ? pathname : `${pathname}/v2`;
+  return url.toString().replace(/\/$/, "");
 }
 
 function addPaging(url: URL, input: PageInput): void {

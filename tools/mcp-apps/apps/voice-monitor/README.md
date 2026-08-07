@@ -24,6 +24,7 @@ Copy `.env.example` and set:
 
 ```sh
 TELNYX_API_KEY=***
+TELNYX_API_BASE_URL=https://api.telnyx.com/v2 # optional; root form is also accepted
 ```
 
 Optional guardrails:

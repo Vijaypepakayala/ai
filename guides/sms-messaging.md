@@ -98,7 +98,7 @@ curl "https://api.telnyx.com/v2/messages/{message_id}" \
 **`GET /v2/messages`**
 
 ```bash
-curl "https://api.telnyx.com/v2/messages?filter[direction]=outbound&page[size]=20" \
+curl --globoff "https://api.telnyx.com/v2/messages?filter[direction]=outbound&page[size]=20" \
   -H "Authorization: Bearer $TELNYX_API_KEY"
 ```
 

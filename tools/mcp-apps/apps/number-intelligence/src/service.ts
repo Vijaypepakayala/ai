@@ -651,7 +651,7 @@ function sourceConsultedDetail(sourceId: Exclude<NumberIntelligenceSourceId, "lo
     case "messaging":
       return "GET /v2/phone_numbers/messaging and GET /v2/messaging_profiles/{id} when attached.";
     case "voice":
-      return "GET /v2/phone_numbers/voice and GET /v2/connections/{id} when attached.";
+      return "GET /v2/phone_numbers, GET /v2/phone_numbers/{id}/voice, and GET /v2/connections/{id} when attached.";
     case "reputation":
       return "GET /v2/reputation/numbers/{phone_number}?fresh=false (cached only).";
   }

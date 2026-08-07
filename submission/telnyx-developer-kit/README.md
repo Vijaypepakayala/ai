@@ -65,7 +65,8 @@ Validate the app implementation locally:
 
 Validate the hardened proxy and Node MCP repositories with their documented
 Python, Node, lint, TypeScript, bundle, signing, and dependency-audit commands.
-Docker CI remains a release gate when the local host has no Docker executable.
+The release pipeline's Docker CI remains a gate even when the local image build
+and container smoke test pass.
 
 These checks make no Telnyx account or API mutations. The hosted catalog audit
 also performs discovery and schema inspection only; it never calls an API
@@ -139,14 +140,16 @@ federates the billing app, accepts query-string catalog overrides, or returns
 
 ## Latest internal review evidence
 
-As of 2026-08-05, the latest documentation-only contract passes 129 Python
+As of 2026-08-07, the latest documentation-only contract passes 129 Python
 proxy/auth/contract tests and 114 Node MCP tests, plus ESLint, TypeScript build,
 and MCP bundle validation/signing. The MCP Apps service passes typecheck, build,
-156 root tests, and its workspace test suites. A local Streamable HTTP test
+211 root tests, and its 39 Number Intelligence, 70 internal billing, and 37
+Voice Monitor workspace tests. A local Streamable HTTP test
 observed 4 model-visible tools, 8 app-only tools, 2 resources, successful deep
 readiness, the 812-entry catalog-only contract, and auth, Origin, and query
-guards. Production dependency audits report zero known vulnerabilities; Docker
-CI remains unavailable on this host. Five positive and three negative ephemeral
+guards. Production dependency audits report zero known vulnerabilities. A local
+Docker image build and container smoke test pass; hosted Docker CI is still a
+release gate. Five positive and three negative ephemeral
 Codex review cases also pass the local activation, tool-selection, answer, and
 safety criteria recorded in `codex-local-eval.md`. Desktop and mobile iframe
 rendering also pass the local bridge, initial-state, control, overflow, and

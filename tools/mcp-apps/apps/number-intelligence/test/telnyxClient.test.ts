@@ -5,6 +5,86 @@ import {
 } from "../src/telnyxClient.js";
 
 describe("TelnyxNumberLookupClient", () => {
+  it("normalizes every supported shared API-base form to exactly one /v2 segment", async () => {
+    const cases: Array<readonly [string, string]> = [];
+    for (const scheme of ["http", "https"] as const) {
+      for (const host of ["api.telnyx.test", "127.0.0.1:8787"] as const) {
+        for (const prefix of ["", "/telnyx", "/nested/telnyx"] as const) {
+          for (const version of ["", "/v2"] as const) {
+            for (const trailing of ["", "/", "///"] as const) {
+              for (const padding of ["", "  "] as const) {
+                cases.push([
+                  `${padding}${scheme}://${host}${prefix}${version}${trailing}${padding}`,
+                  `${scheme}://${host}${prefix}/v2`
+                ]);
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(cases).toHaveLength(144);
+
+    for (const [baseUrl, expectedBase] of cases) {
+      const calls: string[] = [];
+      const client = new TelnyxNumberLookupClient({
+        apiKey: "test_secret_key",
+        baseUrl,
+        fetch: async (url) => {
+          calls.push(String(url));
+          return new Response(JSON.stringify({ data: {} }), {
+            status: 200,
+            headers: { "content-type": "application/json" }
+          });
+        }
+      });
+
+      await client.lookupNumber("+13125550123");
+      expect(calls).toEqual([
+        `${expectedBase}/number_lookup/%2B13125550123?type=carrier&type=caller-name`
+      ]);
+    }
+  });
+
+  it("rejects every unsupported or ambiguous shared API-base form before fetch", () => {
+    const cases = [
+      "",
+      "not-a-url",
+      "/v2",
+      "//api.telnyx.test/v2",
+      "ftp://api.telnyx.test/v2",
+      "https://user:secret@api.telnyx.test/v2",
+      "https://api.telnyx.test/v2?tenant=one",
+      "https://api.telnyx.test/v2#fragment",
+      "https://api.telnyx.test/V2",
+      "https://api.telnyx.test/v1",
+      "https://api.telnyx.test/v3",
+      "https://api.telnyx.test/v2/v2",
+      "https://api.telnyx.test/v2/proxy",
+      "https://api.telnyx.test/proxy//nested",
+      "https://api.telnyx.test/v%32",
+      "https://api.telnyx.test/proxy%2Fnested",
+      "https://api.telnyx.test/%"
+    ];
+    let fetchCalls = 0;
+
+    for (const baseUrl of cases) {
+      expect(
+        () =>
+          new TelnyxNumberLookupClient({
+            apiKey: "test_secret_key",
+            baseUrl,
+            fetch: async () => {
+              fetchCalls += 1;
+              return new Response();
+            }
+          }),
+        baseUrl
+      ).toThrow(/Telnyx API base URL/);
+    }
+    expect(fetchCalls).toBe(0);
+  });
+
   it("constructs a read-only number lookup request with injected fetch", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetchImpl: typeof fetch = async (url, init) => {

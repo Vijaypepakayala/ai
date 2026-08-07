@@ -45,6 +45,12 @@ npm ci
 
 The hosted service accepts a resolved, per-user Telnyx API key only from the trusted public MCP proxy. Local `.env` files are supported by the app stdio/dev servers, and `.env.example` files are included in each app directory.
 
+`TELNYX_API_BASE_URL` is shared by both publicly hosted apps. It accepts either
+an HTTP(S) origin/prefix or the same value ending in `/v2`; both clients
+normalize these forms to exactly one trailing `/v2`. Credentials, query
+strings, fragments, and duplicate or case-ambiguous version segments are
+rejected before any request.
+
 ## Checks
 
 From `tools/mcp-apps`:

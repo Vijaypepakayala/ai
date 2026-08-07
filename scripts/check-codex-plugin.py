@@ -941,6 +941,48 @@ def validate_kit_skill_semantics(skill_texts: dict[str, str]) -> None:
 
     webhook_guide = WEBHOOKS_GUIDE_PATH.read_text(encoding="utf-8")
     sms_guide = SMS_GUIDE_PATH.read_text(encoding="utf-8")
+    for guide_label, guide_text in (
+        ("webhooks guide", webhook_guide),
+        ("SMS guide", sms_guide),
+    ):
+        unsafe_bracket_curl_lines = [
+            line.strip()
+            for line in guide_text.splitlines()
+            if re.match(r"^\s*curl\b", line)
+            and "[" in line
+            and "]" in line
+            and "--globoff" not in line
+            and re.search(r"(?:^|\s)-[^\s]*g", line) is None
+        ]
+        require(
+            not unsafe_bracket_curl_lines,
+            f"{guide_label} curl commands with bracketed query keys must "
+            "disable curl URL globbing",
+        )
+
+    python_handler = webhook_guide.split("## Python Webhook Handler", 1)[-1].split(
+        "## TypeScript Webhook Handler", 1
+    )[0]
+    typescript_handler = webhook_guide.split(
+        "## TypeScript Webhook Handler", 1
+    )[-1].split("## Common Failure Modes", 1)[0]
+    require(
+        'os.environ["TELNYX_PUBLIC_KEY"]' in webhook_guide
+        and "request.get_data" in python_handler
+        and "verify_telnyx_signature" in python_handler
+        and "base64.b64decode(signature_header, validate=True)" in webhook_guide
+        and "except (InvalidSignature, ValueError, TypeError, binascii.Error)" in webhook_guide
+        and "json.loads" in python_handler
+        and python_handler.find("if not signature") < python_handler.find("json.loads")
+        and "express.raw" in typescript_handler
+        and "if (!verifyTelnyxSignature(" in typescript_handler
+        and "JSON.parse" in typescript_handler
+        and typescript_handler.find("if (!verifyTelnyxSignature(")
+        < typescript_handler.find("JSON.parse")
+        and "app.use(express.json())" not in typescript_handler,
+        "webhook guide handlers must verify the timestamped raw request body "
+        "before parsing JSON or performing work",
+    )
     require(
         '"event_type": "message.finalized"' in webhook_guide
         and '"event_type": "message.delivered"' not in webhook_guide
@@ -952,6 +994,17 @@ def validate_kit_skill_semantics(skill_texts: dict[str, str]) -> None:
         and '"event_type": "message.delivered"' not in sms_guide,
         "messaging guides must model delivery outcomes as message.finalized "
         "with recipient status rather than a message.delivered event",
+    )
+    webhook_guide_lower = webhook_guide.lower()
+    require(
+        "within 2 seconds" in webhook_guide_lower
+        and "product- and configuration-specific" in webhook_guide_lower
+        and re.search(r"\bidempotency\s+key\b", webhook_guide_lower) is not None
+        and "within 10 seconds" not in webhook_guide_lower
+        and "after 5 failures" not in webhook_guide_lower
+        and "**attempt 2:** 1 minute" not in webhook_guide_lower,
+        "webhook guidance must use the API v2 two-second response deadline and "
+        "must not claim one universal retry schedule",
     )
 
 

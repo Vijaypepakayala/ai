@@ -30,7 +30,7 @@ Current scope:
 | Telnyx Number Lookup | Live read-only lookup: `GET /v2/number_lookup/{phone_number}?type=carrier&type=caller-name`. Always used. |
 | Owned-number config | Safe default live source: `GET /v2/phone_numbers?filter[phone_number]=...` to determine account ownership and missing assignment hints. |
 | Messaging readiness | Safe default live source: `GET /v2/phone_numbers/messaging` plus `GET /v2/messaging_profiles/{id}` when attached. The app does not surface sensitive profile secrets. |
-| Voice readiness | Safe default live source: `GET /v2/phone_numbers/voice` plus `GET /v2/connections/{id}` when attached. |
+| Voice readiness | Safe default live source: exact inventory lookup via `GET /v2/phone_numbers`, then `GET /v2/phone_numbers/{id}/voice` and `GET /v2/connections/{id}` when attached. |
 | Portability | Opt-in live source: `POST /v2/portability_checks` as an eligibility-only/read-first check. It does not create a port order. |
 | Reputation | Opt-in cached-only live source: `GET /v2/reputation/numbers/{phone_number}?fresh=false`. |
 
@@ -38,7 +38,7 @@ Current scope:
 
 ```bash
 TELNYX_API_KEY=replac...-key
-TELNYX_API_BASE_URL=https://api.telnyx.com   # optional
+TELNYX_API_BASE_URL=https://api.telnyx.com/v2 # optional; root form is also accepted
 NUMBER_INTELLIGENCE_INCLUDE_RAW=false        # optional; overridden per-call by include_raw
 ```
 
