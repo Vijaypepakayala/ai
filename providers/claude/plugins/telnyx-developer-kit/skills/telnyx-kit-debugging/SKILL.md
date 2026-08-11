@@ -3,8 +3,9 @@ name: telnyx-kit-debugging
 description: >-
   Triage Telnyx API errors and runtime failures fast: exact error-code
   meanings, retryability, silent-failure traps (TeXML attribute case, dead
-  webhooks, sender-registration filtering), and where to look when calls or messages fail
-  with no error at all.
+  webhooks, 10DLC filtering), and where to look when calls or messages fail
+  with no error at all. Do not use for pre-launch architecture or compliance
+  review when no runtime failure has occurred.
 metadata:
   author: telnyx
   product: platform
@@ -18,18 +19,18 @@ metadata:
 | Code | Meaning | Retry? |
 |---|---|---|
 | 10009 | Bad/missing API key | No — fix auth |
-| 40310 | Invalid `to` number | No — fix input |
-| 40305 | `from` number not on the sending messaging profile | No — fix provisioning |
-| 40312 | Messaging profile disabled | No — enable the profile, then retry deliberately |
-| 40300 | Blocked by STOP/org compliance | Never — compliance stop |
+| 40310 | Invalid `to` address | No — fix input |
+| 40305 | Invalid `from` address or sender/profile association | No — fix provisioning |
+| 40312 | Messaging profile disabled | No — enable the intended profile only after reviewing that change |
+| 40300 | Blocked due to STOP | Never — compliance stop |
 | 10004 | Missing required parameter | No — add the required field |
 | 10005 | Resource or URL not found | No — fix the ID or path |
-| HTTP 429 | Rate limited | Yes — after `Retry-After`, not before |
-| HTTP 5xx | Upstream failure | Yes — bounded backoff |
+| — | Rate limited | Yes — after `Retry-After` seconds, not before |
+| — | Upstream 5xx | Yes — bounded backoff |
 
-- The HTTP status for a structured Telnyx error can vary by endpoint and
-  validation stage. Branch on transport status and `errors[0].code`; never
-  infer retryability from the first two digits of the Telnyx code.
+- Do not infer the HTTP status from the Telnyx error-code prefix or hard-code
+  one status for every endpoint. Branch on both the response status and the
+  exact `errors[0].code`; the code carries the product-specific meaning.
 - SDK errors (Node telnyx@6): HTTP status is `err.status`; the Telnyx code
   is `err.error?.errors?.[0]?.code`. (`err.statusCode` and `err.rawErrors`
   are undefined — dead branches if you use them.)
@@ -39,21 +40,24 @@ metadata:
 - **TeXML attributes are case-sensitive and unknown ones are silently
   ignored** — `transcribe=`, `Timeout=`, `numdigits=`, `speechModel=` are
   dead at runtime. Same for unknown verbs: silently dropped. Validate
-  documents against the current TeXML Verbs & Nouns reference before
-  deploying; do not rely on a fixed verb count.
-- **Messages "sent" but never delivered**: use `message.finalized`
-  (`data.payload.to[0].status`) as final delivery truth. Treat the synchronous
-  send response and intermediate events as acceptance/progress, not delivery.
+  documents against the current Telnyx TeXML Verbs & Nouns reference before
+  deploying; do not rely on a fixed verb count. The current vocabulary
+  includes newer instructions such as `<AIGather>`, `<AIAssistant>`,
+  `<ConversationRelay>`, and `<HttpRequest>`.
+- **Messages "sent" but never delivered**: delivery outcome only exists in
+  the `message.finalized` webhook (`data.payload.to[0].status`) — there is
+  no `message.delivered` event. If you keyed on one, your retries never
+  fire.
 - **US SMS delivered=false with no API error**: check sender-specific carrier
-  readiness before blaming code — 10DLC for local long codes, toll-free
-  verification for toll-free senders, and carrier approval for short codes.
-- **Webhooks not arriving**: first check the application/profile default and
-  any endpoint-supported per-request override. Messaging send requests can set
-  `webhook_url`/`webhook_failover_url`, which take priority over the profile.
-  Then check the portal debugging tool for delivery attempts + your endpoint's
-  TLS and response time (slow 200 = retry storm).
-  API v2 events are JSON under `data.*`; TeXML POST callbacks are flat forms
-  and configured GET callbacks use query parameters.
+  readiness before blaming code. US local long-code SMS needs 10DLC campaign
+  linkage; toll-free traffic needs toll-free verification, while short-code
+  traffic needs carrier approval.
+- **Webhooks not arriving**: webhook URL is configured on the application/
+  profile (not per-request); inspect Webhook Deliveries for the primary and
+  configured failover URL, then check endpoint TLS and response time (slow
+  200 = retry storm). For API v2 JSON events, trace `data.id`; for flat TeXML
+  callbacks, trace `(CallSid, SequenceNumber)` and confirm the route parses its
+  configured form/query method rather than expecting `data.*`.
 - **Push notifications never arrive (WebRTC mobile)**: a push credential
   that exists but is not ATTACHED to the credential connection delivers
   nothing — set `ios_push_credential_id`/`android_push_credential_id` on
@@ -65,5 +69,10 @@ metadata:
   specific; `detail` names the offending field via `source.pointer`).
 - Emit metrics per error code, not per HTTP status — 40305 and 40310 are
   different bugs.
-- Keep an encrypted, access-controlled, retention-limited store of the minimum
-  webhook data needed for replay and delivery disputes.
+- Keep a replayable, access-controlled store of webhook envelopes (they are
+  the ground truth for delivery disputes), with personal content redacted or
+  encrypted and a defined retention/deletion policy.
+- Correlate event `data.id` (or TeXML `CallSid` + `SequenceNumber`),
+  `call_session_id`, `call_leg_id`, `command_id`, Telnyx request ID, and error
+  code. Monitor primary/failover delivery failures, queue age, and duplicates
+  instead of relying on unstructured logs.

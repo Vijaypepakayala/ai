@@ -76,8 +76,9 @@ product plugins (`telnyx-messaging`, `telnyx-voice`, `telnyx-numbers`,
 skills across curl, Python, JavaScript, Go, Java, and Ruby. Migrate existing
 Twilio apps with the `telnyx-twilio-migration` skill in `telnyx-platform`.
 
-For live API work, use the hosted Telnyx MCP server's discovery flow:
-`list_api_endpoints`, then `get_api_endpoint_schema`, then
-`invoke_api_endpoint` with arguments that match the returned schema. Never
-invent endpoints or fields. If a signature is uncertain, read the product skill
-or the bundled `sdk-reference` rather than guessing.
+For API documentation, use `telnyx__search` to find the right API, then
+`telnyx__retrieve` to get the full schema. Implement the operation in the
+application using that SDK or API contract. The public MCP catalog is
+documentation-only and does not execute catalog operations. Never invent
+endpoints or fields. If a signature is uncertain, read the product skill or the
+bundled `sdk-reference` rather than guessing.

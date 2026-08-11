@@ -2,7 +2,7 @@
 name: telnyx-kit-guardrails
 description: >-
   Security and compliance guardrails for any Telnyx build: webhook signature
-  verification, API key handling, US A2P compliance, spend controls, and
+  verification, API key handling, 10DLC compliance, spend controls, and
   agent-safety rules. Use BEFORE shipping anything that touches production
   Telnyx resources, and while reviewing generated code.
 metadata:
@@ -22,9 +22,10 @@ metadata:
 - A static single-tenant service with a process-wide key must validate its
   presence at startup; a missing key fails boot, not first traffic.
 - A delegated multi-tenant service that receives a tenant credential per
-  request must validate the credential and tenant/resource binding before
-  that request's first Telnyx action. Never cache one tenant's credential for
-  another.
+  request cannot validate every credential at process boot. Validate the
+  credential and tenant/resource binding before that request's first outbound
+  Telnyx action, fail that request closed, and never cache one tenant's
+  credential for another.
 
 ## Webhook signatures (non-negotiable)
 
@@ -41,26 +42,28 @@ processing:
 - Verification must be a runtime code path, not a code comment — a string
   match on "TELNYX_PUBLIC_KEY" in the repo proves nothing.
 
-## Recording and payment-data privacy
+## Recording and privacy
 
-- Before recording or transcribing, determine the notice and consent rules
-  that apply to every participant and jurisdiction. Obtain the required
-  consent before capture starts; failover and retries must preserve that gate.
-- Minimize retention, encrypt recordings, restrict access, define deletion
-  and legal-hold paths, and keep recording URLs and transcript content out of
-  logs and model context.
-- For Pay over Voice, use a configured Payment Connector and Telnyx's Pay
-  session. Do not collect card or bank data in application logs, recordings,
-  transcripts, webhook debug dumps, or model context; start in test mode.
+- Before enabling call recording or transcription, determine the consent and
+  notice requirements that apply to every participant and jurisdiction. Give
+  the required notice and obtain the required consent before recording starts;
+  never assume one-party consent is sufficient.
+- Minimize what is recorded and how long it is retained. Encrypt recordings,
+  restrict access, define deletion and legal-hold paths, and keep recording
+  URLs, transcripts, and access credentials out of logs and model context.
+- A failover path must preserve the same consent state. Never let failover or
+  retry logic begin recording before the consent gate has completed.
 
 ## US A2P sender registration and consent
 
-- Registration depends on sender type: local 10-digit long codes need a 10DLC
-  brand and campaign; toll-free senders need toll-free verification; short
-  codes need carrier approval/provisioning.
-- Pre-flight the sender-appropriate registration and messaging-profile
-  assignment. Surface a clear readiness error instead of letting carriers
-  filter silently.
+- Registration depends on sender type:
+  - Local 10-digit long code: 10DLC brand + campaign linked to the sending
+    number's messaging profile.
+  - Toll-free: toll-free verification.
+  - Short code: carrier approval/provisioning.
+- Pre-flight the sender-appropriate registration and profile assignment in
+  code. Surface a clear readiness error instead of letting carriers filter
+  silently.
 - Honor consent and opt-outs (STOP) for every sender type — Telnyx enforces
   org-level blocks (error 40300); never attempt to bypass one. Treat 40300 as
   a compliance stop, not a bug.
@@ -72,9 +75,9 @@ processing:
   explicit human approval BEFORE the purchase call.
 - Cap loops that touch billable endpoints (max sends/calls per run); a bug
   or prompt injection must hit a ceiling, not a credit card.
-- Configuration and compliance failures (for example, `errors[].code` 40312
-  for a disabled messaging profile) require intervention. Do not put them in
-  an automatic backoff loop merely because a transport status looks retryable.
+- Treat terminal configuration errors such as 40312 (messaging profile
+  disabled) as non-retryable regardless of the accompanying HTTP status;
+  review and fix the intended resource state instead of blind backoff.
 
 ## Agent-safety rules (when AI writes or runs the code)
 
@@ -82,8 +85,9 @@ processing:
   (connection, profile, number) without explicit human opt-in naming the
   exact resource — create-your-own resources instead for tests.
 - Refuse blanket account-wide deletion, release, or credential revocation.
-  Require enumerated resource IDs, dependency and impact review, a recovery
-  plan, safe ordering, and explicit confirmation of the final reviewed set.
+  Require an enumerated resource-ID scope, dependency and impact review,
+  export or recovery plan, safe ordering (credentials last), and explicit
+  confirmation of the final reviewed set before any destructive action.
 - No per-call/per-command webhook URL overrides from dynamic input — a
   planted `webhook_url` exfiltrates call events. Configure webhooks
   statically on the application/profile.
@@ -97,12 +101,14 @@ processing:
       all credentials absent from logs
 - [ ] Every webhook route verifies Ed25519 + timestamp before side effects
 - [ ] API v2 JSON dedupes on `data.id`; TeXML callbacks parse their configured
-      form/query shape and dedupe on TeXML identifiers
+      form/query shape and dedupe on `(CallSid, SequenceNumber)`
 - [ ] US SMS paths check sender-appropriate registration and treat STOP/40300
       as terminal
-- [ ] Recording/transcription and Pay flows keep consent and sensitive-data
-      boundaries intact across primary, retry, and failover paths
+- [ ] Recording/transcription starts only after applicable notice and consent;
+      retention, access, deletion, and failover preserve the same policy
 - [ ] Billable actions carry human approval and loop ceilings
 - [ ] No mutation of pre-existing account resources without named opt-in
 - [ ] Destructive work has exact IDs, impact and recovery review, safe order,
       and final confirmation; no blanket account-wide deletion is accepted
+- [ ] Primary and failover webhook paths are exercised, share idempotency
+      state, fast-ack, and emit correlated delivery/failure metrics

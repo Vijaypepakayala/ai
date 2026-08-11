@@ -25,6 +25,48 @@ on:
           - 'true'
 
 jobs:
+  claude-plugin-check:
+    name: Check — Claude Developer Kit contract
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Validate marketplace and Developer Kit plugin
+        run: |
+          npx --yes @anthropic-ai/claude-code@2.1.97 plugin validate .
+          npx --yes @anthropic-ai/claude-code@2.1.97 plugin validate providers/claude/plugins/telnyx-developer-kit
+      - name: Verify documentation-only MCP contract
+        run: |
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const manifest = require('./providers/claude/plugins/telnyx-developer-kit/.claude-plugin/plugin.json');
+          const builder = fs.readFileSync(
+            './providers/claude/plugins/telnyx-developer-kit/agents/telnyx-builder.md',
+            'utf8',
+          );
+          const mcp = manifest.mcpServers?.telnyx;
+
+          assert.deepEqual(
+            mcp,
+            { type: 'http', url: 'https://api.telnyx.com/v2/mcp' },
+            'The public MCP must use its OAuth flow and must not forward a configured API key',
+          );
+          assert.equal(manifest.userConfig, undefined, 'The plugin must not collect a Telnyx API key');
+          assert.match(manifest.description, /API documentation and focused read-only account tools/i);
+
+          for (const requiredValue of ['`telnyx__search`', '`telnyx__retrieve`']) {
+            assert.ok(builder.includes(requiredValue), `Builder guidance must include ${requiredValue}`);
+          }
+          assert.match(builder, /public MCP catalog is\s+documentation-only/i);
+          assert.doesNotMatch(builder, /invoke_api_endpoint/i);
+          assert.doesNotMatch(builder, /For live API work/i);
+          NODE
+
   skills-sync-check:
     name: Check — Skills in sync
     runs-on: ubuntu-latest

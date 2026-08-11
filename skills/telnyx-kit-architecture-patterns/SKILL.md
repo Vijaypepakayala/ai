@@ -24,9 +24,8 @@ Caller → Telnyx number → TeXML app: <Connect><Stream url="wss://you"/></Conn
 
 - Answer + stream in one TeXML response; keep the webhook fast (<2s) —
   heavy work happens on the WebSocket, never in the webhook handler.
-- Interruption handling: send `{"event":"clear"}` to flush queued audio when
-  the caller barges in. `stream_id` appears on server-to-client events but is
-  not part of the client clear frame.
+- Interruption handling: send `{"event":"clear","stream_id":...}` to flush
+  queued audio when the caller barges in.
 - For fully managed flows, `<Connect>` supports AI assistant nouns
   (AIAssistant, ConversationRelay) — no WebSocket server needed.
 - Scale unit = concurrent streams; keep per-call state keyed on
@@ -46,9 +45,8 @@ Caller → Telnyx number → TeXML app: <Connect><Stream url="wss://you"/></Conn
 - Queue sends (worker + retry with backoff on 429 reading `Retry-After`);
   never loop sends inline in a request handler.
 - Delivery truth: `message.finalized` webhook, outcome in
-  `data.payload.to[0].status`. Dedupe deliveries on the event `data.id` and
-  correlate business state on `data.payload.id`; do not collapse distinct
-  lifecycle events merely because they reference the same message.
+  `data.payload.to[0].status`. Key retries on the message `id`; make
+  handlers idempotent (webhooks redeliver).
 - Store conversation state server-side keyed on BOTH numbers (user × your
   number), with a TTL.
 

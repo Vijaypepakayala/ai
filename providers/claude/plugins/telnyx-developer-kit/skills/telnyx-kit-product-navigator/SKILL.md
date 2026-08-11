@@ -3,8 +3,10 @@ name: telnyx-kit-product-navigator
 description: >-
   Pick the right Telnyx product and API for a job before writing code. Use at
   the START of any Telnyx build: maps use cases (notifications, 2FA, voice
-  agents, contact centers, email, IoT, video, fax, Twilio migration) to the correct
-  product, API surface, and companion skill.
+  agents, contact centers, IoT, video, fax, Twilio migration) to the correct
+  product, API surface, and companion skill. Do not use for a fixed-design
+  compliance review, a runtime incident diagnosis, or a task where the Telnyx
+  product has already been selected.
 metadata:
   author: telnyx
   product: platform
@@ -13,25 +15,40 @@ metadata:
 
 # Telnyx Product Navigator
 
-Answer three questions, then jump to the row that matches. Install the named
-product plugin (`/plugin install telnyx-<product>@telnyx`) for deep guidance.
+Answer three questions, then jump to the row that matches.
+
+## Continue in your client
+
+- **Claude or Codex with the Telnyx Developer Kit installed**: Use the
+  installed `telnyx` hosted MCP: call
+  `list_api_endpoints` to discover the relevant operation, then call
+  `get_api_endpoint_schema` for the selected endpoint before writing a request.
+  The public catalog is documentation-only and cannot execute account API
+  operations. Use its exact schema to generate implementation guidance or SDK
+  code; use only a separately reviewed focused MCP App when account inspection
+  is required. Do not ask for or accept a Telnyx API key in chat. Do not install
+  another product plugin unless the user explicitly asks to add that separate
+  package after reviewing its capabilities.
+- **Cursor**: Matching canonical product skills are already bundled in the
+  flat Telnyx Cursor plugin. Load the relevant `telnyx-<product>-*` skill or
+  skills from the current installation; do not run Claude `/plugin install`
+  commands.
 
 ## Use case → product
 
-| You want to… | Product | API surface | Deep-dive |
+| You want to… | Product | API surface | Optional reference pack |
 |---|---|---|---|
-| Send SMS/MMS notifications | Messaging | `POST /v2/messages` | telnyx-messaging plugin |
+| Send SMS/MMS notifications or alerts | Messaging | `POST /v2/messages` | telnyx-messaging plugin |
 | Verify users by OTP (SMS, call, flash call) | Verify | `POST /v2/verifications/{sms\|call\|flashcall}` | telnyx-verify plugin |
 | Send WhatsApp messages | WhatsApp Business | WhatsApp API | telnyx-whatsapp plugin |
-| Send or receive email | Email | `/v2/email_messages` + inbox/domain APIs | telnyx-email plugin |
 | Serve voice menus / IVR from XML | TeXML | TeXML Application + XML docs | telnyx-platform plugin |
 | Drive calls imperatively from code (AI agents, dynamic flows) | Call Control | `POST /v2/calls` + per-call actions | telnyx-voice plugin |
 | Build a browser/mobile softphone | WebRTC SDKs | Credential connections + SDKs | telnyx-webrtc plugin |
 | Real-time media into your AI model | Media Streaming | `<Connect><Stream>` or Call Control streaming | telnyx-voice plugin |
 | Speech-to-text / text-to-speech | STT / TTS | OpenAI-compatible + TTS API | telnyx-stt / telnyx-tts plugins |
 | Buy, configure, port numbers | Numbers | `/v2/available_phone_numbers`, `/v2/number_orders`, porting | telnyx-numbers plugin |
-| Look up carrier/caller data for a number | Number Lookup | `GET /v2/number_lookup/{number}` | telnyx-numbers plugin |
-| Send/receive fax | Programmable Fax | Send: `POST /v2/faxes` with `connection_id`; receive: create with `POST /v2/fax_applications`, then assign the number using `PATCH /v2/phone_numbers/{id}` with the Fax Application ID as `connection_id` | telnyx-platform plugin |
+| Look up carrier/caller data for a number | Number Lookup | `GET /v2/number_lookup/{number}` | hosted catalog; Number Intelligence app |
+| Send/receive fax | Programmable Fax | `POST /v2/faxes` (requires `connection_id`) | telnyx-platform plugin |
 | Connect a PBX/SIP system | SIP Trunking | credential or IP connections | telnyx-platform plugin |
 | Cellular connectivity for devices | IoT SIM | `/v2/sim_cards` (eSIM buys use `amount`) | telnyx-platform plugin |
 | Video rooms | Video | `/v2/rooms` + top-level room resources | telnyx-webrtc plugin |
@@ -55,10 +72,17 @@ product plugin (`/plugin install telnyx-<product>@telnyx`) for deep guidance.
 - **Voice AI stack shortcut**: inbound number → TeXML `<Connect><Stream>` or
   Call Control streaming → your model → TTS back. Do not build a webhook
   server just to answer calls if `<Connect>` to an AI Assistant fits.
+- **Any voice flow that records or transcribes**: route through
+  telnyx-kit-guardrails before implementation so recording starts only after
+  applicable notice/consent and the retention, access, deletion, and failover
+  policy is explicit.
 - **Coming from Twilio**: product names map non-obviously (Messaging Service
   → messaging profile, TwiML App → TeXML Application, Verify Service →
-  Verify profile). The telnyx-twilio-migration skill has the complete
-  mapping plus automated scanners.
+  Verify profile). In the Telnyx Developer Kit, use `list_api_endpoints` for
+  the corresponding Messaging, TeXML, Verify, Numbers, or other Telnyx
+  operation, then inspect each selected operation with
+  `get_api_endpoint_schema`. Treat any separate
+  migration package as an explicit user choice, not an automatic dependency.
 
 ## Anti-patterns
 

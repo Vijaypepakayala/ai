@@ -2,7 +2,7 @@
 name: telnyx-kit-guardrails
 description: >-
   Security and compliance guardrails for any Telnyx build: webhook signature
-  verification, API key handling, US A2P compliance, spend controls, and
+  verification, API key handling, 10DLC compliance, spend controls, and
   agent-safety rules. Use BEFORE shipping anything that touches production
   Telnyx resources, and while reviewing generated code.
 metadata:

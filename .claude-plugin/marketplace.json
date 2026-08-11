@@ -12,7 +12,7 @@
     {
       "name": "telnyx-developer-kit",
       "source": "./providers/claude/plugins/telnyx-developer-kit",
-      "description": "The one-install starter kit: quickstart, product navigator, architecture patterns, security guardrails, error triage, Twilio-switch guide, the telnyx-builder agent, and the hosted Telnyx MCP server. Add product plugins (voice, messaging, ...) for depth.",
+      "description": "The one-install starter kit: quickstart, product navigator, architecture patterns, security guardrails, error triage, Twilio-switch guide, the telnyx-builder agent, and hosted Telnyx API documentation plus focused read-only account tools. Add product plugins (voice, messaging, ...) for depth.",
       "version": "0.2.0"
     },
     {
