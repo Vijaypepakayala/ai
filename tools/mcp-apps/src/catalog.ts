@@ -39,14 +39,14 @@ export const MCP_APP_DEFINITIONS: readonly McpAppDefinition[] = [
     name: "Number Intelligence",
     description: "Phone-number analysis using Telnyx Number Lookup and read-first readiness signals.",
     endpoint: "/apps/number-intelligence/mcp",
-    createServer: createNumberIntelligenceServer
+    createServer: () => createNumberIntelligenceServer({ hostedOAuthMetadata: true })
   },
   {
     slug: "voice-monitor",
     name: "Voice Monitor",
     description: "Read-only active-call monitoring, call timelines, call status, and recording discovery.",
     endpoint: "/apps/voice-monitor/mcp",
-    createServer: createVoiceMonitorServer
+    createServer: () => createVoiceMonitorServer({ hostedOAuthMetadata: true })
   }
 ] as const;
 

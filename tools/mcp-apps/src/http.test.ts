@@ -212,7 +212,7 @@ describe("hosted MCP Apps HTTP service", () => {
           method: "tools/call",
           params: {
             name: "number_intelligence_analyze",
-            arguments: { phone_number: "+15551234567" }
+            arguments: { confirm_billable_lookup: true, phone_number: "+15551234567" }
           }
         })
       }
@@ -664,7 +664,7 @@ describe("hosted MCP Apps HTTP service", () => {
         jsonrpc: "2.0",
         id: 1,
         method: "tools/call",
-        params: { name: "number_intelligence_analyze", arguments: { phone_number: "+155****4567" } }
+        params: { name: "number_intelligence_analyze", arguments: { confirm_billable_lookup: true, phone_number: "+155****4567" } }
       })
     });
 
@@ -1151,6 +1151,7 @@ describe("hosted MCP Apps HTTP service", () => {
         params: {
           name: "number_intelligence_analyze",
           arguments: {
+            confirm_billable_lookup: true,
             phone_number: "+155****4567",
             sources: ["lookup"]
           }
@@ -1248,7 +1249,7 @@ describe("hosted MCP Apps HTTP service", () => {
           method: "tools/call",
           params: {
             name: "number_intelligence_analyze",
-            arguments: { phone_number: "+155****4567", sources: ["lookup"] }
+            arguments: { confirm_billable_lookup: true, phone_number: "+155****4567", sources: ["lookup"] }
           }
         })
       });
@@ -1314,6 +1315,7 @@ describe("hosted MCP Apps HTTP service", () => {
         params: {
           name: "number_intelligence_batch_analyze",
           arguments: {
+            confirm_billable_lookup: true,
             numbers: ["+15551234567", "+15557654321"],
             sources: ["lookup"]
           }
@@ -1366,6 +1368,7 @@ describe("hosted MCP Apps HTTP service", () => {
         params: {
           name: "number_intelligence_analyze",
           arguments: {
+            confirm_billable_lookup: true,
             phone_number: "+15551234567",
             sources: ["lookup"]
           }

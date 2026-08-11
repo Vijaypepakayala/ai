@@ -1,6 +1,6 @@
 {
   "mcpServerURL": "https://api.telnyx.com/v2/mcp",
-  "reviewScope": "The four model-visible tools required by the release-candidate contract. The API catalog is documentation-only and cannot execute account API requests. The separately reviewed eight-tool app-only contract for Number Intelligence and Voice Monitor is intentionally excluded from this annotation-justification document. The internal billing app is not publicly federated.",
+  "reviewScope": "All four model-visible tools and all eight app-only tools in the release-candidate contract. The API catalog is documentation-only and cannot execute account API requests. Number Intelligence requires explicit confirmation for each billable lookup, Voice Monitor is read-only, and the internal billing app is not publicly federated.",
   "tools": [
     {
       "name": "get_api_endpoint_schema",
@@ -44,6 +44,94 @@
         "readOnlyHint": "Returns the Voice Monitor interface; its initial dashboard population is limited to bounded option and active-call reads.",
         "openWorldHint": "Opening and populating the bundled interface does not change public or third-party state.",
         "destructiveHint": "The opener and initial reads cannot alter calls or recordings."
+      }
+    },
+    {
+      "name": "number_intelligence_analyze",
+      "readOnlyHint": false,
+      "openWorldHint": true,
+      "destructiveHint": true,
+      "justification": {
+        "readOnlyHint": "Each invocation performs a billable Telnyx Number Lookup and can change the account balance, so it is not classified as read-only even though it does not mutate phone-number resources.",
+        "openWorldHint": "The tool accepts an arbitrary phone number and queries Telnyx and carrier intelligence outside the local MCP server, so it is open-world even though it does not publish or message anyone.",
+        "destructiveHint": "The lookup charge is an irreversible transaction. The server requires confirm_billable_lookup=true and the UI sends it only after the user presses the labelled billable control."
+      }
+    },
+    {
+      "name": "number_intelligence_batch_analyze",
+      "readOnlyHint": false,
+      "openWorldHint": true,
+      "destructiveHint": true,
+      "justification": {
+        "readOnlyHint": "Each unique accepted number causes a billable Telnyx Number Lookup and can change the account balance, so the batch is not read-only.",
+        "openWorldHint": "The batch accepts arbitrary phone numbers and queries Telnyx and carrier intelligence outside the local MCP server, so it is open-world even though it sends no communications.",
+        "destructiveHint": "Lookup charges cannot be undone. The server requires confirm_billable_lookup=true, executes sequentially, deduplicates inputs, and caps each batch at 25 accepted numbers."
+      }
+    },
+    {
+      "name": "voice_monitor_dashboard",
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false,
+      "justification": {
+        "readOnlyHint": "Builds the dashboard from bounded option discovery and active-call GET requests and cannot issue Call Control commands.",
+        "openWorldHint": "Reads only the authenticated user's private Telnyx account and does not contact call participants or publish data.",
+        "destructiveHint": "Cannot start, answer, transfer, hang up, record, or otherwise alter a call."
+      }
+    },
+    {
+      "name": "voice_monitor_list_options",
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false,
+      "justification": {
+        "readOnlyHint": "Lists bounded connection, application, and number options using GET requests only.",
+        "openWorldHint": "Reads private Telnyx account metadata and does not reach recipients or public systems.",
+        "destructiveHint": "Cannot create, update, delete, or activate any Telnyx resource."
+      }
+    },
+    {
+      "name": "voice_monitor_active_calls",
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false,
+      "justification": {
+        "readOnlyHint": "Lists active calls through bounded GET requests and exposes no call-control action.",
+        "openWorldHint": "Reads private account state without contacting participants or changing public state.",
+        "destructiveHint": "Cannot answer, transfer, bridge, record, or terminate calls."
+      }
+    },
+    {
+      "name": "voice_monitor_call_timeline",
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false,
+      "justification": {
+        "readOnlyHint": "Retrieves existing call events with bounded filters and does not enqueue work or change the call.",
+        "openWorldHint": "Reads private Telnyx call-event data only and does not publish or send anything.",
+        "destructiveHint": "Cannot modify events, calls, recordings, or account configuration."
+      }
+    },
+    {
+      "name": "voice_monitor_call_status",
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false,
+      "justification": {
+        "readOnlyHint": "Uses the read-only GET call-status endpoint and exposes no Call Control command.",
+        "openWorldHint": "Reads a private account-scoped call record and does not contact the call or any external party.",
+        "destructiveHint": "Cannot alter or terminate the selected call."
+      }
+    },
+    {
+      "name": "voice_monitor_recordings",
+      "readOnlyHint": true,
+      "openWorldHint": false,
+      "destructiveHint": false,
+      "justification": {
+        "readOnlyHint": "Searches existing recordings with GET requests only; sensitive URLs, transcripts, and metadata are redacted from output.",
+        "openWorldHint": "Reads private Telnyx recording metadata and does not publish, share, or transmit a recording.",
+        "destructiveHint": "Cannot create, start, stop, delete, or download a recording."
       }
     }
   ]

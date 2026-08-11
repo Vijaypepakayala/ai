@@ -153,7 +153,8 @@ ${MCP_APP_SECURITY_META}
 
       <form class="toolbar" id="analyzeForm">
         <input id="phoneInput" name="phone" autocomplete="tel" aria-label="Phone number" placeholder="+13125550123" />
-        <button id="analyzeButton" type="submit">Analyze</button>
+        <label class="checkbox"><input id="billableConfirmation" type="checkbox" required /> I approve one billable lookup for this number</label>
+        <button id="analyzeButton" type="submit">Run billable lookup</button>
       </form>
 
       <div class="billing-notice" role="note" aria-label="Billable lookup notice">
@@ -243,6 +244,7 @@ ${MCP_APP_SECURITY_META}
       const els = {
         form: document.getElementById("analyzeForm"),
         button: document.getElementById("analyzeButton"),
+        billableConfirmation: document.getElementById("billableConfirmation"),
         phone: document.getElementById("phoneInput"),
         error: document.getElementById("error"),
         empty: document.getElementById("emptyState"),
@@ -437,6 +439,10 @@ ${MCP_APP_SECURITY_META}
           setError("The host has not initialized the MCP App bridge yet.");
           return;
         }
+        if (!els.billableConfirmation.checked) {
+          setError("Confirm the billable Telnyx Number Lookup before continuing.");
+          return;
+        }
 
         els.button.disabled = true;
         els.button.textContent = "Analyzing";
@@ -444,7 +450,12 @@ ${MCP_APP_SECURITY_META}
         try {
           const result = await request("tools/call", {
             name: TOOL_NAME,
-            arguments: { phone_number: phoneNumber, include_raw: false, sources: selectedSources() }
+            arguments: {
+              confirm_billable_lookup: els.billableConfirmation.checked === true,
+              phone_number: phoneNumber,
+              include_raw: false,
+              sources: selectedSources()
+            }
           });
           const payload = extractResult(result);
           if (!payload) throw new Error("Tool returned no structured analysis.");
@@ -453,7 +464,8 @@ ${MCP_APP_SECURITY_META}
           setError(error instanceof Error ? error.message : "Analysis failed.");
         } finally {
           els.button.disabled = false;
-          els.button.textContent = "Analyze";
+          els.button.textContent = "Run billable lookup";
+          els.billableConfirmation.checked = false;
         }
       }
 

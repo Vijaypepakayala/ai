@@ -168,6 +168,66 @@ describe("Voice Monitor MCP server", () => {
     }
   });
 
+  it("keeps the combined dashboard response within the serialized output cap", async () => {
+    const oldFetch = globalThis.fetch;
+    globalThis.fetch = (async (input) => {
+      const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+      const data = path.endsWith("/call_control_applications")
+        ? Array.from({ length: 100 }, (_, index) => ({
+            id: `app_output_cap_${index}`,
+            application_name: `Output cap app ${index} ${"x".repeat(7000)}`
+          }))
+        : path.endsWith("/connections")
+          ? Array.from({ length: 100 }, (_, index) => ({
+              id: `connection_output_cap_${index}`,
+              connection_name: `Output cap connection ${index} ${"y".repeat(7000)}`
+            }))
+        : path.includes("/active_calls")
+          ? []
+          : [];
+      return new Response(JSON.stringify({ data }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    }) as typeof fetch;
+
+    try {
+      const server = createServer();
+      const tools = (server as unknown as {
+        _registeredTools: Record<string, {
+          handler: (
+            args: Record<string, unknown>,
+            extra?: { authInfo?: { token?: string } }
+          ) => Promise<Record<string, unknown>>;
+        }>;
+      })._registeredTools;
+      const result = await tools.voice_monitor_dashboard.handler(
+        { page_size: 100 },
+        { authInfo: { token: "KEY_TEST_DASHBOARD_OUTPUT_LIMIT" } }
+      );
+
+      expect(result).not.toHaveProperty("isError");
+      expect(result).toMatchObject({
+        structuredContent: {
+          active_calls: {
+            truncated_output: true,
+            total_active_calls: 0,
+            active_calls: [],
+            connections_consulted: expect.arrayContaining(["app_output_cap_0"]),
+            per_connection: expect.arrayContaining([
+              { connection_id: "app_output_cap_0", active_call_count: 0 }
+            ])
+          }
+        }
+      });
+      expect(new TextEncoder().encode(JSON.stringify(result)).byteLength).toBeLessThanOrEqual(
+        1024 * 1024
+      );
+    } finally {
+      globalThis.fetch = oldFetch;
+    }
+  });
+
   it("validates provider-specific voice fields against the advertised output schema", async () => {
     const oldKey = process.env.TELNYX_API_KEY;
     const oldFetch = globalThis.fetch;

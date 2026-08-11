@@ -43,21 +43,21 @@ const REVIEWED_PUBLIC_APP_TOOLS = JSON.parse(
 const fixtures = [
   {
     name: "number intelligence",
-    createServer: createNumberIntelligenceServer,
+    createServer: () => createNumberIntelligenceServer({ hostedOAuthMetadata: true }),
     toolCount: 2,
     resourceCount: 1,
     resourceBoundToolCount: 2
   },
   {
     name: "usage and cost",
-    createServer: createUsageCostServer,
+    createServer: () => createUsageCostServer({ hostedOAuthMetadata: true }),
     toolCount: 17,
     resourceCount: 3,
     resourceBoundToolCount: 3
   },
   {
     name: "voice monitor",
-    createServer: createVoiceMonitorServer,
+    createServer: () => createVoiceMonitorServer({ hostedOAuthMetadata: true }),
     toolCount: 6,
     resourceCount: 1,
     resourceBoundToolCount: 1
@@ -165,6 +165,32 @@ describe.each(fixtures)("$name MCP wire metadata", ({
       await server.close();
     }
   });
+});
+
+it("does not advertise hosted OAuth from the documented stdio server mode", async () => {
+  for (const createServer of [
+    createNumberIntelligenceServer,
+    createUsageCostServer,
+    createVoiceMonitorServer
+  ]) {
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    const server = createServer();
+    const client = new Client(
+      { name: "telnyx-stdio-metadata-test", version: "1.0.0" },
+      { capabilities: {} }
+    );
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      const tools = await client.listTools();
+      for (const tool of tools.tools) {
+        expect(tool).not.toHaveProperty("securitySchemes");
+        expect(tool._meta).not.toHaveProperty("securitySchemes");
+      }
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  }
 });
 
 it("keeps the two public app servers byte-for-byte aligned with the reviewed tool contract", async () => {

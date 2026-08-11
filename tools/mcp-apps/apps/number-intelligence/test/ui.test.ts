@@ -36,6 +36,12 @@ describe("Number Intelligence UI resource", () => {
     expect(NUMBER_INTELLIGENCE_UI_HTML).toContain(
       "Batch analysis accepts at most 25 unique numbers and can trigger up to 25 billable lookups; confirm the submitted count before running it."
     );
+    expect(NUMBER_INTELLIGENCE_UI_HTML).toContain('id="billableConfirmation"');
+    expect(NUMBER_INTELLIGENCE_UI_HTML).toContain("I approve one billable lookup for this number");
+    expect(NUMBER_INTELLIGENCE_UI_HTML).toContain("Run billable lookup");
+    expect(NUMBER_INTELLIGENCE_UI_HTML).toContain(
+      "confirm_billable_lookup: els.billableConfirmation.checked === true"
+    );
   });
 });
 

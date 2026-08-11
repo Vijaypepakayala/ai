@@ -152,6 +152,37 @@ EXPECTED_ROOT_TOOL_ANNOTATIONS = {
         "destructiveHint": False,
     },
 }
+EXPECTED_APP_TOOL_ANNOTATIONS = {
+    "number_intelligence_analyze": {
+        "readOnlyHint": False,
+        "openWorldHint": True,
+        "destructiveHint": True,
+    },
+    "number_intelligence_batch_analyze": {
+        "readOnlyHint": False,
+        "openWorldHint": True,
+        "destructiveHint": True,
+    },
+    **{
+        name: {
+            "readOnlyHint": True,
+            "openWorldHint": False,
+            "destructiveHint": False,
+        }
+        for name in (
+            "voice_monitor_dashboard",
+            "voice_monitor_list_options",
+            "voice_monitor_active_calls",
+            "voice_monitor_call_timeline",
+            "voice_monitor_call_status",
+            "voice_monitor_recordings",
+        )
+    },
+}
+EXPECTED_ALL_TOOL_ANNOTATIONS = {
+    **EXPECTED_ROOT_TOOL_ANNOTATIONS,
+    **EXPECTED_APP_TOOL_ANNOTATIONS,
+}
 REQUIRED_KEYWORDS = {
     "telnyx",
     "sms",
@@ -2063,15 +2094,15 @@ def validate_review_materials() -> None:
             if isinstance(tool, dict) and isinstance(tool.get("name"), str)
         }
         require(
-            set(indexed_tools) == set(EXPECTED_ROOT_TOOL_ANNOTATIONS),
-            "annotation justifications must cover exactly the four model-visible "
-            "MCP tools",
+            set(indexed_tools) == set(EXPECTED_ALL_TOOL_ANNOTATIONS),
+            "annotation justifications must cover all four model-visible and "
+            "eight app-only MCP tools",
         )
         require(
             len(indexed_tools) == len(tools),
             "annotation justifications must not contain duplicate or invalid tools",
         )
-        for tool_name, expected in EXPECTED_ROOT_TOOL_ANNOTATIONS.items():
+        for tool_name, expected in EXPECTED_ALL_TOOL_ANNOTATIONS.items():
             tool = indexed_tools.get(tool_name)
             if not isinstance(tool, dict):
                 continue

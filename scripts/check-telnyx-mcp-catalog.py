@@ -168,6 +168,12 @@ ANNOTATION_FIELDS = (
     "openWorldHint",
 )
 EXPECTED_MODEL_VISIBLE_TOOL_COUNT = 4
+EXPECTED_MODEL_VISIBLE_TOOL_NAMES = {
+    "list_api_endpoints",
+    "get_api_endpoint_schema",
+    "open_number_intelligence",
+    "open_voice_monitor",
+}
 EXPECTED_APP_ONLY_TOOL_COUNT = 8
 EXPECTED_APP_TOOL_WIRE_CONTRACT = {
     "securitySchemes": [{"type": "oauth2", "scopes": ["admin"]}],
@@ -176,12 +182,12 @@ EXPECTED_APP_TOOL_WIRE_CONTRACT = {
         "ui": {"visibility": ["app"]},
     },
 }
-EXPECTED_ENDPOINT_COUNT = 812
-EXPECTED_READ_COUNT = 382
-EXPECTED_WRITE_COUNT = 430
+EXPECTED_ENDPOINT_COUNT = 795
+EXPECTED_READ_COUNT = 376
+EXPECTED_WRITE_COUNT = 419
 MAX_HTTP_RESPONSE_BYTES = 8 * 1024 * 1024
 EXPECTED_CATALOG_NAMES_SHA256 = (
-    "b7337124b89bb50a7e388c81141ddb545af5de8434315f7f0b617f6b7da6780d"
+    "e51d44374f100aac822612fe46e92de88ec2387d040f5fce22b98b03a63b4753"
 )
 CATALOG_FIELDS = {
     "name",
@@ -337,6 +343,11 @@ def load_expected_root_annotations() -> dict[str, dict[str, bool]]:
         if not isinstance(tool, dict) or not isinstance(tool.get("name"), str):
             raise AuditError("annotation justifications contain an invalid tool")
         name = tool["name"]
+        # The same reviewer fixture now justifies every scanned tool. This
+        # loader owns only the model-visible half; app-only annotations are
+        # validated against app-tool-contract.json by the package validator.
+        if name not in EXPECTED_MODEL_VISIBLE_TOOL_NAMES:
+            continue
         if name in expected:
             raise AuditError(f"duplicate annotation justification: {name}")
         hints = {
@@ -3277,10 +3288,11 @@ def main() -> None:
     catalog = validate_catalog(catalog_payload)
     read_count = sum(tool["operation"] == "read" for tool in catalog)
     write_count = len(catalog) - read_count
-    catalog_names = "".join(
-        f"{name}\n" for name in sorted(tool["name"] for tool in catalog)
+    catalog_contract = "".join(
+        f"{tool['name']}\t{tool['operation']}\n"
+        for tool in sorted(catalog, key=lambda item: item["name"])
     ).encode("utf-8")
-    catalog_names_sha256 = hashlib.sha256(catalog_names).hexdigest()
+    catalog_names_sha256 = hashlib.sha256(catalog_contract).hexdigest()
     if (
         len(catalog),
         read_count,
@@ -3298,7 +3310,7 @@ def main() -> None:
         )
     if catalog_names_sha256 != EXPECTED_CATALOG_NAMES_SHA256:
         raise AuditError(
-            "catalog endpoint names changed: "
+            "catalog endpoint names or operation classifications changed: "
             f"actual sha256={catalog_names_sha256}, "
             f"expected sha256={EXPECTED_CATALOG_NAMES_SHA256}; "
             "review the added, removed, or renamed endpoints before updating"

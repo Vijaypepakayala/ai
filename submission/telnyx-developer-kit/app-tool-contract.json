@@ -33,7 +33,7 @@
     {
       "name": "number_intelligence_analyze",
       "title": "Analyze phone number",
-      "description": "Billable Number Intelligence summary. Each call performs a Telnyx Number Lookup that can incur lookup charges and affect account balance, then adds safe owned-number, messaging, and voice enrichment by default. Selected enrichments can make additional Telnyx API requests. The tool does not create, change, or delete phone-number resources. Portability and cached reputation are opt-in; reputation is always fresh=false.",
+      "description": "Billable Number Intelligence summary. Each call requires confirm_billable_lookup=true, performs one Telnyx Number Lookup that can incur lookup charges and affect account balance, then adds safe owned-number, messaging, and voice enrichment by default. Selected enrichments can make additional Telnyx API requests. The tool does not create, change, or delete phone-number resources. Portability and cached reputation are opt-in; reputation is always fresh=false.",
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": true,
@@ -44,7 +44,7 @@
     {
       "name": "number_intelligence_batch_analyze",
       "title": "Batch analyze phone numbers",
-      "description": "Billable batch Number Intelligence for pasted CSV/newline input. Each unique accepted number performs a Telnyx Number Lookup that can incur lookup charges and affect account balance; selected enrichments can make additional Telnyx API requests. Runs sequentially, caps the batch at 25 and output near 1 MiB, omits raw payloads before stopping later lookups, reports partial output explicitly, redacts outputs, and does not create, change, or delete phone-number resources.",
+      "description": "Billable batch Number Intelligence for pasted CSV/newline input. Each call requires confirm_billable_lookup=true; each unique accepted number performs one Telnyx Number Lookup that can incur lookup charges and affect account balance, and selected enrichments can make additional Telnyx API requests. Runs sequentially, caps the batch at 25 and output near 1 MiB, reports partial output explicitly, redacts outputs, and does not create, change, or delete phone-number resources.",
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": true,

@@ -16,12 +16,24 @@ const APP_TOOL_VISIBILITY = ["app"] as const;
 
 /**
  * MCP SDK 1.30 does not yet serialize the top-level securitySchemes extension.
- * Decorate tools/list on the transport boundary so every supported transport
- * emits the public hosted OAuth contract and its compatibility metadata mirror.
+ * Decorate tools/list on the hosted transport boundary so the connector emits
+ * its OAuth contract and compatibility metadata mirror without mislabeling stdio.
  */
 export class AppMcpServer extends McpServer {
+  constructor(
+    serverInfo: ConstructorParameters<typeof McpServer>[0],
+    options: ConstructorParameters<typeof McpServer>[1],
+    private readonly exposeHostedOAuthMetadata = false
+  ) {
+    super(serverInfo, options);
+  }
+
   override async connect(transport: Transport): Promise<void> {
-    await super.connect(new AppToolMetadataTransport(transport));
+    await super.connect(
+      this.exposeHostedOAuthMetadata
+        ? new AppToolMetadataTransport(transport)
+        : transport
+    );
   }
 }
 

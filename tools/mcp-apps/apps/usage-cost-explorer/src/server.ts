@@ -300,6 +300,8 @@ const storedPaymentSchema = {
 export interface UsageCostExplorerServerOptions {
   /** Test/local-development escape hatch; never enable this in hosted mode. */
   allowProcessLocalCreateMutations?: boolean;
+  /** Expose the hosted connector OAuth contract. Stdio uses TELNYX_API_KEY instead. */
+  hostedOAuthMetadata?: boolean;
 }
 
 export function createServer(
@@ -310,7 +312,8 @@ export function createServer(
       name: "telnyx-usage-cost-explorer",
       version: "0.1.0"
     },
-    { instructions: SERVER_INSTRUCTIONS }
+    { instructions: SERVER_INSTRUCTIONS },
+    options.hostedOAuthMetadata === true
   );
   const allowProcessLocalCreateMutations =
     resolveProcessLocalCreateMutationMode(options);
@@ -506,7 +509,11 @@ export function createServer(
           confirmation_token: reservation.value.stateConfirmationToken
         });
         return completeAfterToolResult(result, reservation.complete);
-      } catch {
+      } catch (error) {
+        if (telnyxAuthStatus(error)) {
+          reservation.release();
+          throw error;
+        }
         throw new Error(
           "Auto-recharge update outcome is unknown and the one-time confirmation remains blocked. Preferences may have changed. Verify current auto-recharge preferences and do not retry automatically."
         );
@@ -584,7 +591,11 @@ export function createServer(
           confirmation_token: preview.confirmation_token
         });
         return completeAfterToolResult(result, reservation.complete);
-      } catch {
+      } catch (error) {
+        if (telnyxAuthStatus(error)) {
+          reservation.release();
+          throw error;
+        }
         throw new Error(
           "Stored-payment transaction outcome is unknown and the one-time confirmation remains blocked. The saved payment method may have been charged. Verify transaction history in the Telnyx Portal or account balance and do not retry automatically."
         );
@@ -656,7 +667,11 @@ export function createServer(
           confirmation_token: reservation.value.stateConfirmationToken
         });
         return completeAfterToolResult(result, reservation.complete);
-      } catch {
+      } catch (error) {
+        if (telnyxAuthStatus(error)) {
+          reservation.release();
+          throw error;
+        }
         throw new Error(
           "Billing-group update outcome is unknown and the one-time confirmation remains blocked. The billing group may have changed. Verify the current billing group and do not retry automatically."
         );
@@ -729,7 +744,11 @@ export function createServer(
           confirmation_token: reservation.value.stateConfirmationToken
         });
         return completeAfterToolResult(result, reservation.complete);
-      } catch {
+      } catch (error) {
+        if (telnyxAuthStatus(error)) {
+          reservation.release();
+          throw error;
+        }
         throw new Error(
           "Billing-group creation outcome is unknown and the one-time confirmation remains blocked. Verify the billing-group list before trying again."
         );

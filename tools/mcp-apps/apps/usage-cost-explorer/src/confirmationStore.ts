@@ -29,6 +29,7 @@ type ConfirmationRecord<T> = {
 export interface ReservedConfirmation<T> {
   value: T;
   complete: () => void;
+  release: () => void;
 }
 
 export class SingleUseConfirmationStore<T> {
@@ -130,6 +131,7 @@ export class SingleUseConfirmationStore<T> {
     // Keeping the logical record in-flight blocks duplicate previews as well
     // as same-token replay. An ambiguous failure intentionally leaves a
     // short-lived tombstone; only a known success calls complete().
+    const originalExpiresAtMs = record.expiresAtMs;
     record.status = "in_flight";
     record.expiresAtMs = nowMs + this.ttlMs;
     let active = true;
@@ -139,6 +141,17 @@ export class SingleUseConfirmationStore<T> {
         if (!active) return;
         active = false;
         if (this.records.get(token) === record) this.records.delete(token);
+      },
+      release: () => {
+        if (!active) return;
+        active = false;
+        if (this.records.get(token) !== record) return;
+        if (originalExpiresAtMs <= this.now()) {
+          this.records.delete(token);
+          return;
+        }
+        record.status = "pending";
+        record.expiresAtMs = originalExpiresAtMs;
       }
     };
   }

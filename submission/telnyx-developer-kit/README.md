@@ -13,8 +13,8 @@ owner completes the gateway, readiness, Docker, OAuth, reviewer, production-scan
 recording, identity, and domain-verification gates below.
 
 The fixtures were reconciled with the hardened local contract on 2026-08-05:
-four model-visible tools, eight app-only tools, two UI resources, and 812
-documentation-only API catalog endpoints (382 read and 430 write). The billing app remains implemented
+four model-visible tools, eight app-only tools, two UI resources, and 795
+documentation-only API catalog endpoints (376 read and 419 write). The billing app remains implemented
 internally but is not part of public federation.
 
 ## Ready in this branch
@@ -32,9 +32,14 @@ internally but is not part of public federation.
 - OAuth metadata, titles, descriptions, schemas, safety annotations, Origin
   protection, query-string override blocking, and the OpenAI challenge route
   are implemented locally.
+- Telnyx OAuth currently advertises only the `admin` scope. The connector asks
+  for that documented scope, but the public server still enforces the much
+  narrower reviewed tool allowlist: documentation inspection, bounded voice
+  reads, and explicitly confirmed Number Intelligence lookups. Reviewer consent
+  copy must disclose the broad OAuth grant until Telnyx ships granular scopes.
 - Readiness fails closed if a prohibited endpoint, incorrect tool contract,
   missing app service, missing resource, or missing service credential appears.
-- The local catalog is pinned to 812 names using a reviewed SHA-256 digest.
+- The local catalog is pinned to 795 endpoint name/operation pairs using a reviewed SHA-256 digest.
 
 The public listing uses [Telnyx Support](https://support.telnyx.com), the
 [Telnyx Privacy Policy](https://telnyx.com/privacy-policy), and the
@@ -75,8 +80,8 @@ executor or app-owned tool.
 The package validator checks public metadata, skill resolution and canonical
 bytes, review-case coverage, annotation justifications, Markdown structure,
 credential patterns, and the official PNG asset. The catalog checker pins all
-four model-visible tools, eight app-only tools, two UI resources, 812 endpoint
-names, the 382/430 operation split, and explicit endpoint annotations.
+four model-visible tools, eight app-only tools, two UI resources, 795 endpoint
+names, the 376/419 operation split, and explicit endpoint annotations.
 
 ## Release-owner gates
 
@@ -96,9 +101,10 @@ Complete every item immediately before submission:
    private-network access.
 7. Run clean-client PKCE OAuth tests with reviewer credentials, perform only the
    approved app reads, verify the catalog remains documentation-only, and
-   revoke the test grant afterward.
+   revoke the test grant afterward. Confirm the consent screen clearly states
+   that Telnyx currently offers only the broad `admin` OAuth scope.
 8. Run Claude and Codex production scans after deployment. Confirm the scanned
-   contract is exactly 4 model-visible / 8 app-only / 2 resources / 812 catalog
+   contract is exactly 4 model-visible / 8 app-only / 2 resources / 795 catalog
    endpoints and that query parameters cannot override it.
 9. Upload the final skill tree and require passing safety and security scans for
    all four skills.
@@ -127,7 +133,7 @@ federates the billing app, accepts query-string catalog overrides, or returns
 - App-only discovery returns exactly two Number Intelligence tools and six
   Voice Monitor tools with OAuth security mirrors and app-only visibility.
 - `resources/list` and `resources/read` expose only the two approved UI URIs.
-- The public catalog contains exactly 812 endpoints, split 382 read / 430 write,
+- The public catalog contains exactly 795 endpoints, split 376 read / 419 write,
   none belongs to the prohibited resource families, every entry is marked
   `execution: catalog_only`, and no invocation tool is named.
 - Schema inspection returns the matching resource, operation, tags, strict
@@ -140,13 +146,15 @@ federates the billing app, accepts query-string catalog overrides, or returns
 
 ## Latest internal review evidence
 
-As of 2026-08-07, the latest documentation-only contract passes 129 Python
+As of 2026-08-11, the latest documentation-only contract passes 214 Python
 proxy/auth/contract tests and 114 Node MCP tests, plus ESLint, TypeScript build,
 and MCP bundle validation/signing. The MCP Apps service passes typecheck, build,
 211 root tests, and its 39 Number Intelligence, 70 internal billing, and 37
 Voice Monitor workspace tests. A local Streamable HTTP test
-observed 4 model-visible tools, 8 app-only tools, 2 resources, successful deep
-readiness, the 812-entry catalog-only contract, and auth, Origin, and query
+observed the hardened proxy accept exactly 8 app-only tools and 2 resources
+from the real #323 MCP Apps service. The broader local contract also observed
+4 model-visible tools, successful deep
+readiness, the 795-entry catalog-only contract, and auth, Origin, and query
 guards. Production dependency audits report zero known vulnerabilities. A local
 Docker image build and container smoke test pass; hosted Docker CI is still a
 release gate. Five positive and three negative ephemeral
@@ -155,7 +163,7 @@ safety criteria recorded in `codex-local-eval.md`. Desktop and mobile iframe
 rendering also pass the local bridge, initial-state, control, overflow, and
 console checks. No Telnyx API mutation or billable call was made.
 
-This fixture update does not change that evidence or make production ready. The
+These local results do not make the live deployment production ready. The
 deployment, gateway challenge route, `/ready`, Docker CI, clean OAuth, and live
 Claude/Codex scans remain mandatory release-owner gates.
 

@@ -818,6 +818,74 @@ describe("Usage Cost Explorer MCP server", () => {
     }
   });
 
+  it.each([401, 403])(
+    "preserves the internal %i auth marker from a guarded mutation",
+    async (status) => {
+      const oldFetch = globalThis.fetch;
+      const currentPrefs = {
+        id: "arp_auth",
+        threshold_amount: "10.00",
+        recharge_amount: "25.00",
+        enabled: true,
+        invoice_enabled: false,
+        preference: "credit_paypal"
+      };
+      let rejectMutationForAuth = true;
+      globalThis.fetch = (async (_url, init) =>
+        init?.method === "PATCH" && rejectMutationForAuth
+          ? new Response(JSON.stringify({ errors: [{ title: "Denied" }] }), {
+              status,
+              headers: { "content-type": "application/json" }
+            })
+          : new Response(JSON.stringify({ data: currentPrefs }), {
+              status: 200,
+              headers: { "content-type": "application/json" }
+            })) as typeof fetch;
+
+      try {
+        const server = createServer();
+        const tools = (server as unknown as {
+          _registeredTools: Record<string, {
+            handler: (
+              args: Record<string, unknown>,
+              extra?: { authInfo?: { token?: string } }
+            ) => Promise<Record<string, unknown>>;
+          }>;
+        })._registeredTools;
+        const requestedThreshold = status === 401 ? "11.00" : "12.00";
+        const owner = {
+          authInfo: { token: `KEY_guarded_auth_owner_${status}_1234567890` }
+        };
+        const preview = await tools.billing_preview_auto_recharge_update.handler(
+          { threshold_amount: requestedThreshold },
+          owner
+        );
+        const confirmationToken = (
+          preview.structuredContent as { confirmation_token: string }
+        ).confirmation_token;
+        const result = await tools.billing_update_auto_recharge_preferences.handler(
+          { threshold_amount: requestedThreshold, confirmation_token: confirmationToken },
+          owner
+        );
+
+        expect(result).toMatchObject({
+          isError: true,
+          _meta: { "telnyx/internal-http-status": status }
+        });
+        expect(JSON.stringify(result)).not.toMatch(/outcome is unknown/i);
+        rejectMutationForAuth = false;
+        await expect(
+          tools.billing_update_auto_recharge_preferences.handler(
+            { threshold_amount: requestedThreshold, confirmation_token: confirmationToken },
+            owner
+          )
+        ).resolves.toMatchObject({ structuredContent: { data: currentPrefs } });
+      } finally {
+        globalThis.fetch = oldFetch;
+      }
+    }
+  );
+
   it("consumes a billing-group rename preview before concurrent PATCH attempts", async () => {
     const oldFetch = globalThis.fetch;
     let patchCount = 0;

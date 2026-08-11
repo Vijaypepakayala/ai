@@ -210,13 +210,21 @@ const timeFilterSchema = {
   occurred_at_lte: optionalString.describe("Optional ISO end time (inclusive).")
 };
 
-export function createServer(): McpServer {
+export interface VoiceMonitorServerOptions {
+  /** Expose the hosted connector OAuth contract. Stdio uses TELNYX_API_KEY instead. */
+  hostedOAuthMetadata?: boolean;
+}
+
+export function createServer(
+  options: VoiceMonitorServerOptions = {}
+): McpServer {
   const server = new AppMcpServer(
     {
       name: "telnyx-voice-monitor",
       version: "0.1.0"
     },
-    { instructions: SERVER_INSTRUCTIONS }
+    { instructions: SERVER_INSTRUCTIONS },
+    options.hostedOAuthMetadata === true
   );
 
   registerReadTool(
@@ -229,7 +237,7 @@ export function createServer(): McpServer {
     async (service, input) => {
       const options = await service.listOptions({ pageNumber: input.page_number, pageSize: input.page_size });
       const active_calls = await service.activeCalls({ pageNumber: input.page_number, pageSize: input.page_size });
-      return { options, active_calls };
+      return fitDashboardResult({ options, active_calls });
     },
     UI_RESOURCE_URI
   );
@@ -463,6 +471,147 @@ function toolResult(
   };
   if (serializedBytes(structuredOnlyResult) <= MAX_TOOL_RESULT_BYTES) return structuredOnlyResult;
   throw new Error(TOOL_OUTPUT_LIMIT_ERROR);
+}
+
+type DashboardResult = z.infer<typeof dashboardResultSchema>;
+type DashboardOptionKey = keyof DashboardResult["options"]["options"];
+
+function fitDashboardResult(result: unknown): DashboardResult {
+  const parsed = dashboardResultSchema.parse(sanitizeVoiceMonitorValue(result));
+  if (structuredOnlyToolResultFits(parsed)) return parsed;
+
+  const outputWarning = {
+    source: "voice_monitor_dashboard",
+    message: "Dashboard rows were truncated to stay within the MCP tool output limit."
+  };
+  let candidate: DashboardResult = {
+    ...parsed,
+    active_calls: {
+      ...parsed.active_calls,
+      active_calls: [],
+      truncated_output: true,
+      warnings: [...parsed.active_calls.warnings, outputWarning]
+    }
+  };
+
+  if (!fullToolResultFits(candidate)) {
+    candidate = {
+      ...candidate,
+      active_calls: {
+        ...candidate.active_calls,
+        connections_consulted: [],
+        per_connection: [],
+        warnings: [outputWarning]
+      },
+      options: {
+        ...candidate.options,
+        warnings: [outputWarning]
+      }
+    };
+  }
+
+  const optionKeys: DashboardOptionKey[] = [
+    "connections",
+    "call_control_applications",
+    "active_call_targets",
+    "voice_numbers"
+  ];
+  while (!fullToolResultFits(candidate)) {
+    const key = optionKeys.reduce<DashboardOptionKey | undefined>((largest, current) => {
+      if (!candidate.options.options[current].length) return largest;
+      if (!largest) return current;
+      return candidate.options.options[current].length >
+        candidate.options.options[largest].length
+        ? current
+        : largest;
+    }, undefined);
+    if (!key) break;
+    candidate = {
+      ...candidate,
+      options: {
+        ...candidate.options,
+        options: {
+          ...candidate.options.options,
+          [key]: candidate.options.options[key].slice(
+            0,
+            Math.floor(candidate.options.options[key].length / 2)
+          )
+        }
+      }
+    };
+  }
+
+  if (!fullToolResultFits(candidate)) {
+    throw new Error(TOOL_OUTPUT_LIMIT_ERROR);
+  }
+
+  let low = 0;
+  let high = parsed.active_calls.active_calls.length;
+  while (low < high) {
+    const midpoint = Math.ceil((low + high) / 2);
+    const withCalls: DashboardResult = {
+      ...candidate,
+      active_calls: retainedActiveCalls(
+        candidate.active_calls,
+        parsed.active_calls,
+        parsed.active_calls.active_calls.slice(0, midpoint)
+      )
+    };
+    if (fullToolResultFits(withCalls)) low = midpoint;
+    else high = midpoint - 1;
+  }
+
+  return {
+    ...candidate,
+    active_calls: retainedActiveCalls(
+      candidate.active_calls,
+      parsed.active_calls,
+      parsed.active_calls.active_calls.slice(0, low)
+    )
+  };
+}
+
+function retainedActiveCalls(
+  candidate: DashboardResult["active_calls"],
+  original: DashboardResult["active_calls"],
+  calls: DashboardResult["active_calls"]["active_calls"]
+): DashboardResult["active_calls"] {
+  let remaining = calls.length;
+  const perConnection = original.per_connection.map((entry) => {
+    const activeCallCount = Math.min(entry.active_call_count, remaining);
+    remaining -= activeCallCount;
+    return { connection_id: entry.connection_id, active_call_count: activeCallCount };
+  });
+  return {
+    ...candidate,
+    connections_consulted: original.connections_consulted,
+    total_active_calls: calls.length,
+    active_calls: calls,
+    per_connection: perConnection,
+    truncated_output: true
+  };
+}
+
+function fullToolResultFits(structuredContent: Record<string, unknown>): boolean {
+  const compactText = JSON.stringify(structuredContent);
+  return serializedBytes({
+    content: [{ type: "text", text: compactText }],
+    structuredContent
+  }) <= MAX_TOOL_RESULT_BYTES;
+}
+
+function structuredOnlyToolResultFits(
+  structuredContent: Record<string, unknown>
+): boolean {
+  return serializedBytes({
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({ notice: "The full result is available in structuredContent." })
+      }
+    ],
+    structuredContent
+  }) <= MAX_TOOL_RESULT_BYTES;
 }
 
 function serializedBytes(value: unknown): number {

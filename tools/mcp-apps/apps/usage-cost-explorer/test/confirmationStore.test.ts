@@ -104,4 +104,22 @@ describe("SingleUseConfirmationStore", () => {
 
     expect(store.issue({ logical: "rename" }).token).toBe("token-2");
   });
+
+  it("makes a reservation retryable after a known precondition failure", () => {
+    let nowMs = 0;
+    const store = new SingleUseConfirmationStore<string>({
+      ttlMs: 1000,
+      now: () => nowMs
+    });
+    const issued = store.issue("retryable");
+    nowMs = 900;
+    const first = store.reserveIf(issued.token, () => true);
+    first?.release();
+
+    const second = store.reserveIf(issued.token, () => true);
+    expect(second?.value).toBe("retryable");
+    second?.release();
+    nowMs = 1000;
+    expect(store.reserveIf(issued.token, () => true)).toBeUndefined();
+  });
 });

@@ -69,6 +69,79 @@ describe("Voice Monitor initial result gate", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(loadFallback).toHaveBeenCalledOnce();
   });
+
+  it("rejects a late launch result after fallback execution has started", async () => {
+    vi.useFakeTimers();
+    let resolveFallback: (() => void) | undefined;
+    const loadFallback = vi.fn(
+      () => new Promise<void>((resolve) => { resolveFallback = resolve; })
+    );
+    const render = vi.fn();
+    const gate = createGate({
+      delayMs: 1000,
+      isUsable: (payload) => Boolean(payload),
+      render,
+      loadFallback,
+      onFallbackError: vi.fn()
+    });
+
+    gate.scheduleFallback();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(loadFallback).toHaveBeenCalledOnce();
+    expect(gate.accept({ options: {}, active_calls: {} })).toBe(false);
+    expect(render).not.toHaveBeenCalled();
+    resolveFallback?.();
+  });
+
+  it("accepts a valid launch result after a failed fallback", async () => {
+    vi.useFakeTimers();
+    const render = vi.fn();
+    const onFallbackError = vi.fn();
+    const gate = createGate({
+      delayMs: 1000,
+      isUsable: (payload) => Boolean(payload),
+      render,
+      loadFallback: () => Promise.reject(new Error("fallback failed")),
+      onFallbackError
+    });
+
+    gate.scheduleFallback();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(onFallbackError).toHaveBeenCalledOnce();
+    const payload = { options: {}, active_calls: {} };
+    expect(gate.accept(payload)).toBe(true);
+    expect(render).toHaveBeenCalledWith(payload);
+  });
+
+  it("buffers a valid launch result while fallback is in flight and renders it if fallback fails", async () => {
+    vi.useFakeTimers();
+    let rejectFallback: ((error: Error) => void) | undefined;
+    const render = vi.fn();
+    const onFallbackError = vi.fn();
+    const gate = createGate({
+      delayMs: 1000,
+      isUsable: (payload) => Boolean(payload),
+      render,
+      loadFallback: () => new Promise<void>((_resolve, reject) => {
+        rejectFallback = reject;
+      }),
+      onFallbackError
+    });
+
+    gate.scheduleFallback();
+    await vi.advanceTimersByTimeAsync(1000);
+    const payload = { options: {}, active_calls: {} };
+    expect(gate.accept(payload)).toBe(false);
+    expect(render).not.toHaveBeenCalled();
+
+    rejectFallback?.(new Error("fallback failed"));
+    await vi.runAllTimersAsync();
+
+    expect(render).toHaveBeenCalledWith(payload);
+    expect(onFallbackError).not.toHaveBeenCalled();
+  });
 });
 
 describe("Voice Monitor UI initial-result integration", () => {

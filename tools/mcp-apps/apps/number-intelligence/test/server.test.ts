@@ -61,6 +61,12 @@ describe("Number Intelligence MCP server metadata", () => {
 
     try {
       const tools = Object.fromEntries((await client.listTools()).tools.map((tool) => [tool.name, tool]));
+      expect(tools.number_intelligence_analyze?.inputSchema.required).toContain(
+        "confirm_billable_lookup"
+      );
+      expect(tools.number_intelligence_batch_analyze?.inputSchema.required).toContain(
+        "confirm_billable_lookup"
+      );
       expect(Object.keys((tools.number_intelligence_analyze?.outputSchema?.properties ?? {}))).toEqual(
         expect.arrayContaining(["input", "normalized", "health", "signals", "recommended_actions"])
       );
@@ -135,6 +141,7 @@ describe("Number Intelligence MCP server metadata", () => {
       const result = await client.callTool({
         name: "number_intelligence_analyze",
         arguments: {
+          confirm_billable_lookup: true,
           phone_number: "+13125550123",
           include_raw: true,
           sources: ["lookup"]
@@ -205,6 +212,7 @@ describe("Number Intelligence MCP server metadata", () => {
 
         const result = await tools.number_intelligence_analyze.handler(
           {
+            confirm_billable_lookup: true,
             phone_number: "+15551234567",
             sources: ["lookup"]
           },
@@ -267,6 +275,7 @@ describe("Number Intelligence MCP server metadata", () => {
 
       const result = await tools.number_intelligence_analyze.handler(
         {
+          confirm_billable_lookup: true,
           phone_number: "+15551234567",
           sources: ["lookup", "owned"]
         },
@@ -317,6 +326,7 @@ describe("Number Intelligence MCP server metadata", () => {
 
       const result = await tools.number_intelligence_analyze.handler(
         {
+          confirm_billable_lookup: true,
           phone_number: "+15551234567",
           sources: ["lookup"]
         },
@@ -371,7 +381,7 @@ describe("Number Intelligence MCP server metadata", () => {
       )._registeredTools;
 
       const result = await tools.number_intelligence_analyze.handler(
-        { phone_number: "+15551234567", include_raw: true, sources: ["lookup"] },
+        { confirm_billable_lookup: true, phone_number: "+15551234567", include_raw: true, sources: ["lookup"] },
         { authInfo: { token: "KEY_TEST_OUTPUT_LIMIT" } }
       );
 
@@ -422,7 +432,7 @@ describe("Number Intelligence MCP server metadata", () => {
       )._registeredTools;
 
       const result = await tools.number_intelligence_analyze.handler(
-        { phone_number: "+15551234567", include_raw: true, sources: ["lookup"] },
+        { confirm_billable_lookup: true, phone_number: "+15551234567", include_raw: true, sources: ["lookup"] },
         { authInfo: { token: "KEY_TEST_DUPLICATED_OUTPUT_LIMIT" } }
       );
 

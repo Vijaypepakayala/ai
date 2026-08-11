@@ -157,13 +157,21 @@ const BILLABLE_LOOKUP_ANNOTATIONS = {
 const SERVER_INSTRUCTIONS =
   "Use Streamable HTTP with Accept: application/json, text/event-stream and preserve Mcp-Session-Id. Discovery and UI resource reads do not require a user Telnyx credential; tools/call requires authenticated Telnyx access resolved by the hosting MCP service.";
 
-export function createServer(): McpServer {
+export interface NumberIntelligenceServerOptions {
+  /** Expose the hosted connector OAuth contract. Stdio uses TELNYX_API_KEY instead. */
+  hostedOAuthMetadata?: boolean;
+}
+
+export function createServer(
+  options: NumberIntelligenceServerOptions = {}
+): McpServer {
   const server = new AppMcpServer(
     {
       name: "telnyx-number-intelligence",
       version: "0.2.0"
     },
-    { instructions: SERVER_INSTRUCTIONS }
+    { instructions: SERVER_INSTRUCTIONS },
+    options.hostedOAuthMetadata === true
   );
 
   const envIncludeRawDefault = process.env.NUMBER_INTELLIGENCE_INCLUDE_RAW === "true";
@@ -174,10 +182,15 @@ export function createServer(): McpServer {
     {
       title: "Analyze phone number",
       description:
-        "Billable Number Intelligence summary. Each call performs a Telnyx Number Lookup that can incur lookup charges and affect account balance, then adds safe owned-number, messaging, and voice enrichment by default. Selected enrichments can make additional Telnyx API requests. The tool does not create, change, or delete phone-number resources. Portability and cached reputation are opt-in; reputation is always fresh=false.",
+        "Billable Number Intelligence summary. Each call requires confirm_billable_lookup=true, performs one Telnyx Number Lookup that can incur lookup charges and affect account balance, then adds safe owned-number, messaging, and voice enrichment by default. Selected enrichments can make additional Telnyx API requests. The tool does not create, change, or delete phone-number resources. Portability and cached reputation are opt-in; reputation is always fresh=false.",
       annotations: BILLABLE_LOOKUP_ANNOTATIONS,
       outputSchema: numberIntelligenceResultSchema,
       inputSchema: {
+        confirm_billable_lookup: z
+          .literal(true)
+          .describe(
+            "Required confirmation that the user understands this request performs one billable Telnyx Number Lookup."
+          ),
         phone_number: z.string().min(1).describe("Phone number to analyze. E.164 is preferred."),
         include_raw: z
           .boolean()
@@ -223,10 +236,15 @@ export function createServer(): McpServer {
     {
       title: "Batch analyze phone numbers",
       description:
-        "Billable batch Number Intelligence for pasted CSV/newline input. Each unique accepted number performs a Telnyx Number Lookup that can incur lookup charges and affect account balance; selected enrichments can make additional Telnyx API requests. Runs sequentially, caps the batch at 25 and output near 1 MiB, omits raw payloads before stopping later lookups, reports partial output explicitly, redacts outputs, and does not create, change, or delete phone-number resources.",
+        "Billable batch Number Intelligence for pasted CSV/newline input. Each call requires confirm_billable_lookup=true; each unique accepted number performs one Telnyx Number Lookup that can incur lookup charges and affect account balance, and selected enrichments can make additional Telnyx API requests. Runs sequentially, caps the batch at 25 and output near 1 MiB, reports partial output explicitly, redacts outputs, and does not create, change, or delete phone-number resources.",
       annotations: BILLABLE_LOOKUP_ANNOTATIONS,
       outputSchema: numberIntelligenceBatchResultSchema,
       inputSchema: {
+        confirm_billable_lookup: z
+          .literal(true)
+          .describe(
+            "Required confirmation that the user approves up to one billable Telnyx Number Lookup per unique accepted number, capped at 25."
+          ),
         numbers: z
           .union([z.string().min(1), z.array(z.string().min(1))])
           .describe("Phone numbers as pasted CSV/newline text or an array of strings. First CSV column is used."),

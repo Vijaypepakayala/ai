@@ -61,6 +61,7 @@ npm run dev --workspace @telnyx-mcp-apps/number-intelligence
 The server is built on the official `@modelcontextprotocol/sdk` and registers MCP Apps metadata via `@modelcontextprotocol/ext-apps/server`. It runs over stdio.
 
 - tool: `number_intelligence_analyze`
+  - `confirm_billable_lookup` must be `true`; requests without explicit confirmation fail before any Telnyx lookup
   - `phone_number` string, required
   - `include_raw` boolean, optional (defaults to `NUMBER_INTELLIGENCE_INCLUDE_RAW` env, else `false`)
   - `sources` string array, optional. Supported values: `lookup`, `owned`, `portability`, `messaging`, `voice`, `reputation`.
@@ -70,6 +71,7 @@ The server is built on the official `@modelcontextprotocol/sdk` and registers MC
   - tool description carries `_meta.ui.resourceUri = "ui://number-intelligence/index.html"`
   - tool result includes `structuredContent` with the full analysis object so MCP App hosts can hand it to the UI
 - tool: `number_intelligence_batch_analyze`
+  - `confirm_billable_lookup` must be `true`; it approves at most one lookup per unique accepted number, capped at 25
   - `numbers` as newline/CSV text or an array of strings
   - conservative max batch size: 25
   - runs sequentially, redacts per-number output, and returns aggregate health/action counts
@@ -127,7 +129,7 @@ npm run build --workspace @telnyx-mcp-apps/number-intelligence
 (
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"cli","version":"0"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"number_intelligence_analyze","arguments":{"phone_number":"+1XXXXXXXXXX","include_raw":true}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"number_intelligence_analyze","arguments":{"confirm_billable_lookup":true,"phone_number":"+1XXXXXXXXXX","include_raw":true}}}'
 ) | node apps/number-intelligence/dist/server.js
 ```
 

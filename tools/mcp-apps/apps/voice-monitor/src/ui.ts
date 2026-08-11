@@ -17,10 +17,16 @@ const MCP_APP_SECURITY_META = `    <meta name="color-scheme" content="light dark
 
 export const INITIAL_RESULT_GATE_SOURCE = String.raw`function createInitialResultGate(options) {
   let accepted = false;
+  let fallbackInFlight = false;
+  let pendingLaunchPayload;
   let fallbackTimer;
   return {
     accept(payload) {
       if (accepted || !options.isUsable(payload)) return false;
+      if (fallbackInFlight) {
+        pendingLaunchPayload = payload;
+        return false;
+      }
       accepted = true;
       if (fallbackTimer !== undefined) {
         globalThis.clearTimeout(fallbackTimer);
@@ -30,11 +36,29 @@ export const INITIAL_RESULT_GATE_SOURCE = String.raw`function createInitialResul
       return true;
     },
     scheduleFallback() {
-      if (accepted || fallbackTimer !== undefined) return;
+      if (accepted || fallbackInFlight || fallbackTimer !== undefined) return;
       fallbackTimer = globalThis.setTimeout(() => {
         fallbackTimer = undefined;
         if (accepted) return;
-        Promise.resolve().then(options.loadFallback).catch(options.onFallbackError);
+        fallbackInFlight = true;
+        Promise.resolve()
+          .then(options.loadFallback)
+          .then(() => {
+            accepted = true;
+            fallbackInFlight = false;
+            pendingLaunchPayload = undefined;
+          })
+          .catch((error) => {
+            fallbackInFlight = false;
+            if (pendingLaunchPayload !== undefined) {
+              const payload = pendingLaunchPayload;
+              pendingLaunchPayload = undefined;
+              accepted = true;
+              options.render(payload);
+            } else {
+              options.onFallbackError(error);
+            }
+          });
       }, options.delayMs);
     }
   };

@@ -14,7 +14,9 @@ ordering, generated-audio operations, and the internal billing app are excluded
 from the public federation.
 
 Number Intelligence labels its execution control and notice as billable before
-the user clicks it. App-only JSON-RPC batches are capped at 25 calls, and mixed
+the user clicks it. Both lookup tools require a server-validated
+`confirm_billable_lookup: true` argument; the bundled UI supplies it only from
+the labelled submit action. App-only JSON-RPC batches are capped at 25 calls, and mixed
 app/catalog or oversized app batches fail before execution.
 
 Local Codex edge-case evaluation now covers five positive and three negative
@@ -34,6 +36,9 @@ Reviewer setup: use the OAuth demo account supplied privately in the submission
 portal. It must contain only non-production sample resources and require no MFA,
 SMS confirmation, email confirmation, or private-network access. Positive
 review cases use only documentation inspection and bounded focused-app reads.
+Telnyx currently advertises only the broad `admin` OAuth scope; the consent
+screen must disclose that grant even though the public connector enforces the
+smaller reviewed tool allowlist.
 No review fixture sends messages,
 places calls, purchases resources, changes account state, or invokes a billable
 Number Intelligence lookup.
