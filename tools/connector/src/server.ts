@@ -406,10 +406,21 @@ const DEFAULT_CAPS: Record<string, number> = {
 };
 
 function capFromEnv(name: string, fallback: number): number {
-  const raw = process.env[`TELNYX_CONNECTOR_MAX_${name.toUpperCase()}`];
-  if (raw === undefined || !/^(?:0|[1-9]\d*)$/.test(raw)) return fallback;
+  const variable = `TELNYX_CONNECTOR_MAX_${name.toUpperCase()}`;
+  const raw = process.env[variable];
+  if (raw === undefined) return fallback;
+  if (!/^(?:0|[1-9]\d*)$/.test(raw)) {
+    throw new ConnectorConfigurationError(
+      `${variable} must be a non-negative safe integer; refusing to enable a fallback spend budget`
+    );
+  }
   const parsed = Number(raw);
-  return Number.isSafeInteger(parsed) ? parsed : fallback;
+  if (!Number.isSafeInteger(parsed)) {
+    throw new ConnectorConfigurationError(
+      `${variable} must be a non-negative safe integer; refusing to enable a fallback spend budget`
+    );
+  }
+  return parsed;
 }
 
 export interface CreateServerOptions {
@@ -435,6 +446,12 @@ export function requireStartupApiKey(value = process.env.TELNYX_API_KEY): string
 }
 
 export function createServer(options: CreateServerOptions = {}): McpServer {
+  // Spend controls are configuration, not runtime input. Validate every
+  // override before exposing any tools so a typo cannot silently reactivate a
+  // default billable budget or leave a partially usable connector running.
+  for (const [bucket, fallback] of Object.entries(DEFAULT_CAPS)) {
+    capFromEnv(bucket, fallback);
+  }
   const apiKey = options.apiKey ?? process.env.TELNYX_API_KEY ?? "";
   let client = options.client ?? null;
   const getClient = (): TelnyxClient => {

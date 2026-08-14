@@ -1170,23 +1170,14 @@ describe("session velocity caps", () => {
     }
   });
 
-  it.each(["1junk", " 1", "1.5", "9007199254740992"])(
-    "uses the safe default when the send cap is malformed (%j)",
+  it.each(["1junk", " 1", "0 ", "1.5", "9007199254740992"])(
+    "fails closed when the send cap is malformed (%j)",
     async (configuredCap) => {
       process.env.TELNYX_CONNECTOR_MAX_SEND_MESSAGE = configuredCap;
       try {
-        const fetchMock = vi.fn().mockImplementation(() =>
-          Promise.resolve(jsonResponse(200, { data: { id: "m1" } }))
+        await expect(connectedClient(vi.fn())).rejects.toThrow(
+          /TELNYX_CONNECTOR_MAX_SEND_MESSAGE must be a non-negative safe integer/
         );
-        const client = await connectedClient(fetchMock);
-        const args = { to: "+15550001111", from: "+15550002222", text: "hi" };
-        for (let i = 0; i < 10; i++) {
-          const result = await client.callTool({ name: "send_message", arguments: args });
-          expect(result.isError ?? false, `request ${i + 1} should use the default cap`).toBe(false);
-        }
-        const capped = await client.callTool({ name: "send_message", arguments: args });
-        expect(capped.isError).toBe(true);
-        expect(fetchMock).toHaveBeenCalledTimes(10);
       } finally {
         delete process.env.TELNYX_CONNECTOR_MAX_SEND_MESSAGE;
       }

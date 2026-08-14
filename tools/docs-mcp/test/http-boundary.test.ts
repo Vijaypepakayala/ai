@@ -101,6 +101,82 @@ describe("unauthenticated HTTP boundary", () => {
       body: INIT
     });
     expect(res.status).toBe(200);
+    expect(res.headers.get("access-control-allow-origin")).toBe("https://good.example");
+    expect(res.headers.get("access-control-expose-headers")).toContain("www-authenticate");
+  });
+
+  it("answers an allowlisted browser CORS preflight", async () => {
+    const res = await fetch(BASE, {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://good.example",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers":
+          "authorization,content-type,mcp-protocol-version,accept"
+      }
+    });
+    expect(res.status).toBe(204);
+    expect(res.headers.get("access-control-allow-origin")).toBe("https://good.example");
+    expect(res.headers.get("access-control-allow-methods")).toContain("POST");
+    expect(res.headers.get("access-control-allow-headers")).toContain("authorization");
+  });
+
+  it.each([
+    ["an incomplete under-limit body", MAX_BODY_BYTES],
+    ["a declared oversized body", MAX_BODY_BYTES + 1]
+  ])("closes the socket after an allowlisted preflight with %s", async (_caseName, length) => {
+    const response = await rawIncompleteRequest(
+      `OPTIONS /mcp HTTP/1.1\r\n` +
+        `Host: 127.0.0.1:${PORT}\r\n` +
+        `Origin: https://good.example\r\n` +
+        `Access-Control-Request-Method: POST\r\n` +
+        `Access-Control-Request-Headers: content-type\r\n` +
+        `Content-Length: ${length}\r\n` +
+        `Connection: keep-alive\r\n\r\n` +
+        `x`
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.headers).toMatch(/\r\nconnection:\s*close\r\n/i);
+    expect(response.closedAfterMs).toBeLessThan(2_000);
+  });
+
+  it("lets browser clients observe the unsupported optional GET stream", async () => {
+    const preflight = await fetch(BASE, {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://good.example",
+        "Access-Control-Request-Method": "GET",
+        "Access-Control-Request-Headers": "accept,mcp-protocol-version"
+      }
+    });
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get("access-control-allow-methods")).toContain("GET");
+
+    const response = await fetch(BASE, {
+      method: "GET",
+      headers: {
+        Origin: "https://good.example",
+        Accept: "text/event-stream",
+        "Mcp-Protocol-Version": "2025-06-18"
+      }
+    });
+    expect(response.status).toBe(405);
+    expect(response.headers.get("access-control-allow-origin")).toBe(
+      "https://good.example"
+    );
+  });
+
+  it("does not grant CORS to an unapproved browser preflight", async () => {
+    const res = await fetch(BASE, {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://evil.example",
+        "Access-Control-Request-Method": "POST"
+      }
+    });
+    expect(res.status).toBe(403);
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
   });
 
   it("serves non-browser clients that send no Origin", async () => {

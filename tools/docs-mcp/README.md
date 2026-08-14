@@ -2,7 +2,7 @@
 
 Read-only Telnyx documentation MCP server — the directory-parity answer to
 Twilio's docs connector, built over this repo's Agent Skills and generated API
-reference corpus (5,343 indexed documents at the 0.1.0 build). Two tools, no
+reference corpus (5,339 indexed documents at the 0.1.0 build). Two tools, no
 auth, no account access:
 
 | Tool | What it does |

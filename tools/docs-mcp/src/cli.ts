@@ -12,6 +12,13 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 
 import { createServer, loadIndex } from "./server.js";
 
+const CORS_ALLOW_HEADERS = [
+  "accept",
+  "authorization",
+  "content-type",
+  "mcp-protocol-version"
+] as const;
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const httpIdx = args.indexOf("--http");
@@ -60,6 +67,66 @@ async function main(): Promise<void> {
         rejectRequest(requestSocket, res, 404, "");
         return;
       }
+      // Deny-by-default Origin policy. Validate before method dispatch so an
+      // approved browser can complete its OPTIONS preflight without reaching
+      // the MCP transport, while unapproved origins receive no CORS grant.
+      const originHeader = req.headers.origin;
+      const origin = Array.isArray(originHeader) ? undefined : originHeader;
+      if (originHeader && (!origin || !allowedOrigins.includes(origin))) {
+        rejectRequest(
+          requestSocket,
+          res,
+          403,
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32000, message: `Invalid Origin header: ${String(originHeader)}` },
+            id: null
+          })
+        );
+        return;
+      }
+      if (req.method === "OPTIONS") {
+        const requestedMethod = req.headers["access-control-request-method"];
+        const requestedHeaders = String(
+          req.headers["access-control-request-headers"] ?? ""
+        )
+          .split(",")
+          .map((header) => header.trim().toLowerCase())
+          .filter(Boolean);
+        if (
+          !origin ||
+          !["GET", "POST"].includes(requestedMethod?.toUpperCase() ?? "") ||
+          requestedHeaders.some(
+            (header) => !CORS_ALLOW_HEADERS.includes(header as (typeof CORS_ALLOW_HEADERS)[number])
+          )
+        ) {
+          rejectRequest(requestSocket, res, 403, "");
+          return;
+        }
+        // A preflight has no application body. Close the connection after the
+        // response so an attacker cannot attach a slow or oversized unread
+        // request body to this early-return path.
+        res.shouldKeepAlive = false;
+        res.writeHead(204, {
+          "Access-Control-Allow-Origin": origin,
+          "Access-Control-Allow-Methods": "GET, POST",
+          "Access-Control-Allow-Headers": CORS_ALLOW_HEADERS.join(", "),
+          "Access-Control-Max-Age": "600",
+          Vary: "Origin",
+          "Cache-Control": "no-store",
+          Connection: "close"
+        });
+        res.end(() => requestSocket.destroy());
+        return;
+      }
+      if (origin) {
+        res.setHeader("Access-Control-Allow-Origin", origin);
+        res.setHeader(
+          "Access-Control-Expose-Headers",
+          "mcp-session-id, www-authenticate"
+        );
+        res.setHeader("Vary", "Origin");
+      }
       // This deployment is deliberately stateless and JSON-response only.
       // Streamable HTTP permits a server that does not offer an SSE listening
       // stream to reject GET, and there are no sessions for DELETE to close.
@@ -69,27 +136,6 @@ async function main(): Promise<void> {
         rejectRequest(requestSocket, res, 405, "");
         return;
       }
-      // Deny-by-default Origin policy. The SDK only validates Origin when
-      // allowedOrigins is NON-EMPTY, so an empty allowlist would silently
-      // disable the check: any browser origin would be served. Enforce it
-      // here — a request carrying ANY Origin is rejected unless that exact
-      // origin was allowlisted. Non-browser clients (no Origin header) are
-      // unaffected.
-      const origin = req.headers["origin"];
-      if (origin && !allowedOrigins.includes(origin)) {
-        rejectRequest(
-          requestSocket,
-          res,
-          403,
-          JSON.stringify({
-            jsonrpc: "2.0",
-            error: { code: -32000, message: `Invalid Origin header: ${origin}` },
-            id: null
-          })
-        );
-        return;
-      }
-
       // Match the SDK's Host allowlist semantics before touching the request
       // body. Leaving this check to handleRequest below lets a disallowed Host
       // hold the socket open indefinitely by sending an incomplete body that
