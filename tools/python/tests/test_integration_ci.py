@@ -23,7 +23,9 @@ RESOURCE_PREFIX = "ci-integration-test-"  # Easy to identify and cleanup
 
 pytestmark = pytest.mark.skipif(not TELNYX_API_KEY, reason="TELNYX_API_KEY not set")
 
-TRANSIENT_STATUSES = (500, 502, 503, 504)
+# 408 included: the API has historically returned it for /ai/chat/completions from
+# GH runners (an upstream timeout, not a problem with this repo).
+TRANSIENT_STATUSES = (408, 500, 502, 503, 504)
 READONLY_TIMEOUT = 30
 
 # Set after the first *connection-level* failure (cannot reach api.telnyx.com
@@ -181,11 +183,6 @@ class TestReadonly:
             assert "data" in data
             assert isinstance(data["data"], list)
 
-    @pytest.mark.xfail(
-        reason="Telnyx /ai/chat/completions returns 408 consistently from GH runners; "
-        "tracked separately — remove xfail once upstream is stable",
-        strict=False,
-    )
     def test_readonly_ai_chat_completion(self):
         """POST /v2/ai/chat/completions works with a tiny request."""
         r = _readonly_post(
