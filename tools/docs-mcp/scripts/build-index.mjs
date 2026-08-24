@@ -63,6 +63,27 @@ function skillMeta(relPath) {
   return { product, language };
 }
 
+const parentSkillMetadataCache = new Map();
+function parentSkillMetadata(relPath) {
+  const [, skillDirectory] = relPath.split("/");
+  if (!skillDirectory) return { product: null, language: null };
+  const cached = parentSkillMetadataCache.get(skillDirectory);
+  if (cached) return cached;
+
+  const skillFile = join(SKILLS_DIR, skillDirectory, "SKILL.md");
+  const metadata = existsSync(skillFile)
+    ? (() => {
+        const skillText = readFileSync(skillFile, "utf8");
+        return {
+          product: frontmatterMetadataValue(skillText, "product"),
+          language: frontmatterMetadataValue(skillText, "language")
+        };
+      })()
+    : { product: null, language: null };
+  parentSkillMetadataCache.set(skillDirectory, metadata);
+  return metadata;
+}
+
 const docs = [];
 let skillDocCount = 0;
 let guideDocCount = 0;
@@ -73,8 +94,16 @@ for (const file of walk(SKILLS_DIR, ["node_modules", "dist", ".git", "sdk-refere
   if (text.length < 100) continue;
   const rel = relative(REPO_ROOT, file);
   const inferred = skillMeta(rel);
-  const product = frontmatterMetadataValue(text, "product") ?? inferred.product;
-  const language = frontmatterMetadataValue(text, "language") ?? inferred.language;
+  const parent = parentSkillMetadata(rel);
+  // Reference/template documents commonly omit frontmatter. Inherit the
+  // containing skill's declared taxonomy before falling back to directory
+  // inference so filtered searches include the whole skill, not only SKILL.md.
+  const product = frontmatterMetadataValue(text, "product")
+    ?? parent.product
+    ?? inferred.product;
+  const language = frontmatterMetadataValue(text, "language")
+    ?? parent.language
+    ?? inferred.language;
   docs.push({
     id: rel,
     source: "docs",

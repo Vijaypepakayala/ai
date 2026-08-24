@@ -73,6 +73,33 @@ describe("corpus", () => {
     )).toBe(true);
   });
 
+  it("inherits parent skill metadata for child reference documents", () => {
+    const migrationReference = "skills/telnyx-twilio-migration/references/video-migration.md";
+    expect(index.getDoc(migrationReference)).toMatchObject({
+      product: "migration",
+      language: null
+    });
+    expect(
+      index.search("Twilio Video Rooms client tokens", 20, {
+        source: "docs",
+        product: "migration"
+      }).some((result) => result.id === migrationReference)
+    ).toBe(true);
+
+    const assistantReference = "skills/telnyx-ai-assistants-python/references/api-details.md";
+    expect(index.getDoc(assistantReference)).toMatchObject({
+      product: "ai-assistants",
+      language: "python"
+    });
+    expect(
+      index.search("dynamic variables webhook timeout", 20, {
+        source: "docs",
+        product: "ai-assistants",
+        language: "python"
+      }).some((result) => result.id === assistantReference)
+    ).toBe(true);
+  });
+
   it.each(crossFamilySkillCases)(
     "finds $product/$language skill docs through parent $parent",
     async ({ parent, capability, product, query, language }) => {
