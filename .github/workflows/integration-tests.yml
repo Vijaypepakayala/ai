@@ -53,6 +53,18 @@ jobs:
             './skills/telnyx-kit-twilio-switch/SKILL.md',
             'utf8',
           );
+          const twilioVoiceMigration = fs.readFileSync(
+            './skills/telnyx-twilio-migration/references/voice-migration.md',
+            'utf8',
+          );
+          const texmlVerbs = fs.readFileSync(
+            './skills/telnyx-twilio-migration/references/texml-verbs.md',
+            'utf8',
+          );
+          const texmlValidator = fs.readFileSync(
+            './skills/telnyx-twilio-migration/scripts/validate-texml.sh',
+            'utf8',
+          );
           const quickstart = fs.readFileSync(
             './skills/telnyx-kit-quickstart/SKILL.md',
             'utf8',
@@ -245,6 +257,62 @@ jobs:
           );
 
           assert.doesNotMatch(
+            debugging,
+            /HTTP 5xx[^\n]*Yes\s*[—-]\s*bounded backoff/i,
+            '5xx guidance must not blindly retry mutations with an unknown outcome',
+          );
+          assert.match(
+            debugging,
+            /mutation outcome may be unknown[\s\S]*same `command_id`[\s\S]*reconcile the outcome/i,
+            '5xx guidance must make mutation retries conditional on documented idempotency',
+          );
+          assert.match(
+            architecturePatterns,
+            /distinct primary and failover webhook[\s\S]*same durable deduplication store/i,
+            'Critical webhook paths must preserve independent failover delivery and shared deduplication',
+          );
+          assert.doesNotMatch(
+            architecturePatterns,
+            /One public webhook endpoint per app/i,
+            'Architecture guidance must not collapse primary and failover delivery into one endpoint',
+          );
+          assert.match(
+            architecturePatterns,
+            /Dedupe API v2 webhooks on the event\s+`data\.id`[\s\S]*`data\.payload\.id` only to correlate/i,
+            'Webhook idempotency must use the event ID and reserve message IDs for correlation',
+          );
+          assert.doesNotMatch(
+            architecturePatterns,
+            /message [`]?id[`]? dedupe/i,
+            'Message IDs must not suppress distinct messaging lifecycle events',
+          );
+          assert.match(
+            debugging,
+            /synchronous send[\s\S]*`40300`[\s\S]*STOP[\s\S]*asynchronous[\s\S]*`message\.finalized`[\s\S]*phase plus `title` and `detail`/i,
+            'STOP handling must distinguish synchronous blocks from async delivery errors',
+          );
+          assert.doesNotMatch(
+            debugging,
+            /^\| 40300 \| Blocked by STOP\/org compliance \|/m,
+            'A bare 40300 must not be classified as STOP without response context',
+          );
+          assert.match(
+            quickstart,
+            /number_orders\/\$ORDER_ID[\s\S]*\.data\.status[\s\S]*failure\|cancelled\|deleted[\s\S]*pending[\s\S]*not active[\s\S]*status is `success`/i,
+            'Quickstart must wait for asynchronous number activation before provisioning',
+          );
+          assert.match(
+            quickstart,
+            /--data-urlencode "filter\[phone_number\]=\+1\.\.\."/,
+            'Phone-number lookup must preserve brackets and the E.164 plus sign',
+          );
+          assert.doesNotMatch(
+            quickstart,
+            /GET \/v2\/phone_numbers\?filter\[phone_number\]=\+1/,
+            'Quickstart must not publish a curl-unsafe raw phone-number query',
+          );
+
+          assert.doesNotMatch(
             twilioSwitch,
             /<Pay>[^\n]*no TeXML equivalent/i,
             'TeXML Pay migrations must not be declared unsupported',
@@ -295,8 +363,33 @@ jobs:
             productNavigator,
             /\| Video rooms \|[^\n]+\| telnyx-platform plugin \|/,
           );
+          assert.match(
+            productNavigator,
+            /Deep-dive column[\s\S]*Claude Code[\s\S]*In Cursor,[\s\S]*do not run that command[\s\S]*already bundled/i,
+            'Shared navigator guidance must distinguish Claude Code installation from Cursor skill loading',
+          );
 
           assert.match(twilioSwitch, /TeXML `<Pay>`,\s+the Voice API, and AI Assistants/);
+          assert.match(
+            twilioSwitch,
+            /<Record>` defaults to dual[\s\S]*<Dial recordingChannels>` defaults to single/i,
+            'Developer Kit migration guidance must distinguish recording defaults by TeXML surface',
+          );
+          assert.match(
+            twilioVoiceMigration,
+            /<Record channels>` defaults to `dual`[\s\S]*<Dial recordingChannels>` defaults to `single`/i,
+            'Bundled migration guidance must agree with the current TeXML recording defaults',
+          );
+          assert.match(
+            texmlVerbs,
+            /^\| `recordingChannels` \| string \| `single` \|/m,
+            'The TeXML Dial reference must document the single-channel default',
+          );
+          assert.doesNotMatch(
+            texmlValidator,
+            /<Dial record=.*defaults to dual-channel/i,
+            'The migration validator must not report the obsolete Dial dual-channel default',
+          );
 
           for (const text of [architecturePatterns, quickstart]) {
             assert.match(text, /application\/x-www-form-urlencoded/);

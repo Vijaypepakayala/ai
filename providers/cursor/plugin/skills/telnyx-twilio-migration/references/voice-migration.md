@@ -350,7 +350,7 @@ Create a TeXML Bin in the Mission Control Portal under **Voice** → **TeXML App
 
 3. **Check webhook delivery:** In the Mission Control Portal, navigate to **Debugging** → **API Logs** to see webhook deliveries and responses.
 
-4. **Verify recordings:** If your app uses recording, confirm that dual-channel is acceptable or explicitly set `channels="single"` / `recordingChannels="single"`.
+4. **Verify recordings:** If your app uses recording, review each recording surface separately. TeXML `<Record channels>` defaults to `dual`, while `<Dial recordingChannels>` defaults to `single`; set either attribute explicitly when downstream mono/stereo processing depends on it.
 
 5. **Test answering machine detection (AMD):** If you use AMD, verify `machineDetection` attribute behavior. Telnyx supports `Regular` and `Premium` detection modes.
 
@@ -368,7 +368,7 @@ Status callback events match Twilio's: `initiated`, `ringing`, `answered`, `comp
 
 ## Common Pitfalls
 
-1. **Recording channels default to dual-channel** — Telnyx records in dual-channel (stereo) by default, Twilio uses single-channel. If your audio processing expects mono, explicitly set `channels="single"` on `<Record>` or `record_channels: "single"` in Call Control.
+1. **Recording defaults vary by surface** — TeXML `<Record channels>` and Call Control `record_channels` default to dual, but TeXML `<Dial recordingChannels>` defaults to single. Set the channel mode explicitly when downstream audio processing depends on mono or stereo; do not assume one Telnyx-wide default.
 
 2. **Caller ID policy is strict** — Telnyx validates outbound caller IDs against your Outbound Voice Profile. If you're using dynamic caller IDs, make sure they're all authorized in your profile. Calls with unauthorized caller IDs will fail immediately.
 

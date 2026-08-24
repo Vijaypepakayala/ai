@@ -149,12 +149,12 @@ Connects the current call to another phone number, SIP endpoint, queue, or confe
 | `timeLimit` | integer | `14400` | Max call duration in seconds (60-14400) |
 | `ringTone` | string | `us` | Country-specific ringback tone (supports 37+ countries) |
 | `record` | string | `do-not-record` | Options: `do-not-record`, `record-from-answer`, `record-from-ringing`, `record-from-answer-dual`, `record-from-ringing-dual` |
-| `recordingChannels` | string | — | `single` or `dual` |
-| `recordMaxLength` | integer | — | Max recording length (0-14400 seconds) |
+| `recordingChannels` | string | `single` | `single` (mono) or `dual` (stereo) |
+| `recordMaxLength` | integer | `0` | Max recording length (0-14400 seconds; 0 = infinite) |
 | `recordingStatusCallback` | URL | — | Recording event webhook |
 | `recordingStatusCallbackMethod` | string | `POST` | HTTP method |
-| `recordingStatusCallbackEvent` | string | — | Events: `in-progress`, `completed`, `absent` |
-| `sendRecordingUrl` | boolean | — | Include recording URL in callback |
+| `recordingStatusCallbackEvent` | string | `completed` | Events: `in-progress`, `completed`, `absent` |
+| `sendRecordingUrl` | boolean | `true` | Include recording URL in callback |
 
 Contains `<Number>`, `<Sip>`, `<Queue>`, or `<Conference>` nouns. Multiple `<Number>` or `<Sip>` elements enable simultaneous dialing (first to answer wins).
 

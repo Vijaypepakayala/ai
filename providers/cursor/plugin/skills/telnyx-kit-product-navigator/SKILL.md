@@ -13,8 +13,11 @@ metadata:
 
 # Telnyx Product Navigator
 
-Answer three questions, then jump to the row that matches. Install the named
-product plugin (`/plugin install telnyx-<product>@telnyx`) for deep guidance.
+Answer three questions, then jump to the row that matches. The Deep-dive column
+names Claude Code plugins: in Claude Code, install one with
+`/plugin install telnyx-<product>@telnyx`. In Cursor, do not run that command;
+the product skills are already bundled, so load the matching `telnyx-<product>-*`
+skill from the current Telnyx plugin instead.
 
 ## Use case → product
 

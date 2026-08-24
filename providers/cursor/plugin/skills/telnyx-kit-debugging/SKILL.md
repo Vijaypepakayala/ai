@@ -21,15 +21,26 @@ metadata:
 | 40310 | Invalid `to` number | No — fix input |
 | 40305 | `from` number not on the sending messaging profile | No — fix provisioning |
 | 40312 | Messaging profile disabled | No — enable the profile, then retry deliberately |
-| 40300 | Blocked by STOP/org compliance | Never — compliance stop |
+| 40300 on a synchronous send with `Blocked due to STOP message` in the title/detail | Recipient is blocked by a STOP rule | Never — compliance stop |
 | 10004 | Missing required parameter | No — add the required field |
 | 10005 | Resource or URL not found | No — fix the ID or path |
 | HTTP 429 | Rate limited | Yes — after `Retry-After`, not before |
-| HTTP 5xx | Upstream failure | Yes — bounded backoff |
+| HTTP 5xx or timeout | Upstream failure; mutation outcome may be unknown | Reads: bounded backoff. Mutations: retry only with documented idempotency (for Call Control, resend the identical command with the same `command_id`); otherwise reconcile the outcome before reissuing. |
 
 - The HTTP status for a structured Telnyx error can vary by endpoint and
   validation stage. Branch on transport status and `errors[0].code`; never
   infer retryability from the first two digits of the Telnyx code.
+- Error codes are also phase-sensitive. A synchronous send can return `40300`
+  for a STOP block, while an asynchronous `message.finalized` delivery error
+  can use `40300` for an unreachable or otherwise permanent destination.
+  Classify it using the response/event phase plus `title` and `detail`, never
+  the code alone. Likewise, `40008` is an asynchronous undeliverable/filtered
+  outcome, not a universal opt-out code.
+- A 5xx or timeout does not prove a mutation failed before commit. Never
+  automatically replay a billable send, call, or number order merely because
+  backoff is bounded. Retry only when that endpoint documents idempotency and
+  reuse the original idempotency value; otherwise inspect account state or
+  delivery events and reconcile the first attempt before issuing another.
 - SDK errors (Node telnyx@6): HTTP status is `err.status`; the Telnyx code
   is `err.error?.errors?.[0]?.code`. (`err.statusCode` and `err.rawErrors`
   are undefined — dead branches if you use them.)

@@ -62,8 +62,10 @@ processing:
   assignment. Surface a clear readiness error instead of letting carriers
   filter silently.
 - Honor consent and opt-outs (STOP) for every sender type — Telnyx enforces
-  org-level blocks (error 40300); never attempt to bypass one. Treat 40300 as
-  a compliance stop, not a bug.
+  block rules and a synchronous send can return error `40300` with a title or
+  detail stating `Blocked due to STOP message`; never attempt to bypass a
+  confirmed block. Do not classify every asynchronous delivery error with code
+  `40300` as STOP — inspect the response/event phase, title, and detail.
 
 ## Spend controls
 
@@ -98,8 +100,8 @@ processing:
 - [ ] Every webhook route verifies Ed25519 + timestamp before side effects
 - [ ] API v2 JSON dedupes on `data.id`; TeXML callbacks parse their configured
       form/query shape and dedupe on TeXML identifiers
-- [ ] US SMS paths check sender-appropriate registration and treat STOP/40300
-      as terminal
+- [ ] US SMS paths check sender-appropriate registration, treat a confirmed
+      STOP block as terminal, and do not infer STOP from an async error code alone
 - [ ] Recording/transcription and Pay flows keep consent and sensitive-data
       boundaries intact across primary, retry, and failover paths
 - [ ] Billable actions carry human approval and loop ceilings

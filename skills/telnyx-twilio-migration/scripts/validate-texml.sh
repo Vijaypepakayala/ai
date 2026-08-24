@@ -101,13 +101,6 @@ if grep -q '<Record' "$FILE"; then
   fi
 fi
 
-if grep -q '<Dial' "$FILE" && grep -q 'record=' "$FILE"; then
-  if ! grep -q 'recordingChannels=' "$FILE" 2>/dev/null; then
-    echo -e "${YELLOW}[WARN]${NC}  <Dial record=...> — No 'recordingChannels' attribute. Telnyx defaults to dual-channel. Add recordingChannels=\"single\" to match Twilio."
-    WARNINGS=$((WARNINGS + 1))
-  fi
-fi
-
 # Polly voice compatibility — warn about non-Neural variants
 if grep -qE 'voice="Polly\.' "$FILE"; then
   non_neural=$(grep -oE 'voice="Polly\.[^"]*"' "$FILE" | grep -v '\-Neural' || true)

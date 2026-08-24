@@ -60,8 +60,10 @@ For API v2 JSON event webhooks (including Messaging and Call Control):
   event `data.id` before side effects.
 - The event envelope is nested: `data.event_type`, `data.payload.*`. Never
   apply Twilio's flat form parser to this route.
-- One public webhook endpoint per app; route internally on `event_type`
-  (explicit allowlist of handled events + a logged default arm).
+- For critical applications, configure distinct primary and failover webhook
+  URLs. Both endpoints must verify signatures, fast-ack, and enqueue into the
+  same durable deduplication store; route internally on `data.event_type` with
+  an explicit allowlist and a logged default arm.
 
 TeXML instruction requests and status callbacks use a different wire format:
 
@@ -87,9 +89,15 @@ TeXML instruction requests and status callbacks use a different wire format:
 
 ## Failure design defaults
 
-- Every Telnyx client call: timeout + surfaced error code (codes are
-  precise — see telnyx-kit-debugging) + no retry on 4xx except 429.
-- Idempotency: `command_id` on Call Control commands; message `id` dedupe
-  on webhooks.
+- Every Telnyx client call: timeout + surfaced error code (codes are precise —
+  see telnyx-kit-debugging). Retry 429 only after `Retry-After`. Treat 5xx and
+  timeouts as an unknown outcome for mutations: automatically retry only when
+  the operation has documented idempotency. For Call Control, resend the
+  identical command with the same `command_id`; otherwise reconcile account
+  state before reissuing a billable mutation.
+- Idempotency: assign `command_id` before the first Call Control attempt and
+  reuse it for an identical retry. Dedupe API v2 webhooks on the event
+  `data.id`; use a Messaging `data.payload.id` only to correlate lifecycle
+  events for the same message, never to suppress distinct events.
 - Config validation at startup: fail fast if the API key, profile ids, or
   connection ids are absent — not on first traffic.

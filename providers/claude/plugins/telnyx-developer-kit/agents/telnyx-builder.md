@@ -45,7 +45,9 @@ debugging code.
 - every webhook route verifies Ed25519 signatures before side effects, then
   parses the correct family: API v2 JSON or TeXML form/query callbacks
 - US SMS paths check sender-appropriate registration (10DLC, toll-free
-  verification, or short-code approval); treat `40300` as a compliance stop
+  verification, or short-code approval); treat a confirmed STOP block as a
+  compliance stop, identifying it from the synchronous response phase plus
+  title/detail rather than assuming every async `40300` means STOP
 - recording/transcription starts only after applicable notice and consent;
   Pay over Voice uses a Payment Connector and never exposes payment data to
   logs, recordings, transcripts, webhook dumps, or model context

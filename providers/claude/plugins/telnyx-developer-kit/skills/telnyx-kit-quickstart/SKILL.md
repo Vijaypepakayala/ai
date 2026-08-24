@@ -44,10 +44,30 @@ curl -s -G -H "Authorization: Bearer $TELNYX_API_KEY" \
   "https://api.telnyx.com/v2/available_phone_numbers"
 
 # order (BILLABLE — recurring monthly charge; confirm the cost first)
-curl -s -X POST -H "Authorization: Bearer $TELNYX_API_KEY" \
+ORDER_RESPONSE=$(curl -fsS -X POST -H "Authorization: Bearer $TELNYX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"phone_numbers":[{"phone_number":"+1..."}]}' \
-  "https://api.telnyx.com/v2/number_orders"
+  "https://api.telnyx.com/v2/number_orders")
+ORDER_ID=$(printf '%s' "$ORDER_RESPONSE" | jq -er '.data.id')
+
+# ordering is asynchronous; poll with a ceiling and provision only on success
+ORDER_STATUS=pending
+for attempt in $(seq 1 30); do
+  ORDER_RESPONSE=$(curl -fsS \
+    -H "Authorization: Bearer $TELNYX_API_KEY" \
+    "https://api.telnyx.com/v2/number_orders/$ORDER_ID")
+  ORDER_STATUS=$(printf '%s' "$ORDER_RESPONSE" | jq -r '.data.status')
+  case "$ORDER_STATUS" in
+    success) break ;;
+    failure|cancelled|deleted) printf 'Number order stopped: %s\n' "$ORDER_STATUS" >&2; exit 1 ;;
+    pending) sleep 2 ;;
+    *) printf 'Unexpected number-order status: %s\n' "$ORDER_STATUS" >&2; exit 1 ;;
+  esac
+done
+[ "$ORDER_STATUS" = success ] || {
+  printf 'Order still pending; inspect requirements before continuing.\n' >&2
+  exit 1
+}
 ```
 
 Numbers carry capabilities. A voice-only number will not send SMS no matter
@@ -55,7 +75,9 @@ how correct your code is — filter on the features you need at search time.
 Immediately before ordering, re-query the selected number, present its current
 authoritative upfront and recurring costs with currency, and obtain explicit
 human approval naming that number. Do not approve against a caller-supplied or
-stale quote.
+stale quote. A `pending` order means its numbers are not active. Inspect its
+sub-number orders and regulatory requirements, satisfy any outstanding items,
+and continue to provisioning only after the number-order status is `success`.
 
 ## 3. Provisioning per product (the step people skip)
 
@@ -72,7 +94,13 @@ traffic flows:
 
 Note the internal id vs E.164 distinction: `PATCH`/`DELETE` on numbers take the
 **internal numeric id**, not the phone number. Look it up first:
-`GET /v2/phone_numbers?filter[phone_number]=+1...`.
+
+```bash
+PHONE_NUMBER_ID=$(curl -fsS -G \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  --data-urlencode "filter[phone_number]=+1..." \
+  "https://api.telnyx.com/v2/phone_numbers" | jq -er '.data[0].id')
+```
 
 ## 4. First verified send
 
@@ -120,7 +148,7 @@ public internet.
 | `10009` | bad or missing key | check `TELNYX_API_KEY` |
 | `40305` | `from` number not on the sending messaging profile | assign the number to the profile |
 | `40312` | messaging profile disabled | enable it, then retry deliberately |
-| `40300` | STOP/compliance block | terminal — do not work around |
+| synchronous `40300` whose title/detail says `Blocked due to STOP message` | STOP compliance block | terminal — do not work around; an async delivery `40300` must be classified from its title/detail, not the code alone |
 | `10004` | required parameter missing (e.g. fax `connection_id`) | add the parameter |
 | `10005` | resource or URL not found | verify the resource id and API path |
 | API success but nothing arrives | provisioning or sender-registration filtering | check step 3, then `telnyx-kit-debugging` |
