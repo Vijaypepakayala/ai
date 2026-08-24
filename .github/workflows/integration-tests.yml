@@ -17,6 +17,316 @@ on:
           - 'true'
 
 jobs:
+  claude-plugin-check:
+    name: Check — Claude Developer Kit contract
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Validate marketplace and Developer Kit plugin
+        run: |
+          npx --yes @anthropic-ai/claude-code@2.1.97 plugin validate .
+          npx --yes @anthropic-ai/claude-code@2.1.97 plugin validate providers/claude/plugins/telnyx-developer-kit
+      - name: Verify Developer Kit contracts
+        run: |
+          node <<'NODE'
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const manifest = require('./providers/claude/plugins/telnyx-developer-kit/.claude-plugin/plugin.json');
+          const builder = fs.readFileSync(
+            './providers/claude/plugins/telnyx-developer-kit/agents/telnyx-builder.md',
+            'utf8',
+          );
+          const architecturePatterns = fs.readFileSync(
+            './skills/telnyx-kit-architecture-patterns/SKILL.md',
+            'utf8',
+          );
+          const productNavigator = fs.readFileSync(
+            './skills/telnyx-kit-product-navigator/SKILL.md',
+            'utf8',
+          );
+          const twilioSwitch = fs.readFileSync(
+            './skills/telnyx-kit-twilio-switch/SKILL.md',
+            'utf8',
+          );
+          const quickstart = fs.readFileSync(
+            './skills/telnyx-kit-quickstart/SKILL.md',
+            'utf8',
+          );
+          const debugging = fs.readFileSync(
+            './skills/telnyx-kit-debugging/SKILL.md',
+            'utf8',
+          );
+          const rootReadme = fs.readFileSync('./README.md', 'utf8');
+          const skillsReadme = fs.readFileSync('./skills/README.md', 'utf8');
+          const pluginChooser = fs.readFileSync('./plugins/README.md', 'utf8');
+          const pluginRoot = './providers/claude/plugins';
+          const countPluginSkills = (plugin) => fs.readdirSync(
+            `${pluginRoot}/${plugin}/skills`,
+            { withFileTypes: true },
+          ).filter((entry) => entry.isDirectory()).length;
+          const packagedPlugins = fs.readdirSync(pluginRoot, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory() && entry.name.startsWith('telnyx-'))
+            .map((entry) => entry.name)
+            .sort();
+          const apiKey = manifest.userConfig?.telnyx_api_key;
+          const mcp = manifest.mcpServers?.telnyx;
+
+          assert.equal(apiKey?.required, true, 'telnyx_api_key must remain required');
+          assert.equal(apiKey?.sensitive, true, 'telnyx_api_key must remain sensitive');
+          assert.equal(mcp?.type, 'http');
+          assert.equal(mcp?.url, 'https://api.telnyx.com/v2/mcp');
+          assert.equal(
+            mcp?.headers?.Authorization,
+            'Bearer ${user_config.telnyx_api_key}',
+            'Telnyx MCP must receive the configured API key as a Bearer token',
+          );
+
+          assert.doesNotMatch(
+            architecturePatterns,
+            /telnyx-public-key/i,
+            'The Telnyx public key is configuration, not a webhook request header',
+          );
+          for (const requiredValue of [
+            '`telnyx-signature-ed25519`',
+            '`telnyx-timestamp`',
+            '`TELNYX_PUBLIC_KEY`',
+          ]) {
+            assert.ok(
+              architecturePatterns.includes(requiredValue),
+              `Webhook verification guidance must include ${requiredValue}`,
+            );
+          }
+          assert.doesNotMatch(
+            architecturePatterns,
+            /messaging profile[^\n]*(?:OTP|2FA)/i,
+            'OTP and 2FA must not be presented as raw Messaging traffic classes',
+          );
+          assert.match(
+            architecturePatterns,
+            /Route OTP and 2FA through the Verify API with a Verify profile/i,
+            'OTP and 2FA architecture guidance must route through Verify',
+          );
+
+          const navigatorSkillRoutes = {
+            'Send SMS/MMS notifications': ['telnyx-messaging-curl'],
+            'Verify users by OTP (SMS, call, flash call)': ['telnyx-verify-curl'],
+            'Send WhatsApp messages': ['telnyx-whatsapp-curl'],
+            'Send or receive email': ['telnyx-email-curl', 'telnyx-email-inbound-curl'],
+            'Serve voice menus / IVR from XML': ['telnyx-texml-curl'],
+            'Drive calls imperatively from code (AI agents, dynamic flows)': ['telnyx-voice-curl'],
+            'Build a browser/mobile softphone': ['telnyx-webrtc-client-js'],
+            'Real-time media into your AI model': ['telnyx-voice-streaming-curl'],
+            'Speech-to-text / text-to-speech': ['telnyx-stt-python', 'telnyx-tts-python'],
+            'Buy, configure, port numbers': ['telnyx-numbers-curl'],
+            'Look up carrier/caller data for a number': ['telnyx-numbers-services-curl'],
+            'Send/receive fax': ['telnyx-fax-curl'],
+            'Connect a PBX/SIP system': ['telnyx-sip-curl'],
+            'Cellular connectivity for devices': ['telnyx-iot-curl'],
+            'Video rooms': ['telnyx-video-curl'],
+            'Move an existing Twilio app': ['telnyx-twilio-migration'],
+          };
+          const navigatorRows = productNavigator.split('\n');
+          for (const [label, skills] of Object.entries(navigatorSkillRoutes)) {
+            const row = navigatorRows.find((line) => line.startsWith(`| ${label} |`));
+            assert.ok(row, `The product navigator must include the ${label} row`);
+            for (const skill of skills) {
+              const owners = packagedPlugins.filter((plugin) => fs.existsSync(
+                `${pluginRoot}/${plugin}/skills/${skill}`,
+              ));
+              assert.equal(owners.length, 1, `${skill} must have exactly one plugin owner`);
+              assert.ok(
+                row.includes(owners[0]),
+                `${label} must point to ${owners[0]}, which owns ${skill}`,
+              );
+            }
+          }
+          const messagingRow = navigatorRows.find(
+            (line) => line.startsWith('| Send SMS/MMS notifications |'),
+          );
+          const verifyRow = navigatorRows.find(
+            (line) => line.startsWith('| Verify users by OTP'),
+          );
+          assert.doesNotMatch(
+            messagingRow,
+            /\b(?:2FA|OTP)\b/i,
+            'OTP and 2FA requests must not be routed to raw Messaging',
+          );
+          assert.match(
+            verifyRow,
+            /\bOTP\b/i,
+            'OTP requests must remain routed to Verify',
+          );
+          const faxNavigatorRow = navigatorRows.find(
+            (line) => line.startsWith('| Send/receive fax |'),
+          );
+          for (const requiredValue of [
+            'POST /v2/faxes',
+            'POST /v2/fax_applications',
+            'PATCH /v2/phone_numbers/{id}',
+            'connection_id',
+          ]) {
+            assert.ok(
+              faxNavigatorRow.includes(requiredValue),
+              `Fax navigation must include ${requiredValue} for complete send/receive setup`,
+            );
+          }
+
+          const quickstartRows = quickstart.split('\n');
+          const provisioningContracts = {
+            'Send/receive SMS': [
+              'PATCH /v2/phone_numbers/{id}/messaging',
+              'messaging profile',
+            ],
+            'Receive calls to your app': [
+              'PATCH /v2/phone_numbers/{id}',
+              'connection_id',
+            ],
+            'Make outbound calls': [
+              'PATCH /v2/call_control_applications/{id}',
+              'PATCH /v2/texml_applications/{id}',
+              'PATCH /v2/{credential\\|fqdn\\|ip}_connections/{id}',
+              'outbound.outbound_voice_profile_id',
+            ],
+            'Send US A2P SMS': [
+              '10DLC',
+              'toll-free verification',
+              'short-code approval',
+            ],
+            'Send/receive fax': [
+              'POST /v2/fax_applications',
+              'PATCH /v2/phone_numbers/{id}',
+              'connection_id',
+              'outbound.outbound_voice_profile_id',
+            ],
+          };
+          for (const [label, requiredValues] of Object.entries(provisioningContracts)) {
+            const row = quickstartRows.find((line) => line.startsWith(`| ${label} |`));
+            assert.ok(row, `The quickstart must include the ${label} provisioning row`);
+            for (const requiredValue of requiredValues) {
+              assert.ok(
+                row.includes(requiredValue),
+                `${label} provisioning must include ${requiredValue}`,
+              );
+            }
+          }
+          const inboundVoiceRow = quickstartRows.find(
+            (line) => line.startsWith('| Receive calls to your app |'),
+          );
+          assert.doesNotMatch(
+            inboundVoiceRow,
+            /phone_numbers\/\{id\}\/voice/,
+            'connection_id belongs on the base phone-number PATCH, not voice settings',
+          );
+          assert.doesNotMatch(
+            quickstart,
+            /webhook URL[^\n]*not per request/i,
+            'Quickstart must not deny supported per-request webhook overrides',
+          );
+          assert.match(
+            quickstart,
+            /per-request override only when that endpoint explicitly supports one[\s\S]*Messaging `webhook_url`/i,
+            'Quickstart must explain the Messaging webhook override exception',
+          );
+
+          assert.doesNotMatch(
+            debugging,
+            /webhook URL[^\n]*not per-request/i,
+            'Debugging guidance must not deny supported per-request webhook overrides',
+          );
+          assert.match(
+            debugging,
+            /Messaging send requests can set[\s\S]*`webhook_url`\/`webhook_failover_url`[\s\S]*priority over the profile/i,
+            'Debugging guidance must preserve Messaging webhook override precedence',
+          );
+
+          assert.doesNotMatch(
+            twilioSwitch,
+            /<Pay>[^\n]*no TeXML equivalent/i,
+            'TeXML Pay migrations must not be declared unsupported',
+          );
+          for (const requiredValue of [
+            'TeXML `<Pay>`',
+            'Payment Connector',
+            'https://developers.telnyx.com/docs/voice/programmable-voice/pay',
+          ]) {
+            assert.ok(
+              twilioSwitch.includes(requiredValue),
+              `Twilio migration guidance must include ${requiredValue}`,
+            );
+          }
+
+          const chooserRows = new Map(
+            [...pluginChooser.matchAll(/^\| `(telnyx-[^`]+)` \|[^\n]+\| (\d+) \|$/gm)]
+              .map(([, plugin, count]) => [plugin, Number(count)]),
+          );
+          assert.deepEqual(
+            [...chooserRows.keys()].sort(),
+            packagedPlugins,
+            'The plugin chooser must list every packaged Telnyx plugin exactly once',
+          );
+          for (const plugin of packagedPlugins) {
+            assert.equal(
+              chooserRows.get(plugin),
+              countPluginSkills(plugin),
+              `The plugin chooser skill count for ${plugin} must match its payload`,
+            );
+            for (const [name, readme] of [
+              ['root README', rootReadme],
+              ['skills README', skillsReadme],
+            ]) {
+              assert.ok(
+                readme.includes(`/plugin install ${plugin}@telnyx`),
+                `${name} must include the install command for ${plugin}`,
+              );
+            }
+          }
+
+          assert.match(
+            productNavigator,
+            /\| Video rooms \|[^\n]+\| telnyx-webrtc plugin \|/,
+            'Video users must be routed to the plugin that owns telnyx-video-* skills',
+          );
+          assert.doesNotMatch(
+            productNavigator,
+            /\| Video rooms \|[^\n]+\| telnyx-platform plugin \|/,
+          );
+
+          assert.match(twilioSwitch, /TeXML `<Pay>`,\s+the Voice API, and AI Assistants/);
+
+          for (const text of [architecturePatterns, quickstart]) {
+            assert.match(text, /application\/x-www-form-urlencoded/);
+            assert.match(text, /data\.id/);
+            assert.match(text, /CallSid|TeXML identifiers/);
+          }
+          assert.match(twilioSwitch, /application\/x-www-form-urlencoded/);
+          assert.match(twilioSwitch, /data\.\*/);
+          assert.doesNotMatch(debugging, /18-verb/);
+          assert.doesNotMatch(twilioSwitch, /no backend token service required/);
+          assert.match(twilioSwitch, /generate JWTs on your backend/);
+
+          for (const [label, pattern] of [
+            ['10DLC', /10DLC/],
+            ['toll-free verification', /toll-free verification/],
+            ['short codes', /short\s+codes?/],
+          ]) {
+            assert.match(productNavigator, pattern, `Sender guidance must distinguish ${label}`);
+          }
+
+          for (const requiredValue of [
+            '`list_api_endpoints`',
+            '`get_api_endpoint_schema`',
+            '`invoke_api_endpoint`',
+          ]) {
+            assert.ok(builder.includes(requiredValue), `Builder guidance must include ${requiredValue}`);
+          }
+          assert.match(builder, /For live API work/i);
+          NODE
+
   skills-sync-check:
     name: Check — Skills in sync
     runs-on: ubuntu-latest
@@ -205,5 +515,3 @@ jobs:
         continue-on-error: true
         working-directory: cli
         run: RUN_WRITE_TESTS=true npx tsx tests/integration-ci-write.test.ts
-
-
