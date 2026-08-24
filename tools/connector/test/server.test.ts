@@ -729,6 +729,9 @@ describe("order_number atomic flow guards", () => {
       arguments: { phone_number: "+13125550100" }
     });
     expect(ambiguous.isError).toBe(true);
+    expect((ambiguous.content as Array<{ text: string }>)[0].text).toMatch(
+      /dispatch failed after dispatch began.*request may or may not have reached Telnyx/
+    );
     const callsAfterDispatch = fetchMock.mock.calls.length;
     const retry = await client.callTool({
       name: "order_number",
@@ -739,6 +742,47 @@ describe("order_number atomic flow guards", () => {
     expect(fetchMock).toHaveBeenCalledTimes(callsAfterDispatch);
     expect(onPrompt).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls.filter((call) => String(call[0]).includes("number_orders"))).toHaveLength(1);
+  });
+
+  it("retains the order marker and warning after a response-body transport failure", async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url: unknown) => {
+      if (String(url).includes("available_phone_numbers")) {
+        return jsonResponse(200, {
+          data: [{
+            phone_number: "+13125550100",
+            cost_information: { monthly_cost: "1.10", upfront_cost: "0.00", currency: "USD" }
+          }]
+        });
+      }
+      const bodyFailure = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(new Error("terminated"));
+        }
+      });
+      return new Response(bodyFailure, { status: 202 });
+    });
+    const onPrompt = vi.fn();
+    const client = await connectedClientWithElicitation(fetchMock, true, onPrompt);
+    await establishNumberSearchContext(client, fetchMock);
+
+    const ambiguous = await client.callTool({
+      name: "order_number",
+      arguments: { phone_number: "+13125550100" }
+    });
+    expect(ambiguous.isError).toBe(true);
+    expect((ambiguous.content as Array<{ text: string }>)[0].text).toMatch(
+      /response body read failed after dispatch began.*request may or may not have reached Telnyx/
+    );
+
+    const callsAfterDispatch = fetchMock.mock.calls.length;
+    const retry = await client.callTool({
+      name: "order_number",
+      arguments: { phone_number: "+13125550100" }
+    });
+    expect(retry.isError).toBe(true);
+    expect((retry.content as Array<{ text: string }>)[0].text).toContain("already dispatched");
+    expect(fetchMock).toHaveBeenCalledTimes(callsAfterDispatch);
+    expect(onPrompt).toHaveBeenCalledTimes(1);
   });
 
   it("releases both the order reservation and DID guard after a definitive 4xx", async () => {
@@ -1456,6 +1500,143 @@ describe("robustness (code-review findings)", () => {
     });
     await expect(c.request("POST", "/v2/messages", { body: { text: "hello" } })).rejects.toThrow(
       /request may or may not have reached Telnyx/
+    );
+  });
+
+  it.each(["POST", "PATCH", "DELETE"] as const)(
+    "marks %s transport failures after dispatch starts as ambiguous",
+    async (method) => {
+      const transportFailure = vi.fn().mockRejectedValue(new Error("socket reset"));
+      const c = new TelnyxClient({
+        apiKey: "K",
+        fetch: transportFailure as unknown as typeof fetch
+      });
+      await expect(c.request(method, "/v2/test-mutation", { body: {} })).rejects.toThrow(
+        /dispatch failed after dispatch began.*request may or may not have reached Telnyx/
+      );
+    }
+  );
+
+  it.each(["POST", "PATCH", "DELETE"] as const)(
+    "marks %s response-body transport failures as ambiguous",
+    async (method) => {
+      const bodyFailure = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(new Error("terminated"));
+        }
+      });
+      const fetchMock = vi.fn().mockResolvedValue(new Response(bodyFailure, { status: 202 }));
+      const c = new TelnyxClient({
+        apiKey: "K",
+        fetch: fetchMock as unknown as typeof fetch
+      });
+      await expect(c.request(method, "/v2/test-mutation", { body: {} })).rejects.toThrow(
+        /response body read failed after dispatch began.*request may or may not have reached Telnyx/
+      );
+    }
+  );
+
+  it.each([429, 500])(
+    "keeps an unreadable HTTP %s mutation response ambiguous",
+    async (status) => {
+      const bodyFailure = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(new Error("terminated"));
+        }
+      });
+      const fetchMock = vi.fn().mockResolvedValue(new Response(bodyFailure, { status }));
+      const c = new TelnyxClient({
+        apiKey: "K",
+        fetch: fetchMock as unknown as typeof fetch
+      });
+      await expect(c.request("POST", "/v2/messages", { body: {} })).rejects.toThrow(
+        /response body read failed after dispatch began.*request may or may not have reached Telnyx/
+      );
+    }
+  );
+
+  it.each([400, 409, 422])(
+    "keeps an unreadable permanent HTTP %s rejection releasable",
+    async (status) => {
+      const bodyFailure = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(new Error("terminated"));
+        }
+      });
+      const fetchMock = vi.fn().mockResolvedValue(new Response(bodyFailure, { status }));
+      const c = new TelnyxClient({
+        apiKey: "K",
+        fetch: fetchMock as unknown as typeof fetch
+      });
+      await expect(c.request("POST", "/v2/messages", { body: {} })).rejects.toMatchObject({
+        status,
+        message: expect.stringMatching(/definitively rejected.*should not be retried unchanged/)
+      });
+    }
+  );
+
+  it.each([408, 421, 425])(
+    "labels an unreadable transient HTTP %s rejection safe to retry",
+    async (status) => {
+      const bodyFailure = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(new Error("terminated"));
+        }
+      });
+      const fetchMock = vi.fn().mockResolvedValue(new Response(bodyFailure, { status }));
+      const c = new TelnyxClient({
+        apiKey: "K",
+        fetch: fetchMock as unknown as typeof fetch
+      });
+      await expect(c.request("POST", "/v2/messages", { body: {} })).rejects.toMatchObject({
+        status,
+        message: expect.stringMatching(/transient rejection is safe to retry unchanged/)
+      });
+    }
+  );
+
+  it.each([408, 421, 425])(
+    "labels a readable transient HTTP %s rejection retryable",
+    async (status) => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(status, { errors: [] }));
+      const c = new TelnyxClient({
+        apiKey: "K",
+        fetch: fetchMock as unknown as typeof fetch
+      });
+      await expect(c.request("POST", "/v2/messages", { body: {} })).rejects.toMatchObject({
+        status,
+        message: expect.stringMatching(/transient rejection.*retrying the same request is permitted/)
+      });
+    }
+  );
+
+  it("fails non-JSON request bodies before transport", async () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    const throwingToJSON = { toJSON: () => { throw new Error("serializer exploded"); } };
+    const fetchMock = vi.fn();
+    const c = new TelnyxClient({
+      apiKey: "K",
+      fetch: fetchMock as unknown as typeof fetch
+    });
+
+    for (const body of [1n, circular, throwingToJSON, Symbol("unsupported")]) {
+      await expect(c.request("POST", "/v2/messages", { body })).rejects.toMatchObject({
+        name: "TelnyxRequestNotDispatchedError",
+        message: expect.stringMatching(/could not be prepared before dispatch; no request was sent/)
+      });
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not label retry-safe GET transport failures as ambiguous mutations", async () => {
+    const transportFailure = vi.fn().mockRejectedValue(new Error("read connection reset"));
+    const c = new TelnyxClient({
+      apiKey: "K",
+      fetch: transportFailure as unknown as typeof fetch
+    });
+    await expect(c.request("GET", "/v2/phone_numbers")).rejects.toThrow(
+      /^read connection reset$/
     );
   });
 
@@ -2433,7 +2614,7 @@ describe("cap reservation is atomic (Oliver P1)", () => {
     }
   });
 
-  it("a definitive 4xx failure releases the reservation, an ambiguous 5xx does not", async () => {
+  it("permanent and retryable 4xx rejections release reservations; ambiguous 5xx does not", async () => {
     process.env.TELNYX_CONNECTOR_MAX_SEND_MESSAGE = "2";
     try {
       const fetchMock = vi
@@ -2441,11 +2622,13 @@ describe("cap reservation is atomic (Oliver P1)", () => {
         .mockImplementationOnce(async () =>
           jsonResponse(400, { errors: [{ code: "40310", title: "Invalid phone number" }] })
         )
+        .mockImplementationOnce(async () => jsonResponse(408, { errors: [] }))
         .mockImplementationOnce(async () => jsonResponse(503, { errors: [{ code: "10007" }] }))
         .mockImplementation(async () => jsonResponse(200, { data: { id: "m1" } }));
       const client = await connectedClient(fetchMock);
       const args = { to: "+15550001111", from: "+15550002222", text: "hi" };
       await client.callTool({ name: "send_message", arguments: args }); // 400 -> released
+      await client.callTool({ name: "send_message", arguments: args }); // 408 -> released, retryable
       await client.callTool({ name: "send_message", arguments: args }); // 503 -> kept (ambiguous)
       const third = await client.callTool({ name: "send_message", arguments: args }); // 1 left
       expect(third.isError ?? false).toBe(false);

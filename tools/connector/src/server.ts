@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 import {
+  isDefinitiveHttpFailure,
   redactCredentialText,
   TelnyxApiError,
   TelnyxClient,
@@ -707,7 +708,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       const definitiveFailure =
         err instanceof ConnectorConfigurationError ||
         err instanceof TelnyxRequestNotDispatchedError ||
-        (err instanceof TelnyxApiError && err.status >= 400 && err.status < 500 && err.status !== 429);
+        (err instanceof TelnyxApiError && isDefinitiveHttpFailure(err.status));
       if (bucket && definitiveFailure) releaseReservation(bucket, reservationUnits);
       onOutcome?.(definitiveFailure ? "definitive_failure" : "ambiguous_failure");
       // Error output obeys the same size discipline as successful results —

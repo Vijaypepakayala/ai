@@ -6,6 +6,11 @@ import { readdirSync, readFileSync, statSync, mkdirSync, writeFileSync, existsSy
 import { join, relative, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  normalizeRelativePath,
+  skillDirectoryFromRelativePath
+} from "./path-utils.mjs";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..", "..", "..");
 const SKILLS_DIR = join(REPO_ROOT, "skills");
@@ -56,7 +61,7 @@ const CROSS_FAMILY_PRODUCT_ALIASES = new Map([
 ]);
 
 function skillMeta(relPath) {
-  const skill = relPath.split("/")[1] ?? "";
+  const skill = skillDirectoryFromRelativePath(relPath);
   const parts = skill.replace(/^telnyx-/, "").split("-");
   const language = LANGS.has(parts[parts.length - 1]) ? parts[parts.length - 1] : null;
   const product = (language ? parts.slice(0, -1) : parts)[0] ?? null;
@@ -65,7 +70,7 @@ function skillMeta(relPath) {
 
 const parentSkillMetadataCache = new Map();
 function parentSkillMetadata(relPath) {
-  const [, skillDirectory] = relPath.split("/");
+  const skillDirectory = skillDirectoryFromRelativePath(relPath);
   if (!skillDirectory) return { product: null, language: null };
   const cached = parentSkillMetadataCache.get(skillDirectory);
   if (cached) return cached;
@@ -92,7 +97,7 @@ let guideDocCount = 0;
 for (const file of walk(SKILLS_DIR, ["node_modules", "dist", ".git", "sdk-reference"])) {
   const text = readFileSync(file, "utf8");
   if (text.length < 100) continue;
-  const rel = relative(REPO_ROOT, file);
+  const rel = normalizeRelativePath(relative(REPO_ROOT, file));
   const inferred = skillMeta(rel);
   const parent = parentSkillMetadata(rel);
   // Reference/template documents commonly omit frontmatter. Inherit the
@@ -143,7 +148,7 @@ if (existsSync(GUIDES_DIR)) {
   for (const file of walk(GUIDES_DIR, ["node_modules", "dist", ".git"])) {
     const text = readFileSync(file, "utf8");
     if (text.length < 100) continue;
-    const rel = relative(REPO_ROOT, file);
+    const rel = normalizeRelativePath(relative(REPO_ROOT, file));
     const guideName = basename(file, ".md");
     docs.push({
       id: rel,
@@ -206,4 +211,4 @@ if (existsSync(SDK_REF_DIR)) {
 mkdirSync(dirname(OUT), { recursive: true });
 writeFileSync(OUT, JSON.stringify({ built_from: "team-telnyx/ai skills + guides + sdk-reference", doc_count: docs.length, docs }));
 const api = docs.filter((d) => d.source === "api").length;
-console.log(`indexed ${docs.length} docs (${skillDocCount} skills/reference, ${guideDocCount} guides, ${api} api operations) -> ${relative(process.cwd(), OUT)}`);
+console.log(`indexed ${docs.length} docs (${skillDocCount} skills/reference, ${guideDocCount} guides, ${api} api operations) -> ${normalizeRelativePath(relative(process.cwd(), OUT))}`);

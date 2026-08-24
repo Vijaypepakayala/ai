@@ -30,6 +30,17 @@ export class TelnyxRequestNotDispatchedError extends Error {
   }
 }
 
+const RETRYABLE_HTTP_REJECTIONS = new Set([408, 421, 425]);
+
+/** A known client rejection proves the mutation did not complete upstream. */
+export function isDefinitiveHttpFailure(status: number): boolean {
+  return status >= 400 && status < 500 && status !== 429;
+}
+
+function isRetryableHttpRejection(status: number): boolean {
+  return RETRYABLE_HTTP_REJECTIONS.has(status);
+}
+
 export class TelnyxClient {
   private readonly apiKey: string;
   private readonly baseUrl: string;
@@ -72,17 +83,31 @@ export class TelnyxClient {
         `Telnyx API ${method} ${path} was cancelled before dispatch; no request was sent to Telnyx.`
       );
     }
-    const url = new URL(`${this.baseUrl}${path}`);
-    for (const [key, value] of Object.entries(options.query ?? {})) {
-      if (value === undefined) {
-        continue;
+    let url: URL;
+    let serializedBody: string | undefined;
+    try {
+      url = new URL(`${this.baseUrl}${path}`);
+      for (const [key, value] of Object.entries(options.query ?? {})) {
+        if (value === undefined) {
+          continue;
+        }
+        // Arrays become repeated params (?type=a&type=b) — the form the Telnyx
+        // API requires for multi-value filters like number_lookup type and
+        // filter[features][].
+        for (const v of Array.isArray(value) ? value : [value]) {
+          url.searchParams.append(key, String(v));
+        }
       }
-      // Arrays become repeated params (?type=a&type=b) — the form the Telnyx
-      // API requires for multi-value filters like number_lookup type and
-      // filter[features][].
-      for (const v of Array.isArray(value) ? value : [value]) {
-        url.searchParams.append(key, String(v));
+      if (options.body !== undefined) {
+        serializedBody = JSON.stringify(options.body);
+        if (serializedBody === undefined) {
+          throw new TypeError("request body is not JSON-serializable");
+        }
       }
+    } catch {
+      throw new TelnyxRequestNotDispatchedError(
+        `Telnyx API ${method} ${path} could not be prepared before dispatch; no request was sent to Telnyx. Correct the request input before retrying.`
+      );
     }
 
     // Hard timeout so a hung upstream can never hang the tool call, combined
@@ -103,6 +128,13 @@ export class TelnyxClient {
         0,
         null
       );
+    const isMutation = method !== "GET";
+    const ambiguousTransportError = (phase: "dispatch" | "response body read") =>
+      new TelnyxApiError(
+        `Telnyx API ${method} ${path} ${phase} failed after dispatch began — the request may or may not have reached Telnyx; verify state with a read-only tool before retrying anything billable or mutating.`,
+        0,
+        null
+      );
 
     let response: Response;
     try {
@@ -113,7 +145,7 @@ export class TelnyxClient {
           "Content-Type": "application/json",
           "User-Agent": this.userAgent
         },
-        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+        body: serializedBody,
         signal
       });
     } catch (err) {
@@ -122,6 +154,13 @@ export class TelnyxClient {
       }
       if (options.signal?.aborted) {
         throw callerAbortError();
+      }
+      // Once fetch has been invoked, a transport failure cannot prove that a
+      // mutation was never accepted upstream. Surface the same at-most-once
+      // warning used for timeouts/cancellation instead of exposing a generic
+      // socket error that invites a duplicate retry.
+      if (isMutation) {
+        throw ambiguousTransportError("dispatch");
       }
       throw err;
     }
@@ -160,6 +199,22 @@ export class TelnyxClient {
       if (options.signal?.aborted) {
         throw callerAbortError();
       }
+      // A received 4xx (except 429) is a definitive rejection even if its body
+      // is unreadable. Every other mutating response-read failure is ambiguous:
+      // a 2xx action may have completed, and a 5xx/429 may have reached Telnyx.
+      if (isDefinitiveHttpFailure(response.status)) {
+        const retryGuidance = isRetryableHttpRejection(response.status)
+          ? "This transient rejection is safe to retry unchanged, preferably on a fresh connection."
+          : "The request was definitively rejected and should not be retried unchanged.";
+        throw new TelnyxApiError(
+          `Telnyx API ${method} ${path} was rejected with HTTP ${response.status}; its response body could not be read. ${retryGuidance}`,
+          response.status,
+          null
+        );
+      }
+      if (isMutation) {
+        throw ambiguousTransportError("response body read");
+      }
       throw err;
     }
     let parsed: unknown = null;
@@ -180,10 +235,13 @@ export class TelnyxClient {
       parsed = redactSecrets(parsed);
       const detail = extractErrorDetail(parsed);
       const retryAfter = response.status === 429 ? response.headers.get("retry-after") : null;
+      const retryableRejection = isRetryableHttpRejection(response.status)
+        ? " — transient rejection; retrying the same request is permitted, preferably on a fresh connection"
+        : "";
       throw new TelnyxApiError(
         `Telnyx API ${method} ${path} failed with HTTP ${response.status}${detail ? `: ${detail}` : ""}${
           retryAfter ? ` — rate limited, retry after ${retryAfter}s; do not retry before then` : ""
-        }`,
+        }${retryableRejection}`,
         response.status,
         parsed
       );
