@@ -23,7 +23,7 @@ Step-by-step guide for migrating Twilio TwiML-based voice applications to Telnyx
 
 TeXML is Telnyx's TwiML-compatible markup language. Most TwiML documents work with Telnyx with these changes:
 
-1. API base URL: `api.twilio.com` → `api.telnyx.com/v2/texml`
+1. API base URL: `api.twilio.com` → `api.telnyx.com/v2/texml/Accounts/{account_sid}`
 2. Authentication: Basic Auth → Bearer Token
 3. Webhook signatures: HMAC-SHA1 → Ed25519
 4. Webhook payloads: same top-level structure for TeXML callbacks
@@ -72,6 +72,65 @@ res.type('text/xml').send(`<?xml version="1.0" encoding="UTF-8"?>
 
 The XML content is identical — only the generation method changes. For a complete verb reference, see `{baseDir}/references/texml-verbs.md`.
 
+**Keep the generated lines lint-friendly**: a raw TeXML string written inline as a single argument to `res.send(...)` easily runs past 80–120 characters, and many projects enforce `max-len` (eslint), `line-too-long` (pylint/flake8 E501) or similar. That turns a correct migration into a failing `npm test` / `npm run lint`. Build the XML in a named constant or in parts first, then send it:
+
+```javascript
+// AVOID — one long line per <Say>, trips eslint max-len
+res.type('text/xml').send(`<?xml version="1.0" encoding="UTF-8"?><Response><Say voice="Polly.Joanna-Neural">Thank you for calling. Please press 1 for sales, 2 for support.</Say></Response>`);
+
+// PREFER — named constant, one short line per element
+// (PROMPT here is a literal; if it ever comes from dynamic data, wrap it in
+// escapeXmlText() — see the escaping helpers below.)
+const PROMPT = 'Thank you for calling. Please press 1 for sales, 2 for support.';
+
+const texml = [
+  '<?xml version="1.0" encoding="UTF-8"?>',
+  '<Response>',
+  `  <Gather numDigits="1" action="/handle-key">`,
+  `    <Say voice="Polly.Joanna-Neural">${PROMPT}</Say>`,
+  '  </Gather>',
+  '</Response>',
+].join('\n');
+
+res.type('text/xml').send(texml);
+```
+
+```python
+# PREFER — module-level template, interpolate short values.
+# Escape dynamic text BEFORE interpolating (see the escaping rules below):
+# unescaped input like "Sales & Support" produces malformed XML, and
+# "<Hangup/>" would be injected as a live TeXML verb.
+from xml.sax.saxutils import escape
+
+TEXML_MENU = """<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Gather numDigits="1" action="/handle-key">
+    <Say voice="Polly.Joanna-Neural">{prompt}</Say>
+  </Gather>
+</Response>"""
+
+return TEXML_MENU.format(prompt=escape(prompt))
+```
+
+The emitted XML is unchanged — only the source layout differs. If the project has a linter, run it after the migration and before declaring Phase 5 done.
+
+**XML escaping — do NOT escape apostrophes**: when interpolating dynamic values into a TeXML string, escape `&` → `&amp;`, `<` → `&lt;` and `>` → `&gt;` in text nodes, plus `"` → `&quot;` inside attribute values. Do **not** escape `'` to `&apos;`. Twilio's `VoiceResponse` builder leaves apostrophes literal, so escaping them changes the bytes of your response relative to the pre-migration output and will break existing snapshot/string-equality tests (and any downstream diffing) for no benefit — `'` is legal, unescaped, in XML text nodes and inside double-quoted attribute values.
+
+```javascript
+// Correct: apostrophe stays literal
+const escapeXmlText = (s) =>
+  String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+// Attribute values additionally need the double quote escaped
+const escapeXmlAttr = (s) => escapeXmlText(s).replace(/"/g, '&quot;');
+```
+
+```python
+# Python: xml.sax.saxutils.escape() escapes only & < > — which is what you want.
+# Do NOT pass {"'": "&apos;"} as the extra-entities argument.
+from xml.sax.saxutils import escape, quoteattr  # quoteattr for attribute values
+```
+
 ## Step 1: Create a Telnyx Account
 
 1. Sign up at https://telnyx.com/sign-up
@@ -118,15 +177,7 @@ Point your TeXML application to the same webhook server that currently serves yo
 
 **Purchase new numbers:**
 
-```bash
-curl -X POST https://api.telnyx.com/v2/number_orders \
-  -H "Authorization: Bearer $TELNYX_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "phone_numbers": [{"phone_number": "+15551234567"}],
-    "connection_id": "YOUR_TEXML_APP_ID"
-  }'
-```
+Use the quoted purchase workflow in `{baseDir}/references/numbers-migration.md`. It re-queries the exact number, displays its current upfront and monthly costs with currency, requires that exact tuple at the local approval gate, serializes the same number, and fails closed if the inventory or quote changed. The Number Orders API has no quote-ID or maximum-charge field, so the cost tuple is not sent to or enforced by the server. After the order completes, assign the purchased number to the TeXML Application as a separate reviewed configuration change.
 
 **Port existing numbers from Twilio:** See `{baseDir}/references/number-porting.md` for the full FastPort guide.
 
@@ -138,7 +189,7 @@ Replace Twilio REST API endpoints with Telnyx TeXML endpoints:
 
 | Operation | Twilio | Telnyx |
 |---|---|---|
-| **Base URL** | `https://api.twilio.com/2010-04-01/Accounts/{SID}` | `https://api.telnyx.com/v2/texml` |
+| **Base URL** | `https://api.twilio.com/2010-04-01/Accounts/{SID}` | `https://api.telnyx.com/v2/texml/Accounts/{account_sid}` |
 | List calls | `GET /Calls.json` | `GET /Calls` |
 | Make a call | `POST /Calls.json` | `POST /Calls` |
 | Get call | `GET /Calls/{SID}.json` | `GET /Calls/{SID}` |
@@ -149,21 +200,89 @@ Replace Twilio REST API endpoints with Telnyx TeXML endpoints:
 Example — initiate an outbound call:
 
 ```bash
-# Twilio
-curl -X POST "https://api.twilio.com/2010-04-01/Accounts/$TWILIO_SID/Calls.json" \
-  -u "$TWILIO_SID:$TWILIO_AUTH_TOKEN" \
-  -d "To=+15559876543" \
-  -d "From=+15551234567" \
-  -d "Url=https://example.com/outbound-call"
+TO_NUMBER="+15559876543"
+FROM_NUMBER="+15551234567"
+INSTRUCTIONS_URL="https://example.com/outbound-call"
+TIME_LIMIT_SECONDS=30
+[[ "$TO_NUMBER" =~ ^\+[1-9][0-9]{7,14}$ && "$FROM_NUMBER" =~ ^\+[1-9][0-9]{7,14}$ ]] || {
+  echo "To and From must be E.164 numbers" >&2; exit 1;
+}
+[[ "$INSTRUCTIONS_URL" =~ ^https:// ]] || {
+  echo "TeXML instructions URL must use HTTPS" >&2; exit 1;
+}
+[[ "$TIME_LIMIT_SECONDS" =~ ^[0-9]+$ ]] &&
+  test "$TIME_LIMIT_SECONDS" -ge 30 -a "$TIME_LIMIT_SECONDS" -le 14400 || {
+    echo "TimeLimit must be between 30 and 14400 seconds" >&2; exit 1;
+  }
 
-# Telnyx
-curl -X POST "https://api.telnyx.com/v2/texml/Calls" \
+# Twilio — approve this provider's call independently before it is placed.
+TWILIO_SID="${TWILIO_SID:-}"
+test -n "${TWILIO_AUTH_TOKEN:-}" || {
+  echo "Set TWILIO_AUTH_TOKEN" >&2; exit 1;
+}
+[[ "$TWILIO_SID" =~ ^AC[0-9a-fA-F]{32}$ ]] || {
+  echo "TWILIO_SID must be a complete Twilio account SID" >&2; exit 1;
+}
+TWILIO_CALL_TOKEN="$TWILIO_SID|$TO_NUMBER|$FROM_NUMBER|$INSTRUCTIONS_URL|$TIME_LIMIT_SECONDS"
+printf 'Twilio call: %s -> %s; instructions %s; limit %ss\n' \
+  "$FROM_NUMBER" "$TO_NUMBER" "$INSTRUCTIONS_URL" "$TIME_LIMIT_SECONDS"
+test "${TWILIO_APPROVE_OUTBOUND_CALL:-}" = "$TWILIO_CALL_TOKEN" || {
+  echo "Twilio outbound call not approved" >&2; exit 1;
+}
+curl -fsS -X POST "https://api.twilio.com/2010-04-01/Accounts/$TWILIO_SID/Calls.json" \
+  -u "$TWILIO_SID:$TWILIO_AUTH_TOKEN" \
+  --data-urlencode "To=$TO_NUMBER" \
+  --data-urlencode "From=$FROM_NUMBER" \
+  --data-urlencode "Url=$INSTRUCTIONS_URL" \
+  --data-urlencode "TimeLimit=$TIME_LIMIT_SECONDS"
+
+# Telnyx — require a separate, price-bound approval before this provider's call.
+TELNYX_ACCOUNT_SID="${TELNYX_ACCOUNT_SID:-}"  # Telnyx account user_id, not a Twilio SID
+TEXML_APPLICATION_ID="${TELNYX_TEXML_APPLICATION_ID:-}"
+APPROVED_MAX_CHARGE="${TELNYX_APPROVED_TEXML_CALL_MAX:-}"
+APPROVED_CURRENCY="${TELNYX_APPROVED_TEXML_CALL_CURRENCY:-}"
+test -n "$TELNYX_ACCOUNT_SID" || {
+  echo "Set TELNYX_ACCOUNT_SID to the Telnyx account user_id" >&2; exit 1;
+}
+test -n "$TEXML_APPLICATION_ID" || {
+  echo "Set TELNYX_TEXML_APPLICATION_ID" >&2; exit 1;
+}
+jq -en --arg maximum "$APPROVED_MAX_CHARGE" '
+  ($maximum | tonumber) as $value | ($value > 0 and ($value | isinfinite | not))
+' >/dev/null || {
+  echo "Approved maximum charge must be a positive finite decimal" >&2; exit 1;
+}
+[[ "$APPROVED_CURRENCY" =~ ^[A-Z]{3}$ ]] || {
+  echo "Approved currency must be a three-letter ISO 4217 code" >&2; exit 1;
+}
+APPROVAL_TOKEN="$TELNYX_ACCOUNT_SID|$TO_NUMBER|$FROM_NUMBER|$TEXML_APPLICATION_ID|$INSTRUCTIONS_URL|$TIME_LIMIT_SECONDS|$APPROVED_MAX_CHARGE|$APPROVED_CURRENCY"
+printf 'TeXML call: %s -> %s via %s; limit %ss; approved maximum %s %s\n' \
+  "$FROM_NUMBER" "$TO_NUMBER" "$TEXML_APPLICATION_ID" "$TIME_LIMIT_SECONDS" \
+  "$APPROVED_MAX_CHARGE" "$APPROVED_CURRENCY"
+# Check the current account-specific route price, then approve this exact tuple.
+test "${TELNYX_APPROVE_TEXML_CALL:-}" = "$APPROVAL_TOKEN" || {
+  echo "TeXML call not approved" >&2; exit 1;
+}
+CALL_PAYLOAD=$(jq -cn \
+  --arg to "$TO_NUMBER" \
+  --arg from "$FROM_NUMBER" \
+  --arg application_sid "$TEXML_APPLICATION_ID" \
+  --arg url "$INSTRUCTIONS_URL" \
+  --argjson time_limit "$TIME_LIMIT_SECONDS" \
+  '{
+    To: $to,
+    From: $from,
+    ApplicationSid: $application_sid,
+    Url: $url,
+    TimeLimit: $time_limit
+  }')
+curl -fsS -X POST "https://api.telnyx.com/v2/texml/Accounts/$TELNYX_ACCOUNT_SID/Calls" \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "To=+15559876543" \
-  -d "From=+15551234567" \
-  -d "Url=https://example.com/outbound-call"
+  -H "Content-Type: application/json" \
+  --data "$CALL_PAYLOAD"
 ```
+
+`TimeLimit` bounds call duration but is not a monetary cap. Derive `TELNYX_APPROVED_TEXML_CALL_MAX` from the current account-specific price for the exact destination and the 30-second limit; do not place the call if its worst-case charge cannot be bounded.
 
 ## Step 6: Update Authentication
 
@@ -287,21 +406,50 @@ try {
 // Telnyx webhook signature validation in Go
 // Use the telnyx-go SDK or verify Ed25519 manually:
 import (
+    "bytes"
     "crypto/ed25519"
     "encoding/base64"
     "io"
     "net/http"
+    "strconv"
+    "time"
 )
 
-func verifyWebhook(r *http.Request, publicKeyBase64 string) bool {
-    bodyBytes, _ := io.ReadAll(r.Body)
+// Returns the verified body. The caller must use THIS slice - reading r.Body
+// again yields nothing, because io.ReadAll consumes it.
+func verifyWebhook(r *http.Request, publicKeyBase64 string) ([]byte, bool) {
+    bodyBytes, err := io.ReadAll(r.Body)
+    if err != nil {
+        return nil, false
+    }
+    // Restore the body so a handler that decodes r.Body still works. Without
+    // this the handler reads zero bytes and fails on every request.
+    r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
     signature := r.Header.Get("telnyx-signature-ed25519")
     timestamp := r.Header.Get("telnyx-timestamp")
-    // Concatenate timestamp + "|" + payload, verify with Ed25519 public key
-    pubKeyBytes, _ := base64.StdEncoding.DecodeString(publicKeyBase64)
-    sigBytes, _ := base64.StdEncoding.DecodeString(signature)
+
+    // REJECT STALE DELIVERIES. Without a freshness check any captured signed
+    // payload - from a log dump, a proxy trace, a shared staging endpoint -
+    // verifies forever, so an attacker can replay it indefinitely. Telnyx
+    // documents a 5-minute tolerance.
+    ts, err := strconv.ParseInt(timestamp, 10, 64)
+    if err != nil || time.Since(time.Unix(ts, 0)) > 5*time.Minute {
+        return nil, false
+    }
+
+    pubKeyBytes, err := base64.StdEncoding.DecodeString(publicKeyBase64)
+    // ed25519.Verify PANICS on a wrong-length key, so a misconfigured
+    // TELNYX_PUBLIC_KEY would crash the handler instead of rejecting.
+    if err != nil || len(pubKeyBytes) != ed25519.PublicKeySize {
+        return nil, false
+    }
+    sigBytes, err := base64.StdEncoding.DecodeString(signature)
+    if err != nil {
+        return nil, false
+    }
     message := []byte(timestamp + "|" + string(bodyBytes))
-    return ed25519.Verify(ed25519.PublicKey(pubKeyBytes), message, sigBytes)
+    return bodyBytes, ed25519.Verify(ed25519.PublicKey(pubKeyBytes), message, sigBytes)
 }
 ```
 
@@ -316,9 +464,12 @@ post '/webhook' do
   signature = request.env['HTTP_TELNYX_SIGNATURE_ED25519']
   timestamp = request.env['HTTP_TELNYX_TIMESTAMP']
   begin
-    Telnyx::Webhook.construct_event(payload, signature, timestamp, public_key: 'YOUR_PUBLIC_KEY')
+    # Verification lives on the CLIENT. There is no Telnyx::Webhook module -
+    # naming one raises NameError, which `rescue` swallows, so every webhook
+    # would be rejected with 403.
+    client.webhooks.unwrap(payload, headers: telnyx_headers, key: ENV['TELNYX_PUBLIC_KEY'])
     # Signature valid
-  rescue Telnyx::SignatureVerificationError
+  rescue Telnyx::Errors::WebhookVerificationError
     halt 403, 'Forbidden'
   end
 end
@@ -350,7 +501,7 @@ Create a TeXML Bin in the Mission Control Portal under **Voice** → **TeXML App
 
 3. **Check webhook delivery:** In the Mission Control Portal, navigate to **Debugging** → **API Logs** to see webhook deliveries and responses.
 
-4. **Verify recordings:** If your app uses recording, confirm that dual-channel is acceptable or explicitly set `channels="single"` / `recordingChannels="single"`.
+4. **Verify recordings:** Treat the two TeXML recording paths separately. `<Record>` defaults to dual-channel on Telnyx, so set `channels="single"` when the source flow expects mono. The [Telnyx `<Dial>` reference](https://developers.telnyx.com/docs/voice/programmable-voice/texml-verbs/dial) documents `recordingChannels="single"` and `recordMaxLength="0"` as the defaults; preserve the source `record` value (including its `-dual` variants) and set these attributes only when the target behavior explicitly requires it.
 
 5. **Test answering machine detection (AMD):** If you use AMD, verify `machineDetection` attribute behavior. Telnyx supports `Regular` and `Premium` detection modes.
 
@@ -360,7 +511,8 @@ TeXML callbacks use the same parameter names as TwiML for most fields. Key diffe
 
 | Parameter | Notes |
 |---|---|
-| `AccountSid` | Your Telnyx Connection ID (not the same as Twilio Account SID) |
+| `AccountSid` | Your Telnyx account `user_id` (not the Connection ID) |
+| `ConnectionId` | The Telnyx connection that handled the call |
 | `CallSid` | Telnyx call control ID |
 | `RecordingUrl` | Valid for 10 minutes after call ends (Twilio URLs persist longer) |
 
@@ -386,22 +538,22 @@ def handle_recording():
     db.save_recording(call_sid=call_sid, url=recording_url)
     return '', 204
 
-# Telnyx (URL expires in 10 minutes — download immediately)
+# Telnyx TeXML callback (form-encoded; URL expires in 10 minutes)
 @app.route('/recording-callback', methods=['POST'])
 def handle_recording():
-    payload = request.json['data']['payload']
-    recording_url = payload['recording_urls']['mp3']
-    call_control_id = payload['call_control_id']
+    recording_url = request.form['RecordingUrl']
+    recording_sid = request.form['RecordingSid']
+    call_sid = request.form['CallSid']
 
     # Download NOW — URL expires in 10 minutes
     response = requests.get(recording_url)
     response.raise_for_status()  # Fail loudly if download fails (e.g., URL expired)
-    filename = f"recordings/{call_control_id}.mp3"
+    filename = f"recordings/{recording_sid}.mp3"
     os.makedirs(os.path.dirname(filename), exist_ok=True)
     # Save to local filesystem (or upload to S3/GCS)
     with open(filename, 'wb') as f:
         f.write(response.content)
-    db.save_recording(call_id=call_control_id, path=filename)
+    db.save_recording(call_id=call_sid, recording_id=recording_sid, path=filename)
     return '', 200
 ```
 
@@ -415,23 +567,23 @@ app.post('/recording-callback', (req, res) => {
   res.sendStatus(204);
 });
 
-// Telnyx (URL expires in 10 minutes — download immediately)
+// Telnyx TeXML callback (requires app.use(express.urlencoded({ extended: false })))
 const fs = require('fs');
 const { pipeline } = require('stream/promises');
 
 app.post('/recording-callback', async (req, res) => {
-  const payload = req.body.data.payload;
-  const recordingUrl = payload.recording_urls.mp3;
-  const callControlId = payload.call_control_id;
+  const recordingUrl = req.body.RecordingUrl;
+  const recordingSid = req.body.RecordingSid;
+  const callSid = req.body.CallSid;
 
   // Download NOW — URL expires in 10 minutes
   const response = await fetch(recordingUrl);
   if (!response.ok) throw new Error(`Recording download failed: ${response.status} (URL may have expired)`);
-  const filename = `recordings/${callControlId}.mp3`;
+  const filename = `recordings/${recordingSid}.mp3`;
   fs.mkdirSync('recordings', { recursive: true });
   // Save to local filesystem (or upload to S3/GCS)
   await pipeline(response.body, fs.createWriteStream(filename));
-  await db.saveRecording({ callId: callControlId, path: filename });
+  await db.saveRecording({ callId: callSid, recordingId: recordingSid, path: filename });
   res.sendStatus(200);
 });
 ```
@@ -609,24 +761,19 @@ Telnyx supports SIP subdomains for credential-based connections. A subdomain pro
 sip:username@YOUR_SUBDOMAIN.sip.telnyx.com
 ```
 
-Configure via API when creating a credential connection:
-```bash
-curl -X POST https://api.telnyx.com/v2/credential_connections \
-  -H "Authorization: Bearer $TELNYX_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "connection_name": "my-pbx",
-    "active": true,
-    "sip_subdomain": "my-company",
-    "sip_subdomain_receive_settings": "only_my_connections"
-  }'
-```
-
 `sip_subdomain_receive_settings` controls who can send calls to the subdomain:
 - `from_anyone` — accept calls from any source
 - `only_my_connections` — only accept calls from your other Telnyx connections
 
 This is important for multi-tenant PBX deployments and inter-connection routing.
+
+**Configure it in the Portal, not through `/v2/credential_connections`.** Mission Control Portal → **SIP** → **Connections** → your connection.
+
+Measured against the live API: `POST /v2/credential_connections` with `sip_subdomain` / `sip_subdomain_receive_settings` (top-level *or* nested under `inbound`) returns **201**, and a follow-up `PATCH` returns **200** — but a subsequent `GET` never shows the values. Neither field appears in the request or response schema for `POST`, `PATCH`, or `GET /credential_connections` (see `sdk-reference/{language}/sip.md`, generated from the Telnyx OpenAPI spec). They are accepted and silently discarded, so a provisioning script that sets them will report success while configuring nothing.
+
+> `*.sip.telnyx.com` is a DNS wildcard — an unprovisioned subdomain still resolves (`dig +short anything.sip.telnyx.com` returns an A record). A URI built against a subdomain you never created will therefore connect at the network layer and fail at the SIP layer, with no DNS error to diagnose from. Verify a subdomain by registering against it, never by resolving it.
+
+If you do not specifically need a subdomain, address credentials at the bare `sip.telnyx.com` host.
 
 ## Testing
 

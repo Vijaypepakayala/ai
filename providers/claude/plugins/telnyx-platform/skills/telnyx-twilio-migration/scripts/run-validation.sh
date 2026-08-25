@@ -40,13 +40,29 @@ fi
 PROJECT_ROOT=""
 INCLUDE_TEXML=false
 JSON_MODE=false
+STATE_FILE=""
+SCAN_JSON=""
 
-for arg in "$@"; do
+# A `for arg in "$@"` loop cannot `shift`, so a flag that takes a VALUE
+# could not consume it - the value fell through to the positional branch
+# and was rejected as an extra argument. Parse with while/shift instead.
+while [ $# -gt 0 ]; do
+  arg="$1"
   case "$arg" in
     --include-texml) INCLUDE_TEXML=true ;;
+    # Phase 5 must run its children with the SAME context the operator gave it.
+    # Rejecting these flags and forwarding neither meant run-validation.sh
+    # contradicted the very scripts it wraps: a hybrid deployment validated
+    # clean directly but FAILED through the pipeline, and vice versa.
+    --state-file)
+      if [ -z "${2:-}" ]; then echo "Error: --state-file requires a value" >&2; exit 2; fi
+      STATE_FILE="$2"; shift ;;
+    --scan-json)
+      if [ -z "${2:-}" ]; then echo "Error: --scan-json requires a value" >&2; exit 2; fi
+      SCAN_JSON="$2"; shift ;;
     --json) JSON_MODE=true ;;
     --help|-h)
-      echo "Usage: bash run-validation.sh <project-root> [--include-texml] [--json]"
+      echo "Usage: bash run-validation.sh <project-root> [--include-texml] [--json] [--state-file <path>] [--scan-json <path>]"
       echo ""
       echo "Runs the full Phase 5 validation pipeline:"
       echo "  1. Migration validation (residual Twilio patterns)"
@@ -56,16 +72,24 @@ for arg in "$@"; do
       echo "Exit code 0 = all checks passed."
       exit 0
       ;;
+    -*)
+      echo "Error: Unknown option '$arg'" >&2
+      exit 2
+      ;;
     *)
       if [ -z "$PROJECT_ROOT" ]; then
         PROJECT_ROOT="$arg"
+      else
+        echo "Error: Unexpected extra argument '$arg'" >&2
+        exit 2
       fi
       ;;
   esac
+  shift
 done
 
 if [ -z "$PROJECT_ROOT" ]; then
-  echo "Usage: bash run-validation.sh <project-root> [--include-texml] [--json]" >&2
+  echo "Usage: bash run-validation.sh <project-root> [--include-texml] [--json] [--state-file <path>] [--scan-json <path>]" >&2
   exit 2
 fi
 
@@ -88,6 +112,8 @@ echo "────────────────────────�
 
 VALIDATE_ARGS=("$PROJECT_ROOT")
 [ "$JSON_MODE" = true ] && VALIDATE_ARGS+=("--json")
+[ -n "$STATE_FILE" ] && VALIDATE_ARGS+=("--state-file" "$STATE_FILE")
+[ -n "$SCAN_JSON" ] && VALIDATE_ARGS+=("--scan-json" "$SCAN_JSON")
 bash "$SCRIPT_DIR/validate-migration.sh" "${VALIDATE_ARGS[@]}"
 VALIDATE_EXIT=$?
 
@@ -105,18 +131,126 @@ fi
 
 echo ""
 
+# --- Step 5.1b: Telnyx Correctness Linter ---
+# This step runs lint-telnyx-correctness.sh, which is what actually invokes the
+# required-messaging-profile analyzer. Without it the "full validation
+# pipeline" never ran that analyzer at all, so a number-pool send missing
+# messaging_profile_id passed Phase 5 untouched.
+echo -e "${BOLD}Step 5.1b: Telnyx Correctness${NC}"
+echo "────────────────────────────────"
+
+CORRECTNESS_ARGS=("$PROJECT_ROOT")
+[ "$JSON_MODE" = true ] && CORRECTNESS_ARGS+=("--json")
+[ -n "$STATE_FILE" ] && CORRECTNESS_ARGS+=("--state-file" "$STATE_FILE")
+[ -n "$SCAN_JSON" ] && CORRECTNESS_ARGS+=("--scan-json" "$SCAN_JSON")
+bash "$SCRIPT_DIR/lint-telnyx-correctness.sh" "${CORRECTNESS_ARGS[@]}"
+CORRECTNESS_EXIT=$?
+
+if [ "$CORRECTNESS_EXIT" -eq 0 ]; then
+  echo ""
+  echo -e "  ${GREEN}PASS${NC}  Correctness checks passed"
+  RESULTS="${RESULTS}correctness:pass,"
+else
+  echo ""
+  echo -e "  ${RED}FAIL${NC}  Correctness checks failed (exit code: $CORRECTNESS_EXIT)"
+  OVERALL_PASS=false
+  RESULTS="${RESULTS}correctness:fail,"
+fi
+
+echo ""
+
 # --- Step 5.2: TeXML Validation (optional) ---
 if [ "$INCLUDE_TEXML" = true ]; then
   echo -e "${BOLD}Step 5.2: TeXML Validation${NC}"
   echo "────────────────────────────"
 
-  TEXML_FILES=()
-  while IFS= read -r -d '' file; do
-    TEXML_FILES+=("$file")
-  done < <(find "$PROJECT_ROOT" -name "*.xml" -not -path "*/node_modules/*" -not -path "*/.git/*" -print0 2>/dev/null)
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo -e "  ${RED}FAIL${NC}  python3 is required for TeXML discovery and validation"
+    OVERALL_PASS=false
+    RESULTS="${RESULTS}texml:fail,"
+    TEXML_PREREQUISITES_OK=false
+  else
+    TEXML_PREREQUISITES_OK=true
+  fi
 
-  if [ ${#TEXML_FILES[@]} -eq 0 ]; then
-    echo -e "  ${BLUE}INFO${NC}  No XML files found — skipping TeXML validation"
+  # Same generated-output policy as every other tool in the pipeline
+  # (EXCLUDE_DIRS in validate-migration.sh / scan-twilio-usage.sh). Excluding
+  # only node_modules/.git meant step 5.1 ignored dist/ while this step
+  # failed the run on a stale bundle inside it - one run contradicting
+  # itself on the same tree.
+  TEXML_FILES=()
+  TEXML_INVALID_ROOTS=()
+  if [ "$TEXML_PREREQUISITES_OK" = true ]; then
+    while IFS= read -r -d '' file; do
+    # Only TeXML documents belong in validate-texml.sh. Every *.xml went in
+    # before, so a Maven pom.xml or Android layout was "validated" as TeXML
+    # and blocked a fully migrated project. TeXML's root element is
+    # <Response>; anything else is not ours to judge.
+    # A TeXML document's root element is <Response>. Ask the XML parser for
+    # the first start element instead of trying to strip declarations, DTDs,
+    # and comments with regular expressions. Internal DTD subsets may contain
+    # element-looking entity values, and a regex can mistake those for the
+    # document root. validate-texml.sh already requires python3, so relying on
+    # ElementTree here adds no dependency.
+    root=$(python3 - "$file" <<'PYEOF' 2>/dev/null || true
+import sys
+import xml.etree.ElementTree as ET
+
+try:
+    _, element = next(ET.iterparse(sys.argv[1], events=("start",)))
+except (ET.ParseError, OSError, StopIteration):
+    sys.exit(0)
+
+tag = element.tag if isinstance(element.tag, str) else ""
+print(tag.rsplit("}", 1)[-1].split(":", 1)[-1])
+PYEOF
+)
+    # A namespace-prefixed root is still an intended TeXML document. The
+    # parser reports its local name as Response; validate-texml.sh then rejects
+    # the unsupported namespace instead of letting discovery skip the file.
+    if [ "$root" = "Response" ]; then
+      TEXML_FILES+=("$file")
+    else
+      # A DEDICATED .twiml/.texml extension declares the file's intent: it is
+      # meant to be a TeXML document, so a root that is not <Response> is a
+      # BROKEN document, not someone else's XML. Skipping it silently meant a
+      # misspelled or unconverted root (<Respones>, or a left-behind TwiML
+      # wrapper) was never validated and the migration certified clean.
+      # A generic .xml stays exempt - a pom.xml or an Android layout genuinely
+      # is not ours to judge.
+      # ${var,,} is a bash 4 substitution. macOS ships bash 3.2, where it is a
+      # SYNTAX ERROR - the whole branch aborted, no invalid root was ever
+      # recorded, and the run still ended "All validation checks passed" with
+      # exit 0. Use tr, which is portable, so the gate works on a stock Mac.
+      _lower=$(printf '%s' "$file" | tr '[:upper:]' '[:lower:]')
+      case "$_lower" in
+        *.twiml|*.texml) TEXML_INVALID_ROOTS+=("$file:${root:-<no element>}") ;;
+      esac
+    fi
+    done < <(find "$PROJECT_ROOT" \
+      \( -name node_modules -o -name .git -o -name vendor -o -name __pycache__ \
+         -o -name venv -o -name .venv -o -name dist -o -name build \
+         -o -name .next -o -name .nuxt -o -name coverage -o -name .tox \) -prune \
+      -o \( -iname "*.xml" -o -iname "*.twiml" -o -iname "*.texml" \) -print0 2>/dev/null)
+  fi
+
+  # Reported BEFORE the "no documents found" branch: a tree whose only TeXML
+  # files all have broken roots would otherwise print "none found - skipping"
+  # and pass, which is the silent certification this check exists to prevent.
+  if [ "$TEXML_PREREQUISITES_OK" != true ]; then
+    : # Failure and result were recorded before discovery.
+  elif [ ${#TEXML_INVALID_ROOTS[@]} -gt 0 ]; then
+    for entry in "${TEXML_INVALID_ROOTS[@]}"; do
+      echo -e "  ${RED}FAIL${NC}  $(basename "${entry%:*}") — root element is <${entry##*:}>, expected <Response>"
+    done
+    # OVERALL_PASS must flip too. Printing FAIL and recording texml:fail without
+    # it meant the run still ended "All validation checks passed" and exited 0 -
+    # reintroducing, one branch over, exactly the silent certification this
+    # check was added to prevent.
+    OVERALL_PASS=false
+    RESULTS="${RESULTS}texml:fail,"
+  elif [ ${#TEXML_FILES[@]} -eq 0 ]; then
+    echo -e "  ${BLUE}INFO${NC}  No TeXML documents found — skipping TeXML validation"
     RESULTS="${RESULTS}texml:skip,"
   else
     TEXML_PASS=true

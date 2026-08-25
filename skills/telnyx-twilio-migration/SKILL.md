@@ -10,7 +10,7 @@ user_invocable: true
 metadata:
   author: telnyx
   product: migration
-  compatibility: "Requires bash 4+, jq, curl. macOS ships bash 3.2 — scripts auto-upgrade via Homebrew bash if available (brew install bash)."
+  compatibility: "Requires bash 4+, jq, curl, python3. macOS ships bash 3.2 — scripts auto-upgrade via Homebrew bash if available (brew install bash). python3 is mandatory: the scanners and the correctness linter exit 2 without it."
 ---
 
 # Twilio to Telnyx Migration
@@ -19,7 +19,7 @@ metadata:
 
 You MUST follow these phases in order (0 → 1 → 2 → 3 → 4 → 5 → 6). Do NOT skip phases. Each phase has prerequisites and exit criteria — do not proceed until the exit criteria are met. You MUST run the scripts specified in each phase (do not substitute your own checks). You MUST modify the user's source files to complete the migration.
 
-**Interaction model**: Phase 0 collects ALL user input (API key, phone number, cost approval). Phases 1–6 run **fully autonomously** — do NOT ask the user any questions. Make all decisions deterministically using the rules in each phase. The only exception: if a failure persists after 3 fix attempts, present the issue to the user with error details and what you tried.
+**Interaction model**: Phase 0 collects confirmation that `TELNYX_API_KEY` is set securely, the destinations required by the products in scope, an ISO-2 country for each destination (or explicit opt-in to a billed lookup), and an approved maximum spend based on a current price check. A live WebRTC-to-PSTN call requires its own opt-in. Never ask the user to paste an API key into chat. Phases 1–6 run autonomously except for one scoped Phase-1 decision if discovery finds unsupported products, a new or increased paid-action approval, and a failure that persists after 3 fix attempts.
 
 **Context recovery**: If you lose context (e.g. after compaction), IMMEDIATELY run `bash {baseDir}/scripts/migration-state.sh status <project-root>` and `bash {baseDir}/scripts/migration-state.sh show <project-root>` to recover your current phase and all resource IDs. Then resume from that phase.
 
@@ -31,42 +31,51 @@ Track progress in `migration-state.json` via `bash {baseDir}/scripts/migration-s
 
 1. **Authentication**: Basic Auth (`AccountSID:AuthToken`) → Bearer Token (`Authorization: Bearer $TELNYX_API_KEY`). Get key at https://portal.telnyx.com/#/app/api-keys
 2. **Webhook Signatures**: HMAC-SHA1 → Ed25519. Get public key at https://portal.telnyx.com/#/app/account/public-key
-3. **Webhook Payloads**: Flat form-encoded → nested JSON under `data.payload`. See `{baseDir}/references/webhook-migration.md`
-4. **Recording Defaults**: Single → dual-channel. Set `channels="single"` to match Twilio behavior.
+3. **Webhook Payloads**: Messaging and Call Control move from flat form data to nested JSON under `data.payload`; TeXML callbacks remain form-encoded. See `{baseDir}/references/webhook-migration.md`.
+4. **Recording Defaults**: TeXML `<Record>` defaults to dual-channel. Set `channels="single"` when the Twilio flow expects mono. `<Dial recordingChannels>` defaults to `single` and `recordMaxLength` defaults to `0`, as documented in the [Telnyx `<Dial>` reference](https://developers.telnyx.com/docs/voice/programmable-voice/texml-verbs/dial).
 
 ---
 
-## Phase 0: Prerequisites (User Input — ONLY Interaction Point)
+## Phase 0: Prerequisites (Primary User-Input Phase)
 
-> **This is the ONLY phase that requires user interaction.** Collect all inputs now — Phases 1–6 run fully autonomously. Do not ask the user any further questions during migration unless you hit a failure you cannot resolve after 3 attempts.
+> **This is the primary input phase.** Collect prerequisites now. Later interaction is limited to the bundled unsupported-product decision, approval for a new or increased paid action, or a failure that persists after 3 attempts.
 >
-> **Exit criteria**: `TELNYX_API_KEY` validates, user phone number collected, costs approved.
+> **Exit criteria**: `TELNYX_API_KEY` validates; every applicable product destination and its ISO-2 country (or billed-lookup opt-in) are recorded; current prices were checked; the user approved a maximum total charge and currency for the paid tests in scope; and the WebRTC live-call choice is recorded separately.
 
 ### Step 0.1: Collect All Required Information
 
-Ask the user for these **three things** in a single message:
+Ask the user for these **five things** in a single message:
 
-1. **`TELNYX_API_KEY`** — API key v2 from https://portal.telnyx.com/#/app/api-keys. If they don't have a Telnyx account yet, direct them to: create account (https://telnyx.com/sign-up), complete KYC, add payment method, then generate key.
-2. **`TELNYX_TO_NUMBER`** — their personal phone number in E.164 format (e.g., `+15551234567`) for receiving test SMS/call/OTP during integration testing.
-3. **Cost approval** — present this table and get explicit approval:
+1. **Secure API-key setup confirmation** — ask them to set `TELNYX_API_KEY` in their own local environment or secret store and reply only when it is present. Never request, display, log, or repeat the key value. If they do not have an account, direct them to https://telnyx.com/sign-up and https://portal.telnyx.com/#/app/api-keys. KYC and a payment method may still be required before paid capabilities.
+2. **Product-specific destinations** — collect E.164 values only for products that will be tested:
+   - `TELNYX_TO_NUMBER` for messaging, voice, Verify, and an optional WebRTC live call.
+   - `TELNYX_FAX_TO` as a distinct, confirmed fax-capable destination when fax is in scope. Never assume the common SMS/voice test number receives faxes.
+   - `TELNYX_LOOKUP_NUMBER` only when Number Lookup should target a different number; otherwise the lookup script falls back to `TELNYX_TO_NUMBER`.
+3. **Country resolution** — collect the destination's ISO 3166-1 alpha-2 code alongside every destination. The scripts use `TELNYX_TO_COUNTRY`, so export the code that matches the destination immediately before each test. If the user cannot provide it, obtain explicit approval for the billed Number Lookup and set `TELNYX_ALLOW_COUNTRY_LOOKUP=yes`; count that lookup against the approved maximum. Dry runs never perform this lookup implicitly.
+4. **Paid-test approval** — check the [current Telnyx pricing](https://telnyx.com/pricing/) for each exact product, destination, routing type, and account-specific rate before quoting a test. Present the estimated charge for each paid action and a maximum total charge with its currency, then obtain explicit approval for that maximum. Price strings printed by test scripts are non-binding examples, not quotes; `--confirm` is an execution guard and does not replace the price check or spend approval. If a current price is unavailable or the possible charge cannot be bounded, do not run the paid action. Phone-number purchase, 10DLC registration/vetting, and porting are separate workflows that require their own current quote and explicit approval; Phase 5 tests never purchase persistent numbers.
+5. **WebRTC live-call decision** — the default WebRTC test validates credentials and token issuance without placing a PSTN call. A live call is a separate paid action: check its current price, obtain explicit approval under the maximum spend, and set `TELNYX_WEBRTC_LIVE_CALL=yes` only when the user opts in.
 
-| Item | Cost | When Charged |
-|------|------|-------------|
-| Phone number (if account has none) | ~$1.00/month | Phase 5 integration tests |
-| Integration tests (SMS + voice + verify + lookup + fax) | ~$0.144 total | Phase 5 |
-| 10DLC registration (US A2P messaging only) | ~$19 | Phase 3 setup (only if applicable) |
-| Number porting | Free | Post-migration (optional) |
-
-**Total estimated cost for most migrations: under $1.20.** 10DLC adds ~$19 if applicable. Individual paid actions still have `--confirm` gates in the scripts.
-
-**Do not proceed until the user provides all three items.** This is the last time you will ask the user for input.
+**Do not proceed until the user confirms every applicable item.** If unsupported products are discovered later, use the one scoped Phase-1 decision described below. If later discovery adds a paid product or changes the quoted maximum, stop and obtain an updated approval before that action.
 
 ### Step 0.2: Validate API Key & Initialize State
 
 ```bash
 bash {baseDir}/scripts/migration-state.sh init <project-root>
-export TELNYX_API_KEY="<user-provided-key>"
+test -n "${TELNYX_API_KEY:-}" || { echo "Set TELNYX_API_KEY securely in your local environment" >&2; exit 1; }
+# Record the non-secret approval boundary for recovery/audit; use the exact values the user approved.
+bash {baseDir}/scripts/migration-state.sh set <project-root> approvals.paid_test_scope "<product-list>"
+bash {baseDir}/scripts/migration-state.sh set <project-root> approvals.maximum_charge "<amount>"
+bash {baseDir}/scripts/migration-state.sh set <project-root> approvals.currency "<ISO-4217-code>"
+bash {baseDir}/scripts/migration-state.sh set <project-root> approvals.webrtc_live_call "<true-or-false>"
 export TELNYX_TO_NUMBER="<user-provided-number>"
+# Before each destination-scoped test, set the ISO-2 code that matches that test's destination:
+export TELNYX_TO_COUNTRY="US"
+# Set only when the corresponding product/destination is in scope:
+export TELNYX_FAX_TO="<user-provided-fax-capable-number>"
+export TELNYX_LOOKUP_NUMBER="<user-provided-lookup-number>"
+# Set only after the separate approvals described above:
+# export TELNYX_ALLOW_COUNTRY_LOOKUP=yes
+# export TELNYX_WEBRTC_LIVE_CALL=yes
 curl -s -H "Authorization: Bearer $TELNYX_API_KEY" https://api.telnyx.com/v2/balance
 ```
 
@@ -78,7 +87,7 @@ If validation fails, ask the user to check their key and try again. This is the 
 
 ## Phase 1: Discovery
 
-> **Prerequisites**: Phase 0 complete (`TELNYX_API_KEY` valid, phone number collected, costs approved).
+> **Prerequisites**: Phase 0 complete (`TELNYX_API_KEY` valid; applicable destinations and country-resolution choices recorded; current-price estimates and a maximum spend approved; WebRTC live-call choice recorded).
 > **Exit criteria**: `twilio-scan.json` exists with scan results, migration scope determined.
 
 ### Step 1.1: Run Full Discovery
@@ -93,7 +102,7 @@ This produces `<project-root>/twilio-scan.json` (and optionally `twilio-deep-sca
 
 **You must run this script.** Do not manually scan files or skip this step.
 
-### Step 1.2: Triage and Determine Scope (Autonomous)
+### Step 1.2: Triage and Determine Scope
 
 Review scan results and classify each match:
 - **Active import/SDK call** (e.g., `from twilio.rest import Client`, `client.messages.create()`): Needs migration
@@ -101,13 +110,13 @@ Review scan results and classify each match:
 - **Config/env var** (e.g., `TWILIO_ACCOUNT_SID`): Needs env var rename (see Phase 3)
 - **Test mock** (e.g., `mock_twilio_response`): Migrate in Phase 4 alongside product code
 
-**Do NOT ask the user to confirm scope.** Migrate ALL detected Twilio products. Apply these rules automatically:
+Migrate all detected supported Twilio products. Apply these rules:
 
-- **Supported products** (voice, messaging, verify, webrtc, sip, fax, video, lookup, numbers, porting): migrate
-- **Unsupported products** (Flex, Studio, TaskRouter, Conversations, Sync, Notify, Proxy, Pay, Autopilot): automatically keep on Twilio — record in state and continue:
+- **Supported products** (voice, messaging, verify, webrtc, sip, fax, video, lookup, numbers, porting, pay): migrate — `<Pay>` is implemented by the TeXML runtime and has a dedicated public verb reference (see `references/texml-verbs.md`); never drop or externalize in-call payment flows
+- **Unsupported products** (Flex, Studio, TaskRouter, Conversations, Sync, Notify, Proxy, Autopilot): present all detected products and the alternatives from `references/unsupported-products.md` in one bundled decision. Ask whether each should be kept on Twilio, replaced, or removed. Do not modify or remove unsupported-product code before that answer. Record each decision in state, for example:
 
 ```bash
-# Automatically record each unsupported product as kept on Twilio:
+# Example after the user chooses to keep a product on Twilio:
 bash {baseDir}/scripts/migration-state.sh set <project-root> kept_on_twilio.<product> true
 ```
 
@@ -187,18 +196,21 @@ cd <project-root> && git checkout -b migrate/twilio-to-telnyx
 
 ### Step 3.2: Install Telnyx SDK (Keep Twilio Until Phase 6)
 
-Install Telnyx SDK **alongside** Twilio — do NOT remove Twilio from the package manifest yet (removal is Phase 6). Keep `twilio` in `requirements.txt`/`package.json`/`Gemfile`/`go.mod` until Phase 6 so you can revert if validation fails.
+Install Telnyx SDK **alongside** Twilio — do NOT remove Twilio from the package manifest yet (removal is Phase 6). Keep `twilio` in `requirements.txt`/`package.json`/`Gemfile`/`go.mod`, or `com.twilio.sdk:twilio` in `pom.xml`/`build.gradle`, until Phase 6 so you can revert if validation fails.
 
 **Server SDKs** — use these EXACT commands with version constraints (do NOT use `pip install telnyx` or `npm install telnyx` without a version range):
 - Python: `pip install 'telnyx>=4.0,<5.0'` — and write `telnyx>=4.0,<5.0` in `requirements.txt` (NOT just `telnyx`). Initialize with `from telnyx import Telnyx; client = Telnyx(api_key=os.environ.get("TELNYX_API_KEY"))`.
-- Node: `npm install telnyx@^6` — writes `"telnyx": "^6.x.x"` in `package.json` automatically. Initialize with `const Telnyx = require('telnyx'); const client = new Telnyx({ apiKey: process.env.TELNYX_API_KEY });` (CJS) or `import Telnyx from 'telnyx'` (ESM).
+- Node: `npm install telnyx@^6 ws@^8` — writes `"telnyx": "^6.x.x"` in `package.json` automatically. Initialize with `const Telnyx = require('telnyx'); const client = new Telnyx({ apiKey: process.env.TELNYX_API_KEY });` (CJS) or `import Telnyx from 'telnyx'` (ESM).
+  - **`ws` is required.** `telnyx@6` declares `ws` as an *optional* peer dependency (npm 10 skips optional peers), but `resources/index.js` unconditionally loads text-to-speech → `require('ws')`. Installing `telnyx@^6` alone therefore produces an SDK that throws `Error: Cannot find module 'ws'` on the very first `require('telnyx')`. Always install `ws` alongside it.
 - Ruby: `gem 'telnyx', '~> 5.0'` in Gemfile + `bundle install`
-- Go: `go get github.com/team-telnyx/telnyx-go`
-- Java/PHP/C#: No official SDK — use REST API with `{baseDir}/sdk-reference/curl/` for API examples
+- Go: `go get github.com/team-telnyx/telnyx-go/v4`
+- Java: Use the official Telnyx Java SDK. Read `{baseDir}/sdk-reference/java/{product}.md` for the pinned Maven/Gradle dependency and exact SDK examples.
+- PHP: An official SDK is available, but this skill does not yet bundle PHP reference examples. Use the official SDK documentation or the REST examples in `{baseDir}/sdk-reference/curl/`.
+- C#/.NET: No official server SDK is currently listed — use REST API with `{baseDir}/sdk-reference/curl/` for API examples
 
 **Client-side WebRTC SDK** (if WebRTC detected): `npm install @telnyx/webrtc` — see `{baseDir}/sdk-reference/webrtc-client/javascript.md` for the full API reference
 
-**Supported languages**: Python, JavaScript/TypeScript, Go, Ruby have full SDKs with reference docs in `{baseDir}/sdk-reference/{lang}/`. Java, PHP, C#/.NET use REST/curl only via `{baseDir}/sdk-reference/curl/`. Client-side WebRTC SDKs exist for Swift (iOS), Kotlin (Android), React Native, Flutter — see `{baseDir}/references/mobile-sdk-migration.md`.
+**Bundled language references**: Python, JavaScript/TypeScript, Go, Ruby, and Java have full SDK examples in `{baseDir}/sdk-reference/{lang}/`. PHP uses the official SDK documentation or `{baseDir}/sdk-reference/curl/`; C#/.NET uses REST/curl. Client-side WebRTC SDKs exist for Swift (iOS), Kotlin (Android), React Native, and Flutter — see `{baseDir}/references/mobile-sdk-migration.md`.
 
 > **JavaScript module warning**: The `sdk-reference/javascript/` files use ESM syntax (`import Telnyx from 'telnyx'`). If the project uses CommonJS (`require`), translate to: `const Telnyx = require('telnyx'); const client = new Telnyx({ apiKey: process.env.TELNYX_API_KEY });`. Do NOT copy ESM imports into CJS files unless `"type": "module"` is in `package.json`.
 
@@ -223,13 +235,15 @@ Install Telnyx SDK **alongside** Twilio — do NOT remove Twilio from the packag
 
 Update `.env`, `.env.example`, secrets manager, CI/CD variables, and deployment configs. **Ensure every env var used in the migrated code is present in `.env.example`** — missing env vars are a top cause of runtime failures.
 
-> **Whitelisted destinations (CRITICAL):** When creating or reusing Telnyx resources, you MUST ensure `whitelisted_destinations` includes the target country. Without this, sends/calls will fail silently or with cryptic errors.
-> - **Messaging profiles**: `whitelisted_destinations` on the profile itself. Use `["*"]` for all countries or specify e.g. `["US", "GB", "IE"]`. Check existing profiles via `GET /v2/messaging_profiles/{id}` and update with `PATCH` if needed.
-> - **Outbound Voice Profiles (OVP)**: `whitelisted_destinations` controls which countries you can call. Create/update OVP via `/v2/outbound_voice_profiles`. Assign the OVP to your Call Control app or TeXML app's `outbound.outbound_voice_profile_id`.
-> - **Verify profiles**: `sms.whitelisted_destinations` inside the SMS channel config. Check existing profiles via `GET /v2/verify_profiles/{id}`.
-> - The test scripts (`test-messaging.sh`, `test-voice.sh`, `test-verify.sh`) handle this automatically, but when writing migration code, always set `whitelisted_destinations` explicitly.
+> **Destination allowlists (CRITICAL):** Determine the target countries as ISO 3166-1 alpha-2 codes before creating Telnyx resources. Use explicit countries by default; use `["*"]` only after an explicit decision to allow every destination. Without the correct allowlist, sends and calls fail.
+> - **Messaging profiles**: set `whitelisted_destinations` on the profile itself.
+> - **Outbound Voice Profiles (OVP)**: set `whitelisted_destinations`, then assign the OVP to the Call Control or TeXML application's `outbound.outbound_voice_profile_id`.
+> - **Verify profiles**: set `sms.whitelisted_destinations` inside the SMS channel configuration.
+> - **New run-owned resources**: create them with only the destinations needed for the test or migration.
+> - **Existing resources**: inspect only. Never expand a Messaging Profile, OVP, or Verify Profile allowlist without an explicit opt-in naming the resource and countries. A `PATCH /v2/outbound_voice_profiles/{id}` request must also include the existing OVP `name`.
+> - `--dry-run` is read-only. Test scripts must fail with remediation instead of changing an existing resource unless the product-specific opt-in and `--confirm` are both present.
 
-> **Rate limits**: Messaging: 1 msg/sec per number (10DLC), voice: varies by connection type. Implement exponential backoff for 429 responses.
+> **Rate limits**: Messaging throughput varies by sender type, country, campaign, carrier, and vetting level; 10DLC is not a fixed 1 MPS. Respect current profile/campaign limits and Telnyx rate-limit response headers, queue traffic, and implement exponential backoff for 429 responses. Voice limits also vary by connection type.
 
 ### Step 3.4: Commit Setup Changes
 
@@ -290,7 +304,7 @@ After ALL product areas are migrated and committed, you MUST update documentatio
    - API key generation: "Twilio Account SID and Auth Token" → "Telnyx API Key v2 from portal.telnyx.com/#/app/api-keys"
    - Environment variable names: every `TWILIO_*` → its `TELNYX_*` equivalent (see Phase 3 env var table)
    - API endpoint URLs: `api.twilio.com` → `api.telnyx.com/v2`
-   - SDK install commands: `pip install twilio` → `pip install 'telnyx>=4.0,<5.0'`, `npm install twilio` → `npm install telnyx@^6`, etc.
+   - SDK install commands: `pip install twilio` → `pip install 'telnyx>=4.0,<5.0'`, `npm install twilio` → `npm install telnyx@^6 ws@^8` (the `ws` peer is required — see Phase 3), etc.
    - Webhook setup instructions: update signature verification method
    - Badge URLs, status page links, support links
 3. **Commit**: `git add <doc-files> && git commit -m "docs: update all documentation from Twilio to Telnyx"`
@@ -308,8 +322,8 @@ If validation fails and you cannot fix the issue, document it and continue to th
 - API calls: Change base URL from `api.twilio.com/2010-04-01/Accounts/{SID}` to `api.telnyx.com/v2/texml`
 - Auth: Basic Auth → Bearer Token
 - Recording: Set `channels="single"` if expecting mono
-- **`speechModel` does NOT exist in TeXML** — remove it or replace with `transcriptionEngine` (e.g., `transcriptionEngine="Google"`). Using `speechModel` will be silently ignored.
-- **Polly voices**: TeXML supports `voice="Polly.{VoiceId}"` and `voice="Polly.{VoiceId}-Neural"`. Always prefer Neural variants (e.g., `Polly.Amy-Neural` instead of `Polly.Amy`) — non-Neural voices may silently fall back to the default voice. If a specific Polly voice is unavailable, use `voice="woman"` with the appropriate `language` attribute.
+- **Translate `speechModel` by element; do not apply a global rename.** Twilio `<Gather speechModel="...">` and `<Transcription speechModel="...">` map to the corresponding TeXML element's `model` attribute, while `transcriptionEngine` remains the provider. Translate the value to a model supported by the selected TeXML engine; do not blindly copy a Twilio-only model name. `<Language speechModel="...">` under TeXML `<ConversationRelay>` is already valid and must be preserved. See `{baseDir}/references/texml-verbs.md` for the element-specific mappings.
+- **Polly voices**: TeXML supports `voice="Polly.{VoiceId}"` and `voice="Polly.{VoiceId}-Neural"`. **Keep the original voice verbatim** — the runtime preserves every voice in its supported Polly set (see the list in `{baseDir}/references/texml-verbs.md`), and named non-Neural voices are valid; they do NOT fall back to a default. Never replace a caller-facing Polly voice with `voice="woman"` — that audibly changes the migrated application. Only if a voice is absent from the supported set, pick the closest supported Polly voice (same language/gender) and record the substitution in the migration report.
 - **Outbound calls**: Use the Telnyx SDK — do NOT use raw `fetch()` to the TeXML API. The SDK handles auth, retries, and response parsing. Pass the **TeXML Application ID** (from `TELNYX_CONNECTION_ID`, NOT a SIP connection ID) as the `connection_id` parameter. See `{baseDir}/sdk-reference/{language}/texml.md` for the exact method signature.
 
 **Voice (Call Control path):**
@@ -322,14 +336,17 @@ If validation fails and you cannot fix the issue, document it and continue to th
 - `from_` → `from` (same in most SDKs)
 - `StatusCallback` per-message → configure on Messaging Profile
 - `MessagingServiceSid` → `messaging_profile_id`
-- **Always include `messaging_profile_id`** in send requests — messages without a profile will fail
+- `messaging_profile_id` is sender-dependent:
+  - **Phone-number or short-code send**: the request schema does not require it when `from` already resolves to the intended Messaging Profile; pass it only as an intentional override.
+  - **Number-pool or alphanumeric-sender send**: it is required by the Messages API.
+  - Every send still needs a valid profile through the applicable path.
 - Webhook payload: flat `{From, Body}` → nested `{data.payload.from.phone_number, data.payload.text}`
 - **10DLC blocker**: US A2P SMS requires 10DLC campaign registration. See `{baseDir}/references/messaging-migration.md` → "10DLC Registration".
 
 **WebRTC:**
-- Delete simple dial TwiML endpoints (use `client.newCall()` instead)
-- Convert complex TwiML endpoints to TeXML
-- Replace Access Token generation with SIP credentials
+- **Check each TwiML endpoint's call direction before deciding its fate** (see webrtc-migration.md → "TwiML Endpoint Analysis"): delete an endpoint only if it is reached exclusively by WebRTC clients (browser-originated outbound — `client.newCall()` replaces it). An endpoint that answers inbound PSTN calls (e.g. a webhook returning `<Dial><Client>agent</Client></Dial>`) must be CONVERTED to TeXML, not deleted — deleting it leaves inbound callers with a dead route
+- Convert complex or inbound-facing TwiML endpoints to TeXML
+- Replace Access Token generation with a per-user Telephony Credential and a backend endpoint that mints short-lived Telnyx JWTs. Direct SIP-credential login is supported only as an explicit lower-security/simple-deployment choice; never expose the Telnyx API key to browser or mobile code.
 - Update client SDK: `@twilio/voice-sdk` → `@telnyx/webrtc`
 - **Client-side files**: Migrate browser JavaScript/HTML files that import `Twilio.Device`, `@twilio/voice-sdk`, or `twilio-client`. These are in frontend directories (e.g., `public/`, `src/`, `static/`, CDN `<script>` tags in HTML). Replace with `TelnyxRTC` — see `{baseDir}/sdk-reference/webrtc-client/javascript.md` for the full client API.
 - **Mobile platforms**: Migrate `.swift`, `.kt`, `.java`, `.dart`, `.tsx` files that import Twilio mobile SDKs. Update `Podfile` (iOS), `build.gradle` (Android), `pubspec.yaml` (Flutter) dependencies. See `{baseDir}/references/mobile-sdk-migration.md`
@@ -337,17 +354,19 @@ If validation fails and you cannot fix the issue, document it and continue to th
 
 **Verify:**
 - Verify Service SID → Verify Profile ID
-- `channel` → `type` parameter
+- `channel` maps to the endpoint path — send via `POST /v2/verifications/{sms|call|flashcall|whatsapp}` (there is no `type` request parameter; `type` appears only in responses)
 - `to` → `phone_number`
 - Check response status mapping (when verifying a code): Twilio `approved` → Telnyx `accepted` (code correct), Twilio `pending` (code incorrect) → Telnyx `rejected` (code incorrect). Note: both platforms use `pending` when a verification is *created* (OTP sent, waiting for code) — the mapping above applies only to the code *check* response.
 
 **Webhook Receivers (all products):**
 - **You MUST migrate webhook handlers** — this is half the migration for most apps. See `{baseDir}/references/webhook-migration.md` for complete receive + parse + verify examples in Python (Flask, Django), JavaScript (Express), Ruby (Sinatra, **Rails**), and Go (net/http).
-- Parse JSON body instead of form data: `request.json['data']['payload']` not `request.form`
-- Access fields via `data.payload.*` — `from` is an object (`from.phone_number`), `to` is an array
+- Parse according to the product contract; do not apply one payload shape to every webhook:
+  - **Messaging**: JSON under `data.payload`; `from` is an object such as `from.phone_number`, and `to` is an array.
+  - **Call Control**: JSON under `data.payload`; voice fields such as `from` and `to` are strings.
+  - **TeXML callbacks**: form-urlencoded, top-level CamelCase fields; do not replace `request.form` with JSON parsing.
 - Replace HMAC-SHA1 (`RequestValidator`) with Ed25519 signature verification using `telnyx-signature-ed25519` + `telnyx-timestamp` headers
 - **If the original code used `twilio.webhook()` middleware**, check the `validate` option:
-  - If `validate: false` (or `enforce_https=False` in Python) was set, the middleware was a **no-op** — it performed no validation. Remove it entirely. Do NOT add Ed25519 verification (the original app intentionally skipped validation, so adding it would change behavior and risk breaking the app if misconfigured).
+  - If `validate: false` (or `enforce_https=False` in Python) was set, treat the unauthenticated production webhook as a blocking security decision. Add Telnyx Ed25519 verification for production; if local development needs a bypass, make it explicit, environment-gated, and disabled by default.
   - If `validate: true` (or no `validate` option, since `true` is the default), replace it with Telnyx Ed25519 verification. Do NOT just delete it — removing real webhook validation leaves endpoints unprotected in production.
 - **Rails `before_action`**: If the original code used a Twilio `before_action` filter (e.g., `before_action :validate_twilio_request`), replace it with a Telnyx Ed25519 `before_action`. Also add `skip_before_action :verify_authenticity_token` since webhooks don't carry CSRF tokens. See `{baseDir}/references/webhook-migration.md` → "Rails" for the complete pattern.
 - **Use the exact signature verification pattern from `webhook-migration.md`** — do NOT use patterns from your own training data. Do NOT use `new TelnyxWebhook()`.
@@ -411,24 +430,32 @@ bash {baseDir}/scripts/lint-telnyx-correctness.sh <project-root>
 
 ### Step 5.2: Integration Tests
 
-Real API calls with small charges (~$0.144 total, already approved in Phase 0). The phone number was collected in Phase 0.
+Run only the product tests in scope. Before each paid `--confirm` invocation, re-check that the current one-action estimate and the cumulative worst-case charge remain within the user-approved maximum from Phase 0. If pricing changed, the test scope grew, or the maximum would be exceeded, stop and obtain a new approval. Any approximate price printed by a script is a non-binding example and must not be treated as a current quote.
 
 ```bash
-# TELNYX_TO_NUMBER was set in Phase 0 — do not ask again
+# Phase 0 recorded the applicable destinations and country codes — do not ask again
+# Export TELNYX_TO_COUNTRY to match the destination used by the next test.
 
 # Run whichever tests match the migrated products:
-bash {baseDir}/scripts/test-migration/test-messaging.sh --confirm  # ~$0.004
-bash {baseDir}/scripts/test-migration/test-voice.sh --confirm      # ~$0.01
-bash {baseDir}/scripts/test-migration/test-verify.sh --confirm --send-only  # ~$0.05
-bash {baseDir}/scripts/test-migration/test-lookup.sh --confirm     # ~$0.01
-bash {baseDir}/scripts/test-migration/test-fax.sh --confirm        # ~$0.07 (requires fax-capable destination)
-bash {baseDir}/scripts/test-migration/test-sip.sh --confirm        # free (validates SIP trunking setup)
-bash {baseDir}/scripts/test-migration/test-webrtc.sh --confirm     # free (credentials/tokens) + ~$0.01 live call if TELNYX_TO_NUMBER set
+bash {baseDir}/scripts/test-migration/test-messaging.sh --confirm
+bash {baseDir}/scripts/test-migration/test-voice.sh --confirm
+# Full Verify E2E: run in an interactive terminal, enter the received OTP, and
+# require the verify action to return response_code=accepted.
+bash {baseDir}/scripts/test-migration/test-verify.sh --confirm
+# Automation-only partial check (trigger accepted; no delivery/code proof):
+bash {baseDir}/scripts/test-migration/test-verify.sh --confirm --send-only
+bash {baseDir}/scripts/test-migration/test-lookup.sh --confirm
+# Fax requires the separately collected TELNYX_FAX_TO and its matching TELNYX_TO_COUNTRY.
+bash {baseDir}/scripts/test-migration/test-fax.sh --confirm
+bash {baseDir}/scripts/test-migration/test-sip.sh --confirm        # read/config validation
+bash {baseDir}/scripts/test-migration/test-webrtc.sh --confirm     # credential/token test; no live call
+# Optional, separately priced and approved outbound prerequisite check:
+TELNYX_WEBRTC_LIVE_CALL=yes bash {baseDir}/scripts/test-migration/test-webrtc.sh --confirm
 ```
 
-Only `TELNYX_API_KEY` and `TELNYX_TO_NUMBER` are required. All other resources (from number, profiles, connections) are auto-detected or auto-created by the scripts. If the account has no phone numbers, the scripts will purchase one (with `--confirm` gate — cost already approved in Phase 0).
+`TELNYX_API_KEY`, the applicable product destination, and that destination's `TELNYX_TO_COUNTRY` ISO-2 code are the common minimum inputs for destination-scoped tests. Messaging, voice, and Verify use `TELNYX_TO_NUMBER`; fax uses the distinct `TELNYX_FAX_TO`; lookup uses `TELNYX_LOOKUP_NUMBER` when set and otherwise falls back to `TELNYX_TO_NUMBER`. If the country is omitted, a script fails closed unless the user separately opts into the billed Number Lookup with `TELNYX_ALLOW_COUNTRY_LOOKUP=yes`; dry-run never performs that lookup implicitly. Product-specific resources may be discovered, or a confirmed run may create a dedicated run-owned resource. Discovery never authorizes changing existing routing, assignments, allowlists, or push credentials: those changes require the corresponding explicit opt-in. Test scripts never purchase persistent phone numbers; purchase is a separate approval workflow using a current authoritative quote. Account level, payment, inventory, destination approval, 10DLC/toll-free registration, or regulatory requirements can still block an otherwise valid test.
 
-**WebRTC projects**: Always run `test-webrtc.sh` with `TELNYX_TO_NUMBER` set — this enables the live call test that verifies end-to-end connectivity (your phone should ring). Without it, the test only validates credential/token generation but not actual calling.
+**WebRTC projects**: The default confirmed run is credential/token-only even when `TELNYX_TO_NUMBER` is already exported; it does not place a live call. `TELNYX_WEBRTC_LIVE_CALL=yes` is a separate, currently priced and explicitly approved opt-in that adds a Call Control PSTN call to check the account's outbound voice prerequisites (the destination should ring) and counts against the approved maximum. It does **not** exercise browser/SDK registration, WebRTC signaling, or media. Perform a real SDK client login/call separately for browser-to-PSTN end-to-end coverage, with its own pricing and approval if it incurs charges.
 
 ### Step 5.3: Fix and Re-validate (Structured Retry)
 
@@ -471,7 +498,7 @@ bash {baseDir}/scripts/migration-state.sh show <project-root> | grep kept_on_twi
 
 **If no products kept on Twilio** — remove the Twilio SDK:
 
-Python: `pip uninstall twilio -y` | Node: `npm uninstall twilio` | Ruby: remove `twilio-ruby` from Gemfile + `bundle install` | Go: `go get -u github.com/twilio/twilio-go@none && go mod tidy` | PHP: `composer remove twilio/sdk`
+Python: `pip uninstall twilio -y` | Node: `npm uninstall twilio` | Ruby: remove `twilio-ruby` from Gemfile + `bundle install` | Go: `go get -u github.com/twilio/twilio-go@none && go mod tidy` | Java: remove `com.twilio.sdk:twilio` from `pom.xml`/`build.gradle` + run `mvn test` or `./gradlew test` | PHP: `composer remove twilio/sdk`
 
 ```bash
 git add <changed-files> && git commit -m "chore: remove Twilio SDK — migration complete"
@@ -515,5 +542,5 @@ All scripts are in `{baseDir}/scripts/`. Run them — do not substitute your own
 **Scanners (free)**: `preflight-check.sh [--quick]`, `scan-twilio-usage.sh <root>`, `scan-twilio-deep.py <root>`
 **Validators (free)**: `validate-migration.sh <root> [--product X] [--json] [--exclude-dir D] [--scan-json F] [--state-file <path>]`, `validate-texml.sh <file>`, `lint-telnyx-correctness.sh <root> [--product X] [--json]`
 **Tests (free)**: `test-migration/smoke-test.sh`, `test-migration/webhook-receiver.py`, `test-migration/test-webhooks-local.py`
-**Tests (paid, --confirm)**: `test-migration/test-voice.sh` (~$0.01), `test-migration/test-messaging.sh` (~$0.004), `test-migration/test-verify.sh` (~$0.05), `test-migration/test-lookup.sh` (~$0.01), `test-migration/test-fax.sh` (~$0.07)
-**Tests (free, --confirm)**: `test-migration/test-sip.sh` (SIP trunking setup), `test-migration/test-webrtc.sh` (WebRTC credentials/tokens)
+**Tests (paid, --confirm and current-price approval)**: `test-migration/test-voice.sh`, `test-migration/test-messaging.sh`, `test-migration/test-verify.sh`, `test-migration/test-lookup.sh`, `test-migration/test-fax.sh`
+**Tests (no paid traffic by default, --confirm)**: `test-migration/test-sip.sh` (SIP trunking setup), `test-migration/test-webrtc.sh` (WebRTC credentials/tokens). The optional WebRTC live call sets `TELNYX_WEBRTC_LIVE_CALL=yes` and is a separately priced and approved paid test.

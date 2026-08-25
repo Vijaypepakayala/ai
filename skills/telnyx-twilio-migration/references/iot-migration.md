@@ -21,7 +21,7 @@ Migrate from Twilio Super SIM to Telnyx IoT SIM for cellular IoT device connecti
 
 ## Overview
 
-Twilio Super SIM provides global cellular connectivity for IoT devices. Telnyx IoT SIM offers equivalent functionality with coverage in over 100 countries across 500+ networks, supporting 2G through 4G LTE and 25 CAT-M networks across North America and Europe.
+Twilio Super SIM provides global cellular connectivity for IoT devices. Telnyx IoT SIM offers equivalent functionality with coverage in 180+ countries across 650+ networks, supporting 2G through 4G LTE and CAT-M networks.
 
 Telnyx differentiates with **Private Wireless Gateways** — dedicated infrastructure that routes your IoT device traffic through a siloed, private network on Telnyx's MPLS backbone. This has no Twilio equivalent.
 
@@ -56,41 +56,61 @@ Telnyx differentiates with **Private Wireless Gateways** — dedicated infrastru
 Order SIM cards through the Telnyx Mission Control Portal or via API:
 
 ```bash
-curl -X POST https://api.telnyx.com/v2/sim_card_orders \
+SIM_QUANTITY=100
+SHIPPING_ADDRESS_ID="YOUR_SHIPPING_ADDRESS_ID"
+[[ "$SIM_QUANTITY" =~ ^[1-9][0-9]*$ ]] || {
+  echo "SIM quantity must be a positive integer" >&2; exit 1;
+}
+[[ "$SHIPPING_ADDRESS_ID" =~ ^[0-9]+$ ]] || {
+  echo "Shipping address ID must be replaced with a numeric Telnyx address ID" >&2; exit 1;
+}
+PREVIEW_PAYLOAD=$(jq -cn \
+  --argjson quantity "$SIM_QUANTITY" \
+  --arg address_id "$SHIPPING_ADDRESS_ID" \
+  '{quantity: $quantity, address_id: $address_id}')
+PREVIEW=$(curl -fsS -X POST https://api.telnyx.com/v2/sim_card_order_preview \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "quantity": 100,
-    "address_id": "YOUR_SHIPPING_ADDRESS_ID"
-  }'
+  --data "$PREVIEW_PAYLOAD")
+QUOTE=$(printf '%s' "$PREVIEW" | jq -ce --argjson quantity "$SIM_QUANTITY" '
+  .data
+  | select(.quantity == $quantity)
+  | .total_cost
+  | select(
+      (.amount | type) == "string" and
+      (.amount | test("^[0-9]+([.][0-9]+)?$")) and
+      (.currency | type) == "string" and
+      (.currency | test("^[A-Z]{3}$"))
+    )
+') || { echo "SIM order preview was incomplete" >&2; exit 1; }
+TOTAL_COST=$(printf '%s' "$QUOTE" | jq -r '.amount')
+CURRENCY=$(printf '%s' "$QUOTE" | jq -r '.currency')
+APPROVAL_TOKEN="$SIM_QUANTITY|$SHIPPING_ADDRESS_ID|$TOTAL_COST|$CURRENCY"
+printf 'Physical SIM quote: %s cards to %s; total %s %s\n' \
+  "$SIM_QUANTITY" "$SHIPPING_ADDRESS_ID" "$TOTAL_COST" "$CURRENCY"
+# Approve the exact quantity, shipping address, and displayed total-cost tuple.
+test "${TELNYX_APPROVE_SIM_ORDER:-}" = "$APPROVAL_TOKEN" || {
+  echo "Physical SIM order not approved" >&2; exit 1;
+}
+ORDER_PAYLOAD=$(jq -cn \
+  --argjson quantity "$SIM_QUANTITY" \
+  --arg address_id "$SHIPPING_ADDRESS_ID" \
+  '{quantity: $quantity, address_id: $address_id}')
+curl -fsS -X POST https://api.telnyx.com/v2/sim_card_orders \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  --data "$ORDER_PAYLOAD"
 ```
+
+The preview response is not a server-side price lock: the order request accepts no quote ID or maximum-charge field. If a price change between preview and order creation is unacceptable, place the order in the Mission Control Portal after reviewing its final total.
 
 ### Purchase eSIMs
 
-```bash
-curl -X POST https://api.telnyx.com/v2/actions/purchase/esims \
-  -H "Authorization: Bearer $TELNYX_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "quantity": 10,
-    "sim_card_group_id": "YOUR_SIM_GROUP_ID"
-  }'
-```
-
-```python
-from telnyx import Telnyx
-client = Telnyx(api_key="YOUR_TELNYX_API_KEY")
-
-# Purchase eSIMs
-order = client.actions.purchase.create(
-    amount=10,
-    sim_card_group_id="YOUR_SIM_GROUP_ID"
-)
-```
+Purchase eSIMs in the Mission Control Portal only after it displays the current account-specific total and currency and the user approves that exact purchase. The public `POST /v2/actions/purchase/esims` contract accepts the amount and optional SIM Card Group, but it exposes neither a price-preview operation nor a quote or maximum-charge field. For that reason this guide deliberately does not provide a copyable automated purchase call: if the possible charge cannot be verified and bounded at execution time, do not place the order.
 
 ## Step 2: Register and Activate SIMs
 
-After receiving physical SIMs, register them with their ICCID codes, then enable them.
+After receiving physical SIMs, register them with their registration codes, then enable them. The registration code is a short code printed on the SIM card (and its packaging) — it is distinct from the ICCID.
 
 ### Register SIMs
 
@@ -99,7 +119,7 @@ curl -X POST https://api.telnyx.com/v2/actions/register/sim_cards \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "registration_codes": ["89011234567890123456", "89011234567890123457"],
+    "registration_codes": ["0000000001", "0000000002"],
     "sim_card_group_id": "YOUR_SIM_GROUP_ID"
   }'
 ```
@@ -109,7 +129,7 @@ from telnyx import Telnyx
 client = Telnyx(api_key="YOUR_TELNYX_API_KEY")
 
 client.actions.register.create(
-    registration_codes=["89011234567890123456", "89011234567890123457"],
+    registration_codes=["0000000001", "0000000002"],
     sim_card_group_id="YOUR_SIM_GROUP_ID"
 )
 ```
@@ -145,8 +165,8 @@ curl -X POST https://api.telnyx.com/v2/sim_card_groups \
   -d '{
     "name": "fleet-north-america",
     "data_limit": {
-      "amount": 5.0,
-      "unit": "GB"
+      "amount": "5120",
+      "unit": "MB"
     }
   }'
 ```
@@ -157,9 +177,11 @@ client = Telnyx(api_key="YOUR_TELNYX_API_KEY")
 
 group = client.sim_card_groups.create(
     name="fleet-north-america",
-    data_limit={"amount": 5.0, "unit": "GB"}
+    data_limit={"amount": "5120", "unit": "MB"}
 )
-print(group.id)
+if group.data is None:
+    raise RuntimeError("SIM card group response did not include data")
+print(group.data.id)
 ```
 
 ### Update a SIM Card Group
@@ -170,8 +192,8 @@ curl -X PATCH "https://api.telnyx.com/v2/sim_card_groups/$GROUP_ID" \
   -H "Content-Type: application/json" \
   -d '{
     "data_limit": {
-      "amount": 10.0,
-      "unit": "GB"
+      "amount": "10240",
+      "unit": "MB"
     }
   }'
 ```
@@ -181,28 +203,39 @@ curl -X PATCH "https://api.telnyx.com/v2/sim_card_groups/$GROUP_ID" \
 | Setting | Description |
 |---|---|
 | `name` | Group name for identification |
-| `data_limit` | Data usage cap (amount + unit: MB/GB). SIMs exceeding this transition to `data_limit_exceeded` state |
-| `private_wireless_gateway_id` | Associate with a Private Wireless Gateway |
-| Network preferences | Configure preferred mobile networks |
+| `data_limit` | Data usage cap (`amount` is a string; use documented `MB` units). SIMs exceeding this transition to `data_limit_exceeded` state |
+| Private Wireless Gateway | Associate through the asynchronous `set_private_wireless_gateway` action, not the create/update group body |
+| Network preferences | Preferred mobile networks. Not settable via the API — configure in the Mission Control Portal; changes surface read-only as OTA updates (see [Step 4](#step-4-manage-network-preferences)) |
 
 ## Step 4: Manage Network Preferences
 
-Telnyx gives you control over which mobile networks your SIMs prefer. This is configured at the SIM Card Group level.
+Telnyx gives you control over which mobile networks your SIMs prefer. Network preference changes are applied to SIMs as an Over-the-Air (OTA) update. In the IoT API these surface as OTA update records with `type: sim_card_network_preferences`, which you can track via `GET /ota_updates` (and `GET /ota_updates/{id}` for a single update).
 
 ```bash
-# Set network preferences for a SIM card group
-curl -X PUT "https://api.telnyx.com/v2/sim_card_groups/$GROUP_ID/actions/set_network_preferences" \
-  -H "Authorization: Bearer $TELNYX_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "mobile_operator_networks_preferences": [
-      {
-        "mobile_operator_network_id": "OPERATOR_ID",
-        "priority": 1
-      }
-    ]
-  }'
+# List OTA updates (network preference changes appear as type "sim_card_network_preferences")
+curl -H "Authorization: Bearer $TELNYX_API_KEY" \
+  "https://api.telnyx.com/v2/ota_updates"
 ```
+
+> **CONFIRMED: there is no `set_network_preferences` write endpoint.** A previous version of this doc showed
+> `PUT|POST /v2/sim_card_groups/{id}/actions/set_network_preferences` with a `mobile_operator_networks_preferences`
+> payload. That endpoint is fabricated — it does not exist. Verified against the live API
+> (`api.telnyx.com`, authenticated):
+>
+> | Request | Result |
+> |---|---|
+> | `POST /v2/sim_card_groups/{id}/actions/set_network_preferences` | HTTP 404 with an **unstructured, router-level** body: `{"errors":{"detail":"Resource not found"}}` — no Telnyx error code, i.e. the route itself is not registered |
+> | `POST /v2/sim_card_groups/{same id}/actions/set_wireless_blocklist` (control: real action route) | HTTP 422 with a **structured** Telnyx error (code `10004`, "Missing required parameter") — the route exists, only validation failed |
+> | `GET /v2/sim_card_groups/{same id}` (control: real resource route) | HTTP 404 with a **structured** Telnyx error (code `10005`, "Resource not found") |
+>
+> Real routes return structured Telnyx errors even when they reject the request; `set_network_preferences` returns the
+> router's generic 404 instead. That difference is the proof the route does not exist.
+>
+> **Do not substitute another write endpoint** — none is documented. Network preferences are only observable
+> read-only through `GET /v2/ota_updates` (and `GET /v2/ota_updates/{id}`) with `type: sim_card_network_preferences`.
+> Set network preferences via the Mission Control Portal, or contact Telnyx support, and use the OTA update records
+> to track that the change propagated to SIMs.
+
 
 **Comparison with Twilio:**
 
@@ -232,7 +265,8 @@ curl -X GET "https://api.telnyx.com/v2/sim_cards/$SIM_CARD_ID/device_details" \
 ### List SIM Card Actions (activity log)
 
 ```bash
-curl -X GET "https://api.telnyx.com/v2/sim_card_actions?filter[sim_card_id]=$SIM_CARD_ID" \
+curl -X GET -G --data-urlencode "filter[sim_card_id]=$SIM_CARD_ID" \
+  "https://api.telnyx.com/v2/sim_card_actions" \
   -H "Authorization: Bearer $TELNYX_API_KEY"
 ```
 
@@ -241,8 +275,10 @@ from telnyx import Telnyx
 client = Telnyx(api_key="YOUR_TELNYX_API_KEY")
 
 sim = client.sim_cards.retrieve("SIM_CARD_ID")
-print(f"ICCID: {sim.iccid}")
-print(f"Status: {sim.status}")
+if sim.data is None:
+    raise RuntimeError("SIM card response did not include data")
+print(f"ICCID: {sim.data.iccid}")
+print(f"Status: {sim.data.status}")
 ```
 
 ## eSIM Support
@@ -296,7 +332,23 @@ curl -X POST https://api.telnyx.com/v2/private_wireless_gateways \
   }'
 ```
 
-Then associate the gateway with a SIM Card Group to route that group's traffic through the private gateway.
+Associate the gateway with a SIM Card Group through the required asynchronous action and capture the action ID:
+
+```bash
+ACTION_ID=$(curl -fsS -X POST \
+  "https://api.telnyx.com/v2/sim_card_groups/$GROUP_ID/actions/set_private_wireless_gateway" \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"private_wireless_gateway_id":"'"$PRIVATE_WIRELESS_GATEWAY_ID"'"}' \
+  | jq -er '.data.id')
+
+# Poll until status is completed; stop and diagnose if it becomes failed.
+curl -fsS \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  "https://api.telnyx.com/v2/sim_card_group_actions/$ACTION_ID"
+```
+
+Do not treat the `202` response as completion. Track `GET /v2/sim_card_group_actions/{id}` until the action reports `completed` or `failed`.
 
 ## APN Configuration
 
@@ -304,7 +356,7 @@ Configure the Access Point Name (APN) on your IoT devices to connect through Tel
 
 | APN Setting | Value |
 |---|---|
-| **Standard APN** | `data.telnyx` |
+| **Standard APN** | `data00.telnyx` |
 | **Private gateway (static IP)** | `data.net` |
 | **Private gateway (dynamic IP)** | `data00.telnyx` |
 
@@ -316,7 +368,7 @@ For devices using Private Wireless Gateways, the APN determines IP assignment be
 
 | Aspect | Twilio Super SIM | Telnyx IoT SIM |
 |---|---|---|
-| Standard APN | `super` | `data.telnyx` |
+| Standard APN | `super` | `data00.telnyx` |
 | Private networking APN | N/A | `data.net` or `data00.telnyx` |
 | Configuration | Device-side | Device-side |
 
@@ -350,10 +402,12 @@ For devices using Private Wireless Gateways, the APN determines IP assignment be
 | Get eSIM activation code | N/A | `GET /v2/sim_cards/{id}/activation_code` |
 | Get device details | N/A | `GET /v2/sim_cards/{id}/device_details` |
 | List SIM actions | N/A | `GET /v2/sim_card_actions` |
-| Set network preferences | `POST /Fleets/{SID}/NetworkAccessProfiles` | `PUT /v2/sim_card_groups/{id}/actions/set_network_preferences` |
+| Read network preference updates (OTA) | `POST /Fleets/{SID}/NetworkAccessProfiles` | `GET /v2/ota_updates` (type `sim_card_network_preferences`) — **read-only; no API write endpoint exists** (confirmed: `.../actions/set_network_preferences` returns a router-level 404, see [Step 4](#step-4-manage-network-preferences)). Set preferences via Mission Control Portal. |
 | Create private gateway | N/A | `POST /v2/private_wireless_gateways` |
 | Order SIMs | Console only | `POST /v2/sim_card_orders` |
-| Bulk update SIMs | N/A | `POST /v2/sim_cards/actions/bulk_update` |
+| Bulk disable voice on SIMs | N/A | `POST /v2/sim_cards/actions/bulk_disable_voice` |
+| Bulk enable voice on SIMs | N/A | `POST /v2/sim_cards/actions/bulk_enable_voice` |
+| Bulk set SIM public IPs | N/A | `POST /v2/sim_cards/actions/bulk_set_public_ips` |
 
 ## Common Pitfalls
 
@@ -361,12 +415,12 @@ For devices using Private Wireless Gateways, the APN determines IP assignment be
 
 2. **Data limit enforcement is automatic** — When a SIM exceeds its group's data limit, it transitions to `data_limit_exceeded` and stops passing data. Increase the limit or reset it to restore connectivity.
 
-3. **APN must be configured on the device** — The APN `data.telnyx` must be set on each IoT device. Devices migrated from Twilio still have the `super` APN configured. Update the APN before or during migration.
+3. **APN must be configured on the device** — The standard APN `data00.telnyx` must be set on each IoT device. Devices migrated from Twilio still have the `super` APN configured. Use `data.net` only for static-IP traffic through a Private Wireless Gateway; update the APN before or during migration.
 
-4. **Registration is a separate step** — Physical SIMs must be registered with their ICCID before they can be enabled. This is an explicit API call, not automatic on first use.
+4. **Registration is a separate step** — Physical SIMs must be registered with their registration code (a short code printed on the SIM, distinct from the ICCID) before they can be enabled. This is an explicit API call, not automatic on first use.
 
 5. **Private Wireless Gateway requires planning** — If you need private networking (Telnyx-only feature), set up the PWG and associate it with your SIM Card Group before enabling SIMs. Changing the gateway later requires SIM reconfiguration.
 
-6. **Network preference changes take time** — Updating network preferences on a SIM Card Group does not immediately switch active SIMs to the new network. Devices may need to be power-cycled or will switch on next network reselection.
+6. **Network preference changes take time — and are not API-writable** — There is no API endpoint to set network preferences (confirmed against the live API; see [Step 4](#step-4-manage-network-preferences)). Make the change in the Mission Control Portal, then track it via `GET /v2/ota_updates` (type `sim_card_network_preferences`). Even once applied, the change does not immediately switch active SIMs to the new network — devices may need to be power-cycled or will switch on next network reselection.
 
 7. **eSIM activation codes are one-time use** — Each activation code can only be used once. If provisioning fails, you may need to purchase a replacement eSIM.

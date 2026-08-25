@@ -8,12 +8,13 @@
 #
 # Usage:
 #   bash lint-telnyx-correctness.sh <project-root> [--product <name>] [--json]
-#                                   [--scan-json <path>]
+#                                   [--state-file <path>] [--scan-json <path>]
 #
 # Options:
 #   <project-root>       Path to the project to lint (required)
 #   --product <name>     Only check patterns for a specific product
 #   --json               Output results as machine-readable JSON
+#   --state-file <path>  Path to migration-state.json for hybrid context
 #   --scan-json <path>   Path to twilio-scan.json for context-aware checks
 #
 # Exit codes:
@@ -42,6 +43,8 @@ JSON_MODE=false
 PRODUCT_FILTER="all"
 PROJECT_ROOT=""
 SCAN_JSON=""
+STATE_FILE=""
+HYBRID_PRODUCTS=""
 JSON_CHECKS="[]"
 
 EXCLUDE_DIRS="node_modules .git vendor __pycache__ venv .venv dist build"
@@ -51,7 +54,7 @@ EXCLUDE_SCAN_FILES="--exclude=twilio-scan.json --exclude=twilio-deep-scan.json -
 # --- Helpers ---
 
 usage() {
-  echo "Usage: $(basename "$0") <project-root> [--product <name>] [--json] [--scan-json <path>]"
+  echo "Usage: $(basename "$0") <project-root> [--product <name>] [--json] [--state-file <path>] [--scan-json <path>]"
   echo ""
   echo "Checks migrated Telnyx code for known anti-patterns and common mistakes."
   echo ""
@@ -163,10 +166,26 @@ lint_pass() {
 
 product_applies() {
   local check_products="$1"
+  if [ "$check_products" != "all" ] && [ -n "$HYBRID_PRODUCTS" ]; then
+    local candidate
+    for candidate in $(echo "$check_products" | tr ',' ' '); do
+      if echo "$HYBRID_PRODUCTS" | tr ',' '\n' | grep -qx "$candidate"; then
+        return 1
+      fi
+    done
+  fi
   if [ "$PRODUCT_FILTER" = "all" ] || [ "$check_products" = "all" ]; then
     return 0
   fi
   echo "$check_products" | tr ',' '\n' | grep -qx "$PRODUCT_FILTER"
+}
+
+hybrid_waiver_applies() {
+  [ -n "$HYBRID_PRODUCTS" ] || return 1
+  if [ "$PRODUCT_FILTER" = "all" ]; then
+    return 0
+  fi
+  echo "$HYBRID_PRODUCTS" | tr ',' '\n' | grep -qx "$PRODUCT_FILTER"
 }
 
 section_header() {
@@ -195,6 +214,11 @@ while [ $# -gt 0 ]; do
     --scan-json)
       if [ $# -lt 2 ]; then echo "Error: --scan-json requires a value" >&2; usage; fi
       SCAN_JSON="$2"
+      shift 2
+      ;;
+    --state-file)
+      if [ $# -lt 2 ]; then echo "Error: --state-file requires a value" >&2; usage; fi
+      STATE_FILE="$2"
       shift 2
       ;;
     -h|--help)
@@ -233,6 +257,24 @@ fi
 
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 GREP_EXCLUDES=$(build_exclude_args)
+
+if [ -n "$STATE_FILE" ]; then
+  if [ ! -f "$STATE_FILE" ]; then
+    echo "Warning: --state-file '$STATE_FILE' not found, ignoring" >&2
+  elif ! command -v jq >/dev/null 2>&1; then
+    echo "Error: --state-file requires jq" >&2
+    exit 2
+  else
+    HYBRID_PRODUCTS=$(jq -r '
+      if type == "object" and ((.kept_on_twilio? // {}) | type == "object")
+      then (.kept_on_twilio // {} | to_entries | map(select(.value) | .key | ascii_downcase) | join(","))
+      else error("invalid migration state") end
+    ' "$STATE_FILE" 2>/dev/null) || {
+      echo "Error: --state-file '$STATE_FILE' is not valid migration state JSON" >&2
+      exit 2
+    }
+  fi
+fi
 
 # Load scan context if provided (for context-aware checks like webhook validation)
 ORIGINAL_HAD_WEBHOOK_VALIDATION="unknown"
@@ -484,10 +526,17 @@ if product_applies "all"; then
   twilio_webhook_mw=$(search_files "(twilio\.webhook\(|@validate_twilio_request|RequestValidator\(|twilio.*validateRequest|validateExpressRequest)" "*.py" "*.js" "*.ts" "*.rb")
   twilio_mw_count=$(count_matches "$twilio_webhook_mw")
   if [ "$twilio_mw_count" -gt 0 ]; then
-    lint_issue "twilio_webhook_middleware" \
-      "Twilio webhook middleware/validator still present in $twilio_mw_count file(s)" \
-      "Remove if original had validate:false (it was a no-op). Replace with Ed25519 if original actually validated." \
-      "$(matches_to_json "$twilio_webhook_mw")"
+    if hybrid_waiver_applies; then
+      lint_warn "twilio_webhook_middleware" \
+        "Twilio webhook middleware/validator remains while selected products are intentionally hybrid" \
+        "Confirm each validator belongs only to kept products: $HYBRID_PRODUCTS" \
+        "$(matches_to_json "$twilio_webhook_mw")"
+    else
+      lint_issue "twilio_webhook_middleware" \
+        "Twilio webhook middleware/validator still present in $twilio_mw_count file(s)" \
+        "Remove if original had validate:false (it was a no-op). Replace with Ed25519 if original actually validated." \
+        "$(matches_to_json "$twilio_webhook_mw")"
+    fi
   else
     lint_pass "twilio_webhook_middleware" "No Twilio webhook middleware found"
   fi
@@ -553,10 +602,17 @@ section_header "Residual Twilio Patterns"
 matches=$(search_files '(from twilio|import twilio|require.*twilio|using Twilio)' "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.php" "*.cs")
 count=$(count_matches "$matches")
 if [ "$count" -gt 0 ]; then
-  lint_issue "residual_twilio_imports" \
-    "Residual Twilio imports found in $count file(s)" \
-    "Remove Twilio imports — migration should replace them with Telnyx equivalents" \
-    "$(matches_to_json "$matches")"
+  if hybrid_waiver_applies; then
+    lint_warn "residual_twilio_imports" \
+      "Residual Twilio imports found in $count file(s) while products remain intentionally hybrid" \
+      "Confirm each import belongs only to kept products: $HYBRID_PRODUCTS" \
+      "$(matches_to_json "$matches")"
+  else
+    lint_issue "residual_twilio_imports" \
+      "Residual Twilio imports found in $count file(s)" \
+      "Remove Twilio imports — migration should replace them with Telnyx equivalents" \
+      "$(matches_to_json "$matches")"
+  fi
 else
   lint_pass "residual_twilio_imports" "No residual Twilio imports found"
 fi
@@ -565,10 +621,17 @@ fi
 matches=$(search_files '(Client\(.*account_sid|Twilio\(|twilio\.Twilio\(|new Twilio\.)' "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.php")
 count=$(count_matches "$matches")
 if [ "$count" -gt 0 ]; then
-  lint_issue "twilio_client_instantiation" \
-    "Twilio client instantiation found in $count file(s)" \
-    "Replace with Telnyx client: from telnyx import Telnyx; client = Telnyx(api_key=...) (Python) or new Telnyx({ apiKey: ... }) (JS)" \
-    "$(matches_to_json "$matches")"
+  if hybrid_waiver_applies; then
+    lint_warn "twilio_client_instantiation" \
+      "Twilio client instantiation found in $count file(s) while products remain intentionally hybrid" \
+      "Confirm each client belongs only to kept products: $HYBRID_PRODUCTS" \
+      "$(matches_to_json "$matches")"
+  else
+    lint_issue "twilio_client_instantiation" \
+      "Twilio client instantiation found in $count file(s)" \
+      "Replace with Telnyx client: from telnyx import Telnyx; client = Telnyx(api_key=...) (Python) or new Telnyx({ apiKey: ... }) (JS)" \
+      "$(matches_to_json "$matches")"
+  fi
 else
   lint_pass "twilio_client_instantiation" "No Twilio client instantiation found"
 fi
@@ -580,10 +643,17 @@ twilio_dirs=$(find "$PROJECT_ROOT" -mindepth 1 \
   -o -type d -iname '*twilio*' -print 2>/dev/null || true)
 twilio_dir_count=$(echo "$twilio_dirs" | sed '/^$/d' | wc -l | tr -d ' ')
 if [ "$twilio_dir_count" -gt 0 ] && [ -n "$(echo "$twilio_dirs" | sed '/^$/d')" ]; then
-  lint_issue "twilio_directory_names" \
-    "Found $twilio_dir_count directory name(s) containing 'twilio'" \
-    "Rename directories: replace 'twilio' with 'telnyx' in directory names (e.g., feature/twilio/ → feature/telnyx/)" \
-    "$(echo "$twilio_dirs" | sed '/^$/d' | head -10 | jq -R -s '{directories: (split("\n") | map(select(length > 0)))}' 2>/dev/null || echo '{"directories":[]}')"
+  if hybrid_waiver_applies; then
+    lint_warn "twilio_directory_names" \
+      "Found $twilio_dir_count Twilio-named directory/directories while selected products are intentionally hybrid" \
+      "Confirm each directory belongs only to kept products: $HYBRID_PRODUCTS" \
+      "$(echo "$twilio_dirs" | sed '/^$/d' | head -10 | jq -R -s '{files: (split("\n") | map(select(length > 0)))}' 2>/dev/null || echo '{"files":[]}')"
+  else
+    lint_issue "twilio_directory_names" \
+      "Found $twilio_dir_count directory name(s) containing 'twilio'" \
+      "Rename directories: replace 'twilio' with 'telnyx' in directory names (e.g., feature/twilio/ → feature/telnyx/)" \
+      "$(echo "$twilio_dirs" | sed '/^$/d' | head -10 | jq -R -s '{files: (split("\n") | map(select(length > 0)))}' 2>/dev/null || echo '{"files":[]}')"
+  fi
 else
   lint_pass "twilio_directory_names" "No directory names containing 'twilio'"
 fi

@@ -16,9 +16,9 @@ Migrate phone number management from Twilio to Telnyx Number Management API.
 
 Key differences:
 - Telnyx uses **Number Orders** for purchasing (async) vs Twilio's immediate `IncomingPhoneNumbers.create()`
-- Numbers must be assigned to a **Connection** (voice) or **Messaging Profile** (messaging) before use
+- Voice numbers use a **Connection**. Messaging configuration is sender-dependent: an owned number/short code can resolve its assigned profile, while number-pool and alphanumeric-sender requests must provide `messaging_profile_id`
 - Telnyx is a licensed carrier with direct number inventory in 140+ countries
-- No "sub-resource" pattern — configuration is via PATCH on the number itself or via connections
+- Voice/number fields such as `connection_id` use the base phone-number resource, while messaging assignment uses the dedicated `/phone_numbers/{id}/messaging` endpoint
 
 ## Searching Available Numbers
 
@@ -55,7 +55,10 @@ curl "https://api.twilio.com/2010-04-01/Accounts/$SID/AvailablePhoneNumbers/US/L
 
 # Telnyx
 curl -H "Authorization: Bearer $TELNYX_API_KEY" \
-  "https://api.telnyx.com/v2/available_phone_numbers?filter[country_code]=US&filter[national_destination_code]=312&filter[limit]=5"
+  -G --data-urlencode "filter[country_code]=US" \
+     --data-urlencode "filter[national_destination_code]=312" \
+     --data-urlencode "filter[limit]=5" \
+  "https://api.telnyx.com/v2/available_phone_numbers"
 ```
 
 ### Search Parameter Mapping
@@ -76,47 +79,184 @@ curl -H "Authorization: Bearer $TELNYX_API_KEY" \
 Twilio purchases immediately. Telnyx uses a **Number Order** (async, usually completes in seconds).
 
 ```python
-# Twilio — immediate
-number = client.incoming_phone_numbers.create(phone_number='+13125551234')
+import os
+import re
+from decimal import Decimal, InvalidOperation
 
-# Telnyx — order-based
-order = client.number_orders.create(
-    phone_numbers=[{"phone_number": "+13125551234"}],
-    connection_id="YOUR_CONNECTION_ID",  # optional: assign to voice connection
-    messaging_profile_id="YOUR_PROFILE_ID"  # optional: assign to messaging
+target_number = "+13125551234"
+if re.fullmatch(r"\+[1-9]\d{7,14}", target_number) is None:
+    raise RuntimeError("Purchase target must be an E.164 phone number")
+
+# Twilio — immediate. Approve this provider's purchase independently.
+if os.environ.get("TWILIO_APPROVE_NUMBER_PURCHASE") != target_number:
+    raise RuntimeError("Twilio number purchase not approved")
+number = client.incoming_phone_numbers.create(phone_number=target_number)
+
+# Telnyx — order-based. This has a separate, price-bound approval below.
+inventory = client.available_phone_numbers.list(
+    filter={
+        "phone_number": {"contains": target_number.removeprefix("+")},
+        "limit": 100,
+    }
 )
-# order.id = order ID, check order.status
+exact_matches = [
+    candidate for candidate in inventory.data
+    if candidate.phone_number == target_number
+]
+if len(exact_matches) != 1:
+    raise RuntimeError("Expected exactly one current inventory match")
+
+cost = exact_matches[0].cost_information
+try:
+    upfront_cost = Decimal(cost.upfront_cost)
+    monthly_cost = Decimal(cost.monthly_cost)
+    if (
+        not upfront_cost.is_finite()
+        or not monthly_cost.is_finite()
+        or upfront_cost < 0
+        or monthly_cost < 0
+    ):
+        raise ValueError
+except (InvalidOperation, TypeError, ValueError):
+    raise RuntimeError("Inventory response contained an invalid cost")
+if re.fullmatch(r"[A-Z]{3}", cost.currency or "") is None:
+    raise RuntimeError("Inventory response contained an invalid currency")
+quote = (
+    f"{target_number}|{cost.upfront_cost}|"
+    f"{cost.monthly_cost}|{cost.currency}"
+)
+print(
+    f"Order quote: {target_number}; upfront {cost.upfront_cost} "
+    f"{cost.currency}; monthly {cost.monthly_cost} {cost.currency}"
+)
+# Approve the exact E.164 number and the current upfront, monthly, and currency tuple.
+if os.environ.get("TELNYX_APPROVE_NUMBER_ORDER") != quote:
+    raise RuntimeError("Number order not approved")
+order = client.number_orders.create(
+    phone_numbers=[{"phone_number": target_number}]
+)
+if order.data is None:
+    raise RuntimeError("Number order response did not include data")
+print(order.data.id, order.data.status)
 ```
 
 ```javascript
-// Twilio
+const targetNumber = '+13125551234';
+if (!/^\+[1-9][0-9]{7,14}$/.test(targetNumber)) {
+  throw new Error('Purchase target must be an E.164 phone number');
+}
+
+// Twilio — approve this provider's purchase independently.
+if (process.env.TWILIO_APPROVE_NUMBER_PURCHASE !== targetNumber) {
+  throw new Error('Twilio number purchase not approved');
+}
 const number = await client.incomingPhoneNumbers.create({
-  phoneNumber: '+13125551234'
+  phoneNumber: targetNumber
 });
 
-// Telnyx
+// Telnyx — this has a separate, price-bound approval below.
+const inventory = await client.availablePhoneNumbers.list({
+  filter: {
+    phone_number: { contains: targetNumber.replace(/^\+/, '') },
+    limit: 100
+  }
+});
+const exactMatches = inventory.data.filter(
+  (candidate) => candidate.phoneNumber === targetNumber
+);
+if (exactMatches.length !== 1) {
+  throw new Error('Expected exactly one current inventory match');
+}
+const cost = exactMatches[0].costInformation;
+if (
+  typeof cost.upfrontCost !== 'string' ||
+  typeof cost.monthlyCost !== 'string' ||
+  !/^[0-9]+(?:\.[0-9]+)?$/.test(cost.upfrontCost) ||
+  !/^[0-9]+(?:\.[0-9]+)?$/.test(cost.monthlyCost) ||
+  !/^[A-Z]{3}$/.test(cost.currency || '') ||
+  !Number.isFinite(Number(cost.upfrontCost)) ||
+  !Number.isFinite(Number(cost.monthlyCost)) ||
+  Number(cost.upfrontCost) < 0 ||
+  Number(cost.monthlyCost) < 0
+) {
+  throw new Error('Inventory response contained an invalid cost');
+}
+const quote = [
+  targetNumber,
+  cost.upfrontCost,
+  cost.monthlyCost,
+  cost.currency
+].join('|');
+console.log(
+  `Order quote: ${targetNumber}; upfront ${cost.upfrontCost} ${cost.currency}; ` +
+  `monthly ${cost.monthlyCost} ${cost.currency}`
+);
+// Approve the exact E.164 number and the current upfront, monthly, and currency tuple.
+if (process.env.TELNYX_APPROVE_NUMBER_ORDER !== quote) {
+  throw new Error('Number order not approved');
+}
 const order = await client.numberOrders.create({
-  phone_numbers: [{ phone_number: '+13125551234' }],
-  connection_id: 'YOUR_CONNECTION_ID',
-  messaging_profile_id: 'YOUR_PROFILE_ID'
+  phone_numbers: [{ phone_number: targetNumber }]
 });
 ```
 
 ```bash
-# Twilio
-curl -X POST "https://api.twilio.com/2010-04-01/Accounts/$SID/IncomingPhoneNumbers.json" \
-  -u "$SID:$AUTH_TOKEN" -d "PhoneNumber=+13125551234"
+TARGET_NUMBER="+13125551234"
+[[ "$TARGET_NUMBER" =~ ^\+[1-9][0-9]{7,14}$ ]] || {
+  echo "Target number must be a valid E.164 value" >&2; exit 1;
+}
 
-# Telnyx
-curl -X POST "https://api.telnyx.com/v2/number_orders" \
+# Twilio — approve this provider's purchase independently.
+test "${TWILIO_APPROVE_NUMBER_PURCHASE:-}" = "$TARGET_NUMBER" || {
+  echo "Twilio number purchase not approved" >&2; exit 1;
+}
+curl -fsS -X POST "https://api.twilio.com/2010-04-01/Accounts/$SID/IncomingPhoneNumbers.json" \
+  -u "$SID:$AUTH_TOKEN" \
+  --data-urlencode "PhoneNumber=$TARGET_NUMBER"
+
+# Telnyx — this has a separate, price-bound approval below.
+INVENTORY=$(curl -fsS -G \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  --data-urlencode "filter[phone_number][contains]=${TARGET_NUMBER#+}" \
+  --data-urlencode "filter[limit]=100" \
+  "https://api.telnyx.com/v2/available_phone_numbers")
+COST=$(printf '%s' "$INVENTORY" | jq -ce --arg number "$TARGET_NUMBER" '
+  [.data[]? | select(.phone_number == $number)] as $matches
+  | if ($matches | length) == 1
+    then $matches[0].cost_information
+    else error("expected exactly one current inventory match")
+    end
+  | select(
+      (.upfront_cost | type) == "string" and
+      (.upfront_cost | test("^[0-9]+([.][0-9]+)?$")) and
+      (.monthly_cost | type) == "string" and
+      (.monthly_cost | test("^[0-9]+([.][0-9]+)?$")) and
+      (.currency | type) == "string" and
+      (.currency | test("^[A-Z]{3}$"))
+    )
+') || { echo "Number inventory quote was incomplete or invalid" >&2; exit 1; }
+UPFRONT_COST=$(printf '%s' "$COST" | jq -r '.upfront_cost')
+MONTHLY_COST=$(printf '%s' "$COST" | jq -r '.monthly_cost')
+CURRENCY=$(printf '%s' "$COST" | jq -r '.currency')
+APPROVAL_TOKEN="$TARGET_NUMBER|$UPFRONT_COST|$MONTHLY_COST|$CURRENCY"
+printf 'Order quote: %s; upfront %s %s; monthly %s %s\n' \
+  "$TARGET_NUMBER" "$UPFRONT_COST" "$CURRENCY" "$MONTHLY_COST" "$CURRENCY"
+# Approve the exact E.164 number and the displayed cost tuple.
+test "${TELNYX_APPROVE_NUMBER_ORDER:-}" = "$APPROVAL_TOKEN" || {
+  echo "Number order not approved" >&2; exit 1;
+}
+ORDER_PAYLOAD=$(jq -cn \
+  --arg phone_number "$TARGET_NUMBER" \
+  '{phone_numbers: [{phone_number: $phone_number}]}')
+curl -fsS -X POST "https://api.telnyx.com/v2/number_orders" \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "phone_numbers": [{"phone_number": "+13125551234"}],
-    "connection_id": "YOUR_CONNECTION_ID",
-    "messaging_profile_id": "YOUR_PROFILE_ID"
-  }'
+  --data "$ORDER_PAYLOAD"
 ```
+
+After the order completes, assign the purchased number to the intended voice Connection and/or Messaging Profile as a separate, explicitly reviewed configuration change.
+
+The Number Orders request contains the approved number but no quote ID or maximum-charge field. The gate above therefore protects the local execution path by re-querying immediately and requiring the displayed cost tuple; it does not lock the server-side price. If a possible price change between inventory lookup and order creation is unacceptable, complete the purchase in the Mission Control Portal instead.
 
 ## Listing Owned Numbers
 
@@ -150,6 +290,10 @@ curl -H "Authorization: Bearer $TELNYX_API_KEY" \
 
 On Twilio, you set webhook URLs directly on the number. On Telnyx, you assign numbers to **Connections** (voice) and **Messaging Profiles** (messaging) which hold the webhook configuration.
 
+Two things to note for Telnyx:
+- `PATCH`/`DELETE /phone_numbers/{id}` operate on the **internal numeric number ID**, not the E.164 number. Look up the ID first with `GET /phone_numbers?filter[phone_number]=...`.
+- `messaging_profile_id` is **not** accepted on the base `PATCH /phone_numbers/{id}` endpoint (which handles `connection_id` and other voice/number fields). Messaging assignment is a separate endpoint: `PATCH /phone_numbers/{id}/messaging`.
+
 ```python
 # Twilio — set webhooks on number
 client.incoming_phone_numbers('PN...').update(
@@ -157,10 +301,19 @@ client.incoming_phone_numbers('PN...').update(
     sms_url='https://example.com/sms'
 )
 
-# Telnyx — update number's connection + messaging profile assignment
+# Telnyx — look up the internal number ID, then assign connection + messaging profile
+matches = client.phone_numbers.list(filter={"phone_number": "+13125551234"})
+number_id = matches.data[0].id
+
+# connection_id (and other base fields) go on the phone number itself
 client.phone_numbers.update(
-    "+13125551234",
-    connection_id="YOUR_CONNECTION_ID",
+    number_id,
+    connection_id="YOUR_CONNECTION_ID"
+)
+
+# messaging_profile_id is assigned via the separate messaging sub-resource
+client.phone_numbers.messaging.update(
+    number_id,
     messaging_profile_id="YOUR_PROFILE_ID"
 )
 # Webhooks are configured on the Connection and Messaging Profile, not on the number
@@ -172,11 +325,23 @@ curl -X POST "https://api.twilio.com/2010-04-01/Accounts/$SID/IncomingPhoneNumbe
   -u "$SID:$AUTH_TOKEN" \
   -d "VoiceUrl=https://example.com/voice" -d "SmsUrl=https://example.com/sms"
 
-# Telnyx
-curl -X PATCH "https://api.telnyx.com/v2/phone_numbers/+13125551234" \
+# Telnyx — look up the internal number ID first (PATCH uses the ID, not the E.164 number)
+NUMBER_ID=$(curl -s -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -G --data-urlencode "filter[phone_number]=+13125551234" \
+  "https://api.telnyx.com/v2/phone_numbers" \
+  | jq -r '.data[0].id')
+
+# Assign the voice connection on the phone number itself
+curl -X PATCH "https://api.telnyx.com/v2/phone_numbers/$NUMBER_ID" \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"connection_id": "YOUR_CONNECTION_ID", "messaging_profile_id": "YOUR_PROFILE_ID"}'
+  -d '{"connection_id": "YOUR_CONNECTION_ID"}'
+
+# Assign the messaging profile via the separate messaging endpoint
+curl -X PATCH "https://api.telnyx.com/v2/phone_numbers/$NUMBER_ID/messaging" \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"messaging_profile_id": "YOUR_PROFILE_ID"}'
 ```
 
 ### Configuration Mapping
@@ -194,20 +359,79 @@ curl -X PATCH "https://api.telnyx.com/v2/phone_numbers/+13125551234" \
 ## Releasing Numbers
 
 ```python
-# Twilio
-client.incoming_phone_numbers('PN...').delete()
+import os
+import re
 
-# Telnyx
-client.phone_numbers.delete("+13125551234")
+# Twilio — approve this provider's irreversible release independently.
+twilio_number_sid = os.environ.get("TWILIO_NUMBER_SID", "")
+if re.fullmatch(r"PN[0-9a-fA-F]{32}", twilio_number_sid) is None:
+    raise RuntimeError("TWILIO_NUMBER_SID must be a complete Twilio number SID")
+if os.environ.get("TWILIO_CONFIRM_RELEASE_NUMBER") != twilio_number_sid:
+    raise RuntimeError("Twilio phone-number release not approved")
+client.incoming_phone_numbers(twilio_number_sid).delete()
+
+# Telnyx — delete by internal number ID after a separate exact E.164 approval.
+target_number = "+13125551234"
+if re.fullmatch(r"\+[1-9]\d{7,14}", target_number) is None:
+    raise RuntimeError("Release target must be an E.164 phone number")
+response = client.phone_numbers.list(
+    filter={"phone_number": target_number.removeprefix("+")}
+)
+exact_matches = [
+    number for number in (response.data or [])
+    if number.phone_number == target_number
+]
+if len(exact_matches) != 1:
+    raise RuntimeError(
+        f"Expected exactly one owned number matching {target_number}; found {len(exact_matches)}"
+    )
+number_id = exact_matches[0].id
+if not isinstance(number_id, str) or not number_id.strip():
+    raise RuntimeError("Matched phone number did not include a nonempty id")
+
+# Set this to the exact E.164 number only after approving its irreversible release.
+if os.environ.get("TELNYX_CONFIRM_RELEASE_NUMBER") != target_number:
+    raise RuntimeError("Phone-number release not approved")
+client.phone_numbers.delete(number_id)
 ```
 
 ```bash
-# Twilio
-curl -X DELETE "https://api.twilio.com/2010-04-01/Accounts/$SID/IncomingPhoneNumbers/PN123.json" \
+# Twilio — approve this provider's irreversible release independently.
+TWILIO_NUMBER_SID="${TWILIO_NUMBER_SID:-}"
+[[ "$TWILIO_NUMBER_SID" =~ ^PN[0-9a-fA-F]{32}$ ]] || {
+  echo "TWILIO_NUMBER_SID must be a complete Twilio number SID" >&2; exit 1;
+}
+test "${TWILIO_CONFIRM_RELEASE_NUMBER:-}" = "$TWILIO_NUMBER_SID" || {
+  echo "Twilio phone-number release not approved" >&2; exit 1;
+}
+curl -fsS -X DELETE "https://api.twilio.com/2010-04-01/Accounts/$SID/IncomingPhoneNumbers/$TWILIO_NUMBER_SID.json" \
   -u "$SID:$AUTH_TOKEN"
 
-# Telnyx
-curl -X DELETE "https://api.telnyx.com/v2/phone_numbers/+13125551234" \
+# Telnyx — look up one exact E.164 match, then require a separate approval.
+TARGET_NUMBER="+13125551234"
+[[ "$TARGET_NUMBER" =~ ^\+[1-9][0-9]{7,14}$ ]] || {
+  echo "Release target must be an E.164 phone number" >&2; exit 1;
+}
+FILTER_NUMBER="${TARGET_NUMBER#+}"
+LOOKUP_RESPONSE=$(curl -fsS -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -G --data-urlencode "filter[phone_number]=$FILTER_NUMBER" \
+  "https://api.telnyx.com/v2/phone_numbers") || exit 1
+MATCH_COUNT=$(jq -er --arg target "$TARGET_NUMBER" \
+  '[.data[]? | select(.phone_number == $target)] | length' \
+  <<<"$LOOKUP_RESPONSE") || exit 1
+test "$MATCH_COUNT" -eq 1 || {
+  echo "Expected exactly one owned number matching $TARGET_NUMBER; found $MATCH_COUNT" >&2
+  exit 1
+}
+NUMBER_ID=$(jq -er --arg target "$TARGET_NUMBER" \
+  '[.data[]? | select(.phone_number == $target)][0].id | select(type == "string" and test("\\S"))' \
+  <<<"$LOOKUP_RESPONSE") || { echo "Matched phone number did not include a nonempty id" >&2; exit 1; }
+
+# Set this to the exact E.164 number only after approving its irreversible release.
+test "${TELNYX_CONFIRM_RELEASE_NUMBER:-}" = "$TARGET_NUMBER" || {
+  echo "Phone-number release not approved" >&2; exit 1;
+}
+curl -fsS -X DELETE "https://api.telnyx.com/v2/phone_numbers/$NUMBER_ID" \
   -H "Authorization: Bearer $TELNYX_API_KEY"
 ```
 

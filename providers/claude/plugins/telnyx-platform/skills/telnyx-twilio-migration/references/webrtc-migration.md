@@ -42,34 +42,57 @@ A backend server is only needed for:
 
 ## TwiML Endpoint Analysis (DELETE vs CONVERT)
 
+> **PRECEDENCE (matches SKILL.md Phase 2, Step 2.2).** This tree and the Phase 2 voice-approach matrix answer different questions and are applied in order:
+>
+> - **This tree decides whether the endpoint survives.** It runs **first** and **wins on existence**. A WebRTC-only endpoint whose whole body is `<Dial><Number>` or `<Dial><Client>` is DELETED, even though the Phase 2 matrix lists "simple Dial" under TeXML — the matrix is about *how* to serve an endpoint you are keeping, not *whether* to keep it. The browser SDK dials directly via `client.newCall()`, so a deleted endpoint has nothing left for TeXML to express.
+> - **The Phase 2 matrix then decides the approach (TeXML vs Call Control) for everything this tree marks CONVERT.**
+>
+> This tree only applies to endpoints reached by a **WebRTC client**. An endpoint driven by an inbound PSTN webhook with no WebRTC client involved is out of scope here — send it straight to the Phase 2 matrix.
+
 Before migrating each TwiML endpoint, determine if it's still needed:
+
+**The direction of the call leg decides the answer.** `client.newCall()` only exists in a browser/app that is already running your JS. It cannot be used to handle a leg that originated somewhere else (a PSTN caller dialling your Telnyx number, or a Call Control leg your server created). Those legs must be answered by XML or by a server-side API command. Check the direction *before* deleting anything.
 
 ```
 TwiML ENDPOINT DECISION TREE
 ─────────────────────────────
-Does it ONLY do simple dial?
-(Returns <Dial><Number>{param}</Number></Dial>)
-├── YES → DELETE endpoint, use client.newCall() instead
-└── NO → Does it dial a <Client> identity?
-    (Returns <Dial><Client>agent_name</Client></Dial>)
-    ├── YES → DELETE endpoint, use SIP URI dialing instead
-    │         (see Identity-Based Routing below)
-    └── NO → Does it use <Gather>, <Record>, <Say>, <Play>, <Conference>, or conditional logic?
-        ├── YES → CONVERT to TeXML (keep server endpoint, XML is compatible)
-        └── NO → Likely DELETE (analyze further)
+Who originates the call leg this endpoint serves?
+
+BROWSER/APP-ORIGINATED (your JS is already running; endpoint was reached
+because Twilio called your TwiML App after device.connect())
+├── Does it ONLY do simple dial?
+│   (Returns <Dial><Number>{param}</Number></Dial>)
+│   ├── YES → DELETE endpoint, use client.newCall() instead
+│   └── NO → Does it dial a <Client> identity?
+│       (Returns <Dial><Client>agent_name</Client></Dial>)
+│       ├── YES → DELETE endpoint, dial the target agent's SIP URI from
+│       │         the client (see Identity-Based Routing below)
+│       └── NO → Does it use <Gather>, <Record>, <Say>, <Play>,
+│                <Conference>, or conditional logic?
+│           ├── YES → CONVERT to TeXML (keep server endpoint, XML is compatible)
+│           └── NO → Likely DELETE (analyze further)
+│
+└── PSTN-ORIGINATED or SERVER-ORIGINATED (inbound number webhook, or a leg
+    created by the REST API — no browser JS is running on this leg)
+    └── ALWAYS CONVERT — never DELETE. There is no client.newCall() to
+        replace it with. <Dial><Client>agent</Client></Dial> becomes
+        <Dial><Sip>sip:{sip_username}@sip.telnyx.com</Sip></Dial>.
 ```
 
-| TwiML Pattern | Action | Telnyx Replacement |
-|---|---|---|
-| `<Dial><Number>{To}</Number></Dial>` | **DELETE** | `client.newCall({destinationNumber: to})` |
-| `<Dial callerId="+1...">{To}</Dial>` | **DELETE** | `client.newCall({destinationNumber, callerNumber})` |
-| `<Dial><Client>identity</Client></Dial>` | **DELETE** | `client.newCall({destinationNumber: 'sip:identity@subdomain.sip.telnyx.com'})` |
-| `<Gather><Say>Press 1...</Say></Gather>` | **CONVERT** | Same XML, point to TeXML Application |
-| `<Record action="/handle">` | **CONVERT** | Same XML, point to TeXML Application |
-| `<Dial><Conference>room</Conference></Dial>` | **CONVERT** | Same XML, point to TeXML Application |
-| Conditional routing (if/else) | **CONVERT** | Same server logic, return TeXML |
+| TwiML Pattern | Leg direction | Action | Telnyx Replacement |
+|---|---|---|---|
+| `<Dial><Number>{To}</Number></Dial>` | browser-originated | **DELETE** | `client.newCall({destinationNumber: to})` |
+| `<Dial callerId="+1...">{To}</Dial>` | browser-originated | **DELETE** | `client.newCall({destinationNumber, callerNumber})` |
+| `<Dial><Client>identity</Client></Dial>` | browser-originated | **DELETE** | `client.newCall({destinationNumber: 'sip:' + sipUsername + '@sip.telnyx.com'})` where `sipUsername` is the target credential's `sip_username` (**not** its `name` — see [Identity-Based Routing](#identity-based-routing-twilio-client--telnyx-sip-credential)) |
+| `<Dial><Client>identity</Client></Dial>` | **PSTN-originated** (inbound number → browser agent) | **CONVERT** | `<Dial><Sip>sip:{sip_username}@sip.telnyx.com</Sip></Dial>` — TeXML, served from your webhook |
+| `<Gather><Say>Press 1...</Say></Gather>` | any | **CONVERT** | Same XML, point to TeXML Application |
+| `<Record action="/handle">` | any | **CONVERT** | Same XML, point to TeXML Application |
+| `<Dial><Conference>room</Conference></Dial>` | any | **CONVERT** | Same XML, point to TeXML Application |
+| Conditional routing (if/else) | any | **CONVERT** | Same server logic, return TeXML |
 
 **Benefits of deleting endpoints:** Lower latency (no server round-trip), less code to maintain, reduced server costs.
+
+**Cost of deleting the wrong endpoint:** a PSTN caller reaches a dead number. Deleting the inbound-number webhook because "it just dials a `<Client>`" is the single most common way a WebRTC migration silently loses all inbound calls — the outbound path still works, so it passes a smoke test.
 
 ## Concept Mapping
 
@@ -90,8 +113,8 @@ Does it ONLY do simple dial?
 | device.on('registered') | client.on('telnyx.ready') | Client connected |
 | device.on('error') | client.on('telnyx.error') | Error handler |
 | device.on('tokenWillExpire') | *None — use timer* | See [Token Management](#token-and-credential-management) |
-| Not built-in | call.hold() / call.unhold() | Telnyx has native hold |
-| Not built-in | call.transfer() | Telnyx has native transfer |
+| Not built-in | call.hold() / call.unhold() | Telnyx has native client-side hold |
+| Server-side transfer | Call Control `transfer` command | No client-side `call.transfer()` method — transfer is a server-side Call Control action |
 
 ### Telnyx Call States
 
@@ -189,27 +212,45 @@ curl -X POST https://api.telnyx.com/v2/credential_connections \
   -H "Content-Type: application/json" \
   -d '{
     "connection_name": "my-webrtc-app",
+    "user_name": "mywebrtcapp",
+    "password": "a-long-random-password-here",
     "active": true,
-    "webrtc_enabled": true,
-    "sip_uri_calling_preference": "disabled",
-    "inbound": {
-      "sip_subdomain": "my-app",
-      "sip_subdomain_receive_settings": "only_my_connections"
-    },
+    "sip_uri_calling_preference": "unrestricted",
     "outbound": {
       "outbound_voice_profile_id": "YOUR_OVP_ID"
     }
   }'
 ```
 
+`user_name`, `password` and `connection_name` are **required** on `POST /v2/credential_connections`. Set `sip_uri_calling_preference` to `"unrestricted"` (or `"internal"`) now if you intend to dial SIP URIs — it defaults to `"disabled"`.
+
 Key SIP connection parameters:
 | Parameter | Purpose |
 |---|---|
-| `webrtc_enabled` | Must be `true` for browser/app clients |
+| `user_name`, `password` | **Required.** Credentials for the connection itself |
+| `connection_name` | **Required.** Friendly name |
 | `sip_uri_calling_preference` | `"disabled"` (default), `"unrestricted"`, or `"internal"` — controls URI dialing |
-| `sip_subdomain` | Unique subdomain for SIP registration (e.g., `my-app.sip.telnyx.com`) |
-| `sip_subdomain_receive_settings` | `"from_anyone"` or `"only_my_connections"` |
-| `outbound_voice_profile_id` | Controls caller ID policy for outbound calls |
+| `outbound.outbound_voice_profile_id` | Controls caller ID policy for outbound calls |
+| `active` | Enable/disable the connection |
+
+#### There is no `webrtc_enabled` flag, and no subdomain, on this endpoint
+
+Older guidance (including earlier revisions of this file) told you to send `webrtc_enabled: true` and `inbound.sip_subdomain` / `inbound.sip_subdomain_receive_settings` when creating the connection. **Do not.** Measured against the live API:
+
+- `POST /v2/credential_connections` with those three fields returns **201 Created** — but a subsequent `GET` returns them as `null`/absent. A follow-up `PATCH`, both nested under `inbound` and at the top level, returns **200 OK** and they remain unset.
+- `GET /v2/credential_connections` and `GET /v2/credential_connections/{id}` do not include `webrtc_enabled`, `sip_subdomain`, or `sip_subdomain_receive_settings` in the response body at all — the keys are absent, not null.
+- None of the three fields appear in the request or response schema for `POST`, `PATCH`, or `GET /credential_connections` (see `sdk-reference/{language}/sip.md`, which is generated from the Telnyx OpenAPI spec).
+
+They are accepted and **silently discarded**. The failure mode is nasty: the API says 201, so your provisioning script reports success, and you proceed believing you enabled WebRTC and reserved a subdomain. You did not.
+
+**Consequences for the rest of this guide:**
+
+1. **You do not need to "enable WebRTC."** A credential connection serves WebRTC clients as soon as it has a telephony credential on it. There is no flag to set — the reason there is no `webrtc_enabled` parameter is that there is nothing to enable.
+2. **Address WebRTC clients at `sip.telnyx.com`, not at a per-app subdomain.** Every SIP URI in this document uses the bare `sip.telnyx.com` host for that reason.
+
+> **Beware: `*.sip.telnyx.com` is a DNS wildcard.** Any label resolves — `dig +short my-app.sip.telnyx.com` and `dig +short zzz-does-not-exist-9f3.sip.telnyx.com` both return the same A record (`192.76.120.10` at time of writing). So a URI built against a subdomain you never provisioned will resolve, connect, and then fail at the SIP layer with no DNS error to point at the cause. Do not treat "the hostname resolves" as evidence that a subdomain exists.
+>
+> Telnyx SIP subdomains *are* a real product feature, configurable in Mission Control Portal → **SIP** → **Connections**. What is documented here is only that they are **not settable through the `/v2/credential_connections` JSON API**. If you need one, provision it in the Portal and confirm registration before relying on it; this guide does not use them.
 
 ### 2. Create SIP Credentials (replaces Access Token generation)
 
@@ -224,6 +265,8 @@ curl -X POST https://api.telnyx.com/v2/telephony_credentials \
 ```
 
 Response includes `sip_username` and `sip_password`. These can be used directly by the client SDK — no backend token exchange required.
+
+**Capture `sip_username` from this response and store it.** It is server-assigned (an opaque `gencred…` string), it is *not* the `name` you sent, and it is the only value that will route a SIP call to this client. See [Identity-Based Routing](#identity-based-routing-twilio-client--telnyx-sip-credential).
 
 For JWT-based auth (optional, more secure):
 ```bash
@@ -241,12 +284,26 @@ npm remove @twilio/voice-sdk
 npm install @telnyx/webrtc
 ```
 
+**No bundler? Load it from a CDN.** `@telnyx/webrtc` ships a UMD bundle as its package `main` (`lib/bundle.js`), so the standard npm CDNs serve it directly — there is no Telnyx-hosted CDN URL:
+
+```html
+<!-- unpkg (pin the version) -->
+<script src="https://unpkg.com/@telnyx/webrtc@2.27.8/lib/bundle.js"></script>
+
+<!-- or jsDelivr -->
+<script src="https://cdn.jsdelivr.net/npm/@telnyx/webrtc@2.27.8/lib/bundle.js"></script>
+```
+
+Pin an explicit version in production. Omitting it (`https://unpkg.com/@telnyx/webrtc/lib/bundle.js`) resolves to `latest` and will silently move under you.
+
 **CDN vs npm — critical pitfall:**
 
 | Method | Import |
 |---|---|
 | npm/bundler | `import { TelnyxRTC } from '@telnyx/webrtc'` — use `TelnyxRTC` directly |
-| CDN script | `<script src="...bundle.js">` — use `TelnyxWebRTC.TelnyxRTC` (double namespace!) |
+| CDN script | `<script src="https://unpkg.com/@telnyx/webrtc@2.27.8/lib/bundle.js">` — use `TelnyxWebRTC.TelnyxRTC` (double namespace!) |
+
+The bundle's UMD wrapper attaches a single global named `TelnyxWebRTC`, and the SDK classes hang off it (`TelnyxWebRTC.TelnyxRTC`, `TelnyxWebRTC.PreCallDiagnosis`). There is no bare `TelnyxRTC` global:
 
 ```javascript
 // CDN: INCORRECT (throws "TelnyxRTC is not defined")
@@ -254,6 +311,10 @@ const client = new TelnyxRTC({ login_token: token });
 
 // CDN: CORRECT
 const client = new TelnyxWebRTC.TelnyxRTC({ login_token: token });
+
+// Destructure once if you prefer the bundler-style name:
+const { TelnyxRTC } = TelnyxWebRTC;
+const client2 = new TelnyxRTC({ login_token: token });
 ```
 
 ### 4. Update Client Code
@@ -266,8 +327,8 @@ If your mobile app uses VoIP push notifications:
 
 | Platform | Twilio | Telnyx |
 |---|---|---|
-| iOS | Register with `device.register(accessToken)` | Upload APNs certificate in Mission Control Portal |
-| Android | Use FCM with Twilio's `handleMessage()` | Use FCM with Telnyx's `handlePushNotification()` |
+| iOS | Register with `device.register(accessToken)` | Create an iOS Mobile Push Credential through the API or Portal, then attach it to the Credential Connection |
+| Android | Use FCM with Twilio's `handleMessage()` | Create an Android Mobile Push Credential from the full Firebase service-account JSON, attach it to the Credential Connection, then use FCM with Telnyx's `handlePushNotification()` |
 
 ## Authentication Flow Comparison
 
@@ -381,108 +442,119 @@ call.hangup();
 | Hold | Not built-in | `call.hold()` |
 | Unhold | Not built-in | `call.unhold()` |
 | Send DTMF | `call.sendDigits('1')` | `call.dtmf('1')` |
-| Transfer | Not built-in | `call.transfer(destination)` |
+| Transfer | Not built-in | *No client method* — use the server-side Call Control `transfer` command |
 
-Telnyx provides built-in hold, unhold, and transfer — features that require server-side logic with Twilio.
+Telnyx provides built-in client-side hold and unhold. Call transfer is not a client SDK method on the `Call` object — it is performed server-side via the Call Control API `transfer` command.
 
 ## Token and Credential Management
 
-### Credential Lifecycle: Per-Session, Not Per-Call
+### Credential Lifecycle: Stable Per User; JWT Per Session
 
 **Twilio pattern** (per-call): Twilio documentation suggests creating a new Access Token for each call or short session. Tokens expire quickly (typically 1 hour).
 
-**Telnyx pattern** (per-session): Generate credentials once per user session and reuse them for the session duration. Do NOT create new credentials for every call.
+**Telnyx pattern**: provision one telephony credential per durable user/agent, store its ID and server-assigned `sip_username`, and mint short-lived JWTs from that same credential for each login or refresh. Do not create a new telephony credential for every call or token refresh: that changes the routable SIP identity and leaves old credentials active.
 
 ```javascript
-// RECOMMENDED: Generate credentials once per session
+import { SwEvent, TELNYX_WARNING_CODES } from '@telnyx/webrtc';
+
 class TelnyxSession {
   constructor() {
     this.client = null;
-    this.tokenRefreshTimer = null;
+    this.refreshPromise = null;
   }
 
   async initialize() {
-    // Create credential (do this ONCE per session, not per call)
-    const credential = await fetch('/api/telnyx/credential', { method: 'POST' });
-    const { token } = await credential.json();
+    // The backend looks up this signed-in user's existing credential and mints
+    // a JWT from it. It does not create another telephony credential.
+    const { token } = await fetch('/api/telnyx/token', { method: 'POST' })
+      .then(r => {
+        if (!r.ok) throw new Error(`Token request failed: ${r.status}`);
+        return r.json();
+      });
 
     this.client = new TelnyxRTC({ login_token: token });
     this.client.remoteElement = document.getElementById('remoteAudio');
+    this.client.on(SwEvent.Warning, ({ warning }) => {
+      if (warning.code === TELNYX_WARNING_CODES.TOKEN_EXPIRING_SOON) {
+        void this.refreshToken();
+      }
+    });
     this.client.connect();
-
-    // Store client in your app's state management (React state, Redux, etc.)
-    // so it persists across component renders
-    this.scheduleTokenRefresh();
   }
 
-  scheduleTokenRefresh() {
-    // JWT tokens expire after 24 hours — refresh at 23 hours
-    // Telnyx has NO tokenWillExpire event (unlike Twilio)
-    this.tokenRefreshTimer = setTimeout(async () => {
-      const { token } = await fetch('/api/telnyx/credential', { method: 'POST' })
-        .then(r => r.json());
-      // Must disconnect and reconnect with new token (no updateToken method)
-      this.client.disconnect();
-      this.client = new TelnyxRTC({ login_token: token });
-      this.client.remoteElement = document.getElementById('remoteAudio');
-      this.client.connect();
-      this.scheduleTokenRefresh();
-    }, 23 * 60 * 60 * 1000); // 23 hours
+  refreshToken() {
+    // The SDK emits TOKEN_EXPIRING_SOON roughly 120 seconds before expiry.
+    // Re-authenticate the existing socket so active calls are not torn down.
+    if (!this.refreshPromise) {
+      this.refreshPromise = fetch('/api/telnyx/token', { method: 'POST' })
+        .then(r => {
+          if (!r.ok) throw new Error(`Token refresh failed: ${r.status}`);
+          return r.json();
+        })
+        .then(({ token }) => this.client.login({
+          creds: { login_token: token }
+        }))
+        .finally(() => { this.refreshPromise = null; });
+    }
+    return this.refreshPromise;
   }
 }
 ```
 
-**Server-side credential + JWT generation (recommended: dynamic credentials):**
+**Server-side provisioning and JWT generation:**
 
-The pattern is: create a credential → generate a JWT token → return the token to the client.
+Create the telephony credential once when provisioning the user, then persist both its `id` and `sip_username`. The login/refresh endpoint only generates a JWT from the persisted credential ID.
 
 ```javascript
-// Express.js endpoint
-app.post('/api/telnyx/credential', async (req, res) => {
+// Provisioning path — run once per user/agent, not on login or refresh.
+async function provisionVoiceIdentity(userId) {
   const Telnyx = require('telnyx');
   const client = new Telnyx({ apiKey: process.env.TELNYX_API_KEY });
-
-  // 1. Create a dynamic credential for this session
   const credential = await client.telephonyCredentials.create({
     connection_id: process.env.TELNYX_CONNECTION_ID,
-    name: `session-${req.user.id}-${Date.now()}`
+    name: `user-${userId}`
   });
+  await db.voiceIdentities.insert({
+    userId,
+    credentialId: credential.data.id,
+    sipUsername: credential.data.sip_username
+  });
+}
 
-  // 2. Generate a JWT login token for the credential
-  const tokenResponse = await client.telephonyCredentials.createToken(
-    credential.data.id
+// Login/refresh path — authenticate the app user before issuing a token.
+app.post('/api/telnyx/token', async (req, res) => {
+  const Telnyx = require('telnyx');
+  const client = new Telnyx({ apiKey: process.env.TELNYX_API_KEY });
+  const identity = await db.voiceIdentities.findByUserId(req.user.id);
+  if (!identity) return res.sendStatus(404);
+
+  const token = await client.telephonyCredentials.createToken(
+    identity.credentialId
   );
-
-  // 3. Return the JWT to the client (used with login_token on TelnyxRTC)
-  res.json({ token: tokenResponse });
+  res.json({ token });
 });
 ```
 
 ```python
 # Flask endpoint (Python)
 import os
-import time
 from telnyx import Telnyx
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 client = Telnyx(api_key=os.environ.get('TELNYX_API_KEY'))
 
-@app.route('/api/telnyx/credential', methods=['POST'])
-def create_credential():
-    # 1. Create a credential for this session
-    credential = client.telephony_credentials.create(
-        connection_id=os.environ['TELNYX_CONNECTION_ID'],
-        name=f"session-{request.user_id}-{int(time.time())}"
-    )
-
-    # 2. Generate a JWT token for the credential
-    #    POST /v2/telephony_credentials/{id}/token
+@app.route('/api/telnyx/token', methods=['POST'])
+def create_token():
+    # Authenticate the application user first, then look up the credential ID
+    # created during provisioning. Do not create a credential in this handler.
+    identity = db.voice_identities.find_by_user_id(request.user_id)
+    if identity is None:
+        return '', 404
+    credential_id = identity.credential_id
     token = client.telephony_credentials.create_token(
-        credential.data.id
+        credential_id
     )
-
-    # 3. Return JWT to client (used with login_token on TelnyxRTC)
     return jsonify({'token': token})
 ```
 
@@ -490,7 +562,7 @@ def create_credential():
 > ```python
 > import requests
 > resp = requests.post(
->     f"https://api.telnyx.com/v2/telephony_credentials/{credential.id}/token",
+>     f"https://api.telnyx.com/v2/telephony_credentials/{credential_id}/token",
 >     headers={"Authorization": f"Bearer {os.environ['TELNYX_API_KEY']}"}
 > )
 > token = resp.text  # JWT string returned directly
@@ -520,15 +592,23 @@ These patterns apply when migrating Twilio-based contact centers, PBX systems, o
 
 **Twilio pattern**: Conferences are required for any scenario with more than 2 call legs or where you need supervisor features (listen, whisper, barge). Even simple call transfers often use conferences.
 
-**Telnyx pattern**: Conferences are only needed for true multi-party audio (3+ participants). For two-party calls with supervisor features, use `<Dial>` with `supervisorRole`:
+**Telnyx pattern**: Conferences are only needed for true multi-party audio (3+ participants).
+
+> **`supervisorRole` is a Conference REST API parameter, not a TeXML attribute.**
+> It is set when joining a participant to a conference via the API
+> (`supervisor_role: barge | whisper | monitor`), and there is no
+> `<Dial supervisorRole="...">` in TeXML — the skill's own validator rejects the
+> attribute and the runtime silently drops it, so a migration written that way
+> loses supervisor behaviour with no error. Supervisor features therefore still
+> require a conference; only plain two-party calls avoid one.
 
 ```javascript
 // Twilio: requires conference for supervisor
 // Supervisor joins a conference room where the agent and customer are already connected
 
 // Telnyx: supervisor via Dial — no conference needed for 2-party monitoring
-await telnyx.calls.update(supervisorCallId, {
-  supervisor_role: 'barge'  // 'whisper' | 'barge' | 'monitor'
+await client.calls.actions.switchSupervisorRole(supervisorCallId, {
+  role: 'barge'  // 'whisper' | 'barge' | 'monitor'
 });
 ```
 
@@ -599,84 +679,189 @@ curl -X PATCH "https://api.telnyx.com/v2/credential_connections/YOUR_CONN_ID" \
   -d '{"sip_uri_calling_preference": "unrestricted"}'
 ```
 
-Then dial SIP URIs from the client:
+Then dial SIP URIs from the client. To reach another Telnyx WebRTC client, the local part is that credential's `sip_username` and the host is `sip.telnyx.com`:
 ```javascript
 const call = client.newCall({
-  destinationNumber: 'sip:agent@my-company.sip.telnyx.com'
+  destinationNumber: 'sip:gencredSVEXqVZWBK6kf8TBHeMy2yBhgrKlUeBV0I90pYXXTt@sip.telnyx.com'
 });
 ```
+External SIP endpoints you operate are dialled at their own host as usual (e.g. `sip:agent@pbx.example.com`).
 
 Settings for `sip_uri_calling_preference`:
 - `disabled` — only PSTN dialing allowed (default)
 - `unrestricted` — dial any SIP URI
 - `internal` — only dial URIs within your Telnyx connections
 
-### Identity-Based Routing (Twilio `<Client>` → Telnyx SIP Identity)
+### Identity-Based Routing (Twilio `<Client>` → Telnyx SIP credential)
 
-Twilio's `<Client>identity</Client>` pattern routes calls to a specific WebRTC user by their identity string. In Telnyx, this maps to the **SIP credential `name` field** — each credential registers as a SIP identity on your subdomain.
+Twilio's `<Client>identity</Client>` routes to a WebRTC user by an identity string **you chose**. Telnyx has no such concept. This is the single largest architectural gap in the WebRTC migration, and getting it wrong produces a call that fails silently at connect time.
 
-**How it works:**
+#### The credential `name` is a label. It is NOT the SIP identity.
 
-1. When you create a SIP credential with `name: "agent_jane"`, that credential registers as `sip:agent_jane@your-subdomain.sip.telnyx.com`
-2. Any WebRTC client authenticated with that credential receives calls dialed to that SIP URI
-3. To call a specific identity, use SIP URI dialing (requires `sip_uri_calling_preference: "unrestricted"` or `"internal"` on the connection)
+`POST /v2/telephony_credentials` accepts an optional `name`, but the routable identity is the **server-assigned `sip_username`** in the response — an opaque `gencred…` string you cannot choose or predict.
 
-**Twilio pattern (server-side routing required):**
+```bash
+curl -X POST https://api.telnyx.com/v2/telephony_credentials \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"connection_id": "YOUR_CONNECTION_ID", "name": "support_agent"}'
+```
+
+```jsonc
+// 201 Created — actual measured response (abridged)
+{
+  "data": {
+    "id": "0ccc7b76-…",
+    "name": "support_agent",                                          // your label
+    "sip_username": "gencredSVEXqVZWBK6kf8TBHeMy2yBhgrKlUeBV0I90pYXXTt", // the identity
+    "sip_password": "…",
+    "connection_id": "YOUR_CONNECTION_ID"
+  }
+}
+```
+
+Across every credential on a real account, `name` and `sip_username` never match — `sip_username` is always a random `gencred…` token. **You must read `sip_username` out of the create response and persist it.** You cannot derive it, template it, or reconstruct it later from the name.
+
+```
+DO NOT:  sip:support_agent@your-subdomain.sip.telnyx.com     ← unroutable, fails silently
+DO:      sip:gencredSVEXqVZWBK6kf8TBHeMy2yBhgrKlUeBV0I90pYXXTt@sip.telnyx.com
+```
+
+Two independent things are wrong in the "DO NOT" line: the local part is the label instead of `sip_username`, and the host is a subdomain that [cannot be provisioned through the API](#there-is-no-webrtc_enabled-flag-and-no-subdomain-on-this-endpoint). Both resolve at DNS (the wildcard) and both fail at the SIP layer, so the browser shows a call that rings and dies with no useful error.
+
+#### The replacement pattern: keep an identity → sip_username directory
+
+Twilio let you *name* the destination at dial time. On Telnyx you must *look it up*. Store the mapping when you mint the credential:
+
+```javascript
+// Server: provision an agent ONCE, persist the mapping
+async function provisionAgent(identity) {          // identity = 'agent_jane'
+  const cred = await telnyx.telephonyCredentials.create({
+    connection_id: process.env.TELNYX_CONNECTION_ID,
+    name: identity,                                 // label only — for humans in the Portal
+  });
+
+  await db.agents.upsert({
+    identity,                                       // what your app calls the agent
+    credential_id:  cred.data.id,
+    sip_username:   cred.data.sip_username,         // REQUIRED — the routable identity
+    sip_uri: `sip:${cred.data.sip_username}@sip.telnyx.com`,
+  });
+  return cred.data;
+}
+
+// Anywhere you used to write <Client>agent_jane</Client>, resolve first:
+async function sipUriFor(identity) {
+  const agent = await db.agents.findOne({ identity });
+  if (!agent) throw new Error(`No Telnyx credential provisioned for "${identity}"`);
+  return agent.sip_uri;
+}
+```
+
 ```python
-# Twilio: server returns TwiML to route to a specific client identity
+# Server: same pattern in Python
+def provision_agent(identity: str):
+    cred = client.telephony_credentials.create(
+        connection_id=os.environ['TELNYX_CONNECTION_ID'],
+        name=identity,                              # label only
+    )
+    db.agents.upsert(
+        identity=identity,
+        credential_id=cred.data.id,
+        sip_username=cred.data.sip_username,        # the routable identity
+        sip_uri=f"sip:{cred.data.sip_username}@sip.telnyx.com",
+    )
+    return cred.data
+
+
+def sip_uri_for(identity: str) -> str:
+    agent = db.agents.find_one(identity=identity)
+    if not agent:
+        raise LookupError(f'No Telnyx credential provisioned for "{identity}"')
+    return agent.sip_uri
+```
+
+Lost the `sip_username` for an existing credential? Re-read it — `GET /v2/telephony_credentials/{id}` and `GET /v2/telephony_credentials` both return it. Match on `name` to recover the mapping, then persist it so you never have to scan again.
+
+#### Now pick a replacement by leg direction
+
+**Twilio (one pattern for everything):**
+```python
 @app.route('/voice', methods=['POST'])
 def voice():
     resp = VoiceResponse()
     dial = resp.dial(caller_id='+15551234567')
-    dial.client('agent_jane')  # Routes to the WebRTC client with identity "agent_jane"
+    dial.client('agent_jane')      # works for browser-originated AND PSTN-originated legs
     return str(resp)
 ```
 
-**Telnyx pattern (direct client-to-client, no server needed):**
+**Telnyx (A) browser-originated — delete the endpoint, dial from the client:**
 ```javascript
-// Create credentials with meaningful names (one per user/agent)
-// POST /v2/telephony_credentials
-// { "connection_id": "...", "name": "agent_jane" }
-// { "connection_id": "...", "name": "agent_bob" }
-
-// Agent Jane's client connects with her credential
-const janeClient = new TelnyxRTC({ login: 'jane_sip_user', password: 'jane_sip_pass' });
-
-// To call Agent Jane from another client — dial her SIP URI directly
+// bobClient is already connected in the browser
 const call = bobClient.newCall({
-  destinationNumber: 'sip:agent_jane@your-subdomain.sip.telnyx.com'
+  destinationNumber: await sipUriFor('agent_jane'),   // sip:gencred…@sip.telnyx.com
+  callerNumber: '+15551234567',
 });
 ```
+
+**Telnyx (B) PSTN-originated — keep the endpoint, return TeXML with `<Dial><Sip>`:**
+
+There is no `client.newCall()` on an inbound PSTN leg, so this endpoint **cannot** be deleted. Serve TeXML instead:
+
+```python
+@app.route('/voice', methods=['POST'])
+def voice():
+    uri = sip_uri_for('agent_jane')            # sip:gencred…@sip.telnyx.com
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Dial callerId="+15551234567">
+    <Sip>{uri}</Sip>
+  </Dial>
+</Response>""", 200, {'Content-Type': 'text/xml'}
+```
+
+```javascript
+app.post('/voice', async (req, res) => {
+  const uri = await sipUriFor('agent_jane');
+  res.type('text/xml').send(`<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Dial callerId="+15551234567">
+    <Sip>${uri}</Sip>
+  </Dial>
+</Response>`);
+});
+```
+
+`<Sip>` is a supported TeXML noun inside `<Dial>` (see `{baseDir}/references/texml-verbs.md`). To ring several agents and let the first answer win, emit multiple `<Sip>` elements inside one `<Dial>` — that is the TeXML equivalent of Twilio's multiple `<Client>` children.
 
 **Key mapping:**
 
 | Twilio | Telnyx |
 |---|---|
-| `token.identity = 'agent_jane'` | Credential `name: 'agent_jane'` |
-| `<Dial><Client>agent_jane</Client></Dial>` | `client.newCall({destinationNumber: 'sip:agent_jane@subdomain.sip.telnyx.com'})` |
-| Server webhook required for routing | Direct SIP URI dialing (no server needed) |
-| Identity set at token creation | Identity set at credential creation |
+| `token.identity = 'agent_jane'` | Credential `sip_username` (server-assigned) — `name: 'agent_jane'` is a **label only** |
+| Identity is chosen by you | Identity is assigned by Telnyx; read it from the create response |
+| `<Dial><Client>agent_jane</Client></Dial>`, browser leg | `client.newCall({destinationNumber: 'sip:' + sipUsername + '@sip.telnyx.com'})` |
+| `<Dial><Client>agent_jane</Client></Dial>`, PSTN leg | `<Dial><Sip>sip:{sip_username}@sip.telnyx.com</Sip></Dial>` |
+| Multiple `<Client>` children (ring group) | Multiple `<Sip>` children inside one `<Dial>` |
+| Identity set at token creation, per session | `sip_username` fixed at credential creation, stable for the credential's life |
 
 **Setup requirements:**
-1. Enable URI dialing on your connection: `sip_uri_calling_preference: "unrestricted"` (or `"internal"` for same-connection only)
-2. Set a `sip_subdomain` on the connection (e.g., `"my-app"` → `my-app.sip.telnyx.com`)
-3. Create one credential per user/agent with a unique `name`
+1. Enable URI dialing on your connection: `sip_uri_calling_preference: "unrestricted"` (or `"internal"` for same-connection only). It defaults to `"disabled"`, which blocks all of the above.
+2. Create one credential per user/agent. Set `name` to your identity string so the Portal is readable — but route on `sip_username`.
+3. Persist `identity → sip_username` at provisioning time. This mapping table is new work with no Twilio counterpart; budget for it.
+4. Address clients at `sip.telnyx.com`. Do not put a subdomain in the URI unless you provisioned one in the Portal and verified registration.
 
 ### Call Parking and Outbound Call Handling
 
-**Call parking** on Telnyx works through the Call Control API `park` command, not through conferences:
+There is no Call Control `park` action. For server-controlled WebRTC outbound flows, enable `outbound.call_parking_enabled` on the Credential Connection. A browser-originated call is then parked into Call Control and delivered to the connection's webhook, where your backend can issue supported commands. To join two existing Call Control legs, use the bridge action:
 
 ```javascript
-// Park a call (puts caller on hold music)
-await telnyx.calls.park(callControlId, {
-  park_timeout: 300  // seconds before auto-hangup
-});
-
-// Retrieve (unpark) by bridging to the parked call
-await telnyx.calls.bridge(newCallControlId, {
-  call_control_id: parkedCallControlId
+await client.calls.actions.bridge(waitingCallControlId, {
+  call_control_id_to_bridge_with: agentCallControlId
 });
 ```
+
+If call parking is disabled, the WebRTC SDK's outbound call follows the connection's normal outbound routing instead; do not write application logic that assumes a nonexistent `park` endpoint.
 
 **Outbound call handling** — for progressive/predictive dialer patterns:
 ```javascript
@@ -708,16 +893,88 @@ Platform-specific client SDKs (iOS, Android, Flutter, React Native) are covered 
 
 ### Push Notification Credential Migration
 
-When migrating push notifications from Twilio to Telnyx:
+When migrating push notifications from Twilio to Telnyx, push credentials can be managed **either via the API or the Mission Control Portal**.
+
+**Via API** — create a push credential with `POST /v2/mobile_push_credentials`. The request body is a **`oneOf` split by platform** (per the Telnyx OpenAPI spec):
+
+| Platform | `type` | Required fields |
+|---|---|---|
+| iOS (APNs) | `"ios"` | `type`, `certificate`, `private_key`, `alias` |
+| Android (FCM) | `"android"` | `type`, `project_account_json_file`, `alias` |
+
+Android does **not** take `certificate`/`private_key` — it takes the FCM service-account JSON as the `project_account_json_file` object. List with `GET /v2/mobile_push_credentials`, fetch/delete with `GET`/`DELETE /v2/mobile_push_credentials/{push_credential_id}`.
+
+**Via Portal** — creation and attachment are separate steps:
+
+1. Create the platform credential under **API Keys** → **Credentials** → **Add** → **iOS Credential** or **Android Credential**. Paste the complete PEM certificate/key for iOS or the full Firebase service-account JSON for Android.
+2. Attach it under **SIP Connections** → open the connection → **WebRTC** → select the credential in the iOS and/or Android section → **Save**.
+
+> **Creating the credential is not enough — you must ATTACH it to the WebRTC
+> connection.** A standalone push credential delivers nothing: until it is linked,
+> background inbound calls receive no APNs/FCM notification. Attach the returned
+> credential id via `PATCH /v2/credential_connections/{id}`. Send only the
+> field for the platform you are configuring.
+>
+> For an iOS-only app:
+>
+> ```bash
+> curl -X PATCH "https://api.telnyx.com/v2/credential_connections/$CONNECTION_ID" \
+>   -H "Authorization: Bearer $TELNYX_API_KEY" \
+>   -H "Content-Type: application/json" \
+>   -d "{
+>     \"ios_push_credential_id\": \"$IOS_PUSH_CREDENTIAL_ID\"
+>   }"
+> ```
+>
+> For an Android-only app:
+>
+> ```bash
+> curl -X PATCH "https://api.telnyx.com/v2/credential_connections/$CONNECTION_ID" \
+>   -H "Authorization: Bearer $TELNYX_API_KEY" \
+>   -H "Content-Type: application/json" \
+>   -d "{
+>     \"android_push_credential_id\": \"$ANDROID_PUSH_CREDENTIAL_ID\"
+>   }"
+> ```
+>
+> If you ship both platforms, set both fields by running both requests or by
+> including both non-null credential IDs in one PATCH.
+>
+> Verify with `GET /v2/credential_connections/{id}` — the credential field for
+> each platform you actually deploy must be non-null (`ios_push_credential_id`
+> for an iOS app, `android_push_credential_id` for Android; both only if you
+> ship both).
+
+The Portal flow has the same requirement: creating a credential under **API Keys** → **Credentials** does not attach it until it is selected and saved on the connection's **WebRTC** tab.
+
+```bash
+# iOS (APNs)
+curl -X POST https://api.telnyx.com/v2/mobile_push_credentials \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "ios",
+    "alias": "my-app-voip",
+    "certificate": "-----BEGIN CERTIFICATE----- ...",
+    "private_key": "-----BEGIN PRIVATE KEY----- ..."
+  }'
+
+# Android (FCM) — wrap the complete service-account JSON object
+jq '{type:"android", alias:"my-app-fcm", project_account_json_file:.}' path/to/service-account.json |
+  curl -X POST https://api.telnyx.com/v2/mobile_push_credentials \
+    -H "Authorization: Bearer $TELNYX_API_KEY" \
+    -H "Content-Type: application/json" \
+    --data-binary @-
+```
 
 **iOS (APNs):**
 - Twilio: Configured per-credential via API, certificate uploaded programmatically
-- Telnyx: Upload APNs certificate in Mission Control Portal → **SIP** → **Connections** → your connection → **Push Credentials**
-- Requires: APNs certificate (.p12 or .p8), bundle ID, team ID
+- Telnyx: Create the credential with `POST /v2/mobile_push_credentials`, or under Portal → **API Keys** → **Credentials** → **Add** → **iOS Credential**; then attach it under **SIP Connections** → connection → **WebRTC** → iOS
+- Requires: a **VoIP Services Certificate exported as `.p12`** and converted to the complete certificate/private-key PEM values. A `.p8` auth token key is unsupported by this flow. The Bundle ID is used to create and validate the Apple certificate; it is not a Telnyx request field. See `mobile-sdk-migration.md` for the exact OpenSSL commands.
 
 **Android (FCM):**
 - Twilio: Configured per-credential via API with FCM server key
-- Telnyx: Configure FCM in Mission Control Portal → **SIP** → **Connections** → your connection → **Push Credentials**
-- Requires: FCM server key or service account JSON
+- Telnyx: Create the credential with `POST /v2/mobile_push_credentials` using `type: "android"` and the full service-account JSON as `project_account_json_file`, or under Portal → **API Keys** → **Credentials** → **Add** → **Android Credential**; then attach it under **SIP Connections** → connection → **WebRTC** → Android
+- Requires: the complete Firebase service-account JSON (`project_account_json_file`), not a legacy FCM server key
 
 **Key difference**: Twilio requires a new push credential for each instance. Telnyx configures push at the connection level, applying to all credentials on that connection.
