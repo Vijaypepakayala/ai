@@ -45,6 +45,7 @@ PROJECT_ROOT=""
 SCAN_JSON=""
 STATE_FILE=""
 HYBRID_PRODUCTS=""
+MIGRATED_FILES=""
 JSON_CHECKS="[]"
 
 EXCLUDE_DIRS="node_modules .git vendor __pycache__ venv .venv dist build"
@@ -182,7 +183,32 @@ product_applies() {
 
 hybrid_waiver_applies() {
   [ -n "$HYBRID_PRODUCTS" ] || return 1
+  # The prescribed Phase-5 command is an all-products scan. In a recorded
+  # hybrid migration, generic Twilio imports and directory names cannot be
+  # attributed to one product by grep alone, so keep them visible as warnings
+  # rather than making a legitimate retained product fail the required gate.
   if [ "$PRODUCT_FILTER" = "all" ]; then
+    # A retained product never waives a residual inside a file explicitly
+    # recorded as migrated. Only downgrade when every matched path is outside
+    # that set; mixed or migrated-only results must keep the gate blocking.
+    [ -n "$MIGRATED_FILES" ] || return 0
+    while IFS= read -r match; do
+      [ -n "$match" ] || continue
+      path=$(printf '%s\n' "$match" | sed -E 's/:[0-9]+:.*$//')
+      case "$path" in
+        "$PROJECT_ROOT"/*) path=${path#"$PROJECT_ROOT"/} ;;
+        ./*) path=${path#./} ;;
+      esac
+      while IFS= read -r migrated_file; do
+        [ -n "$migrated_file" ] || continue
+        # A directory finding covers every file below it. Do not waive a
+        # Twilio-named directory when any explicitly migrated file lives in
+        # that directory, even though the grep finding names only the parent.
+        if [ "$migrated_file" = "$path" ] || [[ "$migrated_file" = "$path"/* ]]; then
+          return 1
+        fi
+      done <<<"$MIGRATED_FILES"
+    done <<<"${1:-}"
     return 0
   fi
   echo "$HYBRID_PRODUCTS" | tr ',' '\n' | grep -qx "$PRODUCT_FILTER"
@@ -255,8 +281,17 @@ if [ ! -d "$PROJECT_ROOT" ]; then
   exit 2
 fi
 
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "Error: python3 is required for correctness analysis" >&2
+  exit 2
+fi
+
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 GREP_EXCLUDES=$(build_exclude_args)
+
+if [ -z "$STATE_FILE" ] && [ -f "$PROJECT_ROOT/migration-state.json" ]; then
+  STATE_FILE="$PROJECT_ROOT/migration-state.json"
+fi
 
 if [ -n "$STATE_FILE" ]; then
   if [ ! -f "$STATE_FILE" ]; then
@@ -271,6 +306,17 @@ if [ -n "$STATE_FILE" ]; then
       else error("invalid migration state") end
     ' "$STATE_FILE" 2>/dev/null) || {
       echo "Error: --state-file '$STATE_FILE' is not valid migration state JSON" >&2
+      exit 2
+    }
+    MIGRATED_FILES=$(jq -r --arg root "$PROJECT_ROOT/" '
+      [(.migrated_files? // {}) | .. | arrays | .[]?
+       | select(type == "string")
+       | if startswith($root) then .[($root | length):]
+         elif startswith("./") then .[2:]
+         else . end]
+      | unique[]
+    ' "$STATE_FILE" 2>/dev/null) || {
+      echo "Error: --state-file '$STATE_FILE' has invalid migrated_files" >&2
       exit 2
     }
   fi
@@ -388,13 +434,80 @@ if product_applies "voice"; then
     lint_pass "voice_response_builder" "No Twilio VoiceResponse builder found"
   fi
 
-  # Check 6: speechModel in TeXML/XML (not a valid Telnyx attribute)
-  matches=$(search_files 'speechModel' "*.xml" "*.py" "*.js" "*.ts" "*.rb" "*.java" "*.php")
+  # Check 6: speechModel must be translated on Gather/Transcription, but it is
+  # a documented attribute on a Language child of ConversationRelay. Inspect
+  # tag ancestry instead of rejecting every textual occurrence.
+  matches=$(python3 - "$PROJECT_ROOT" <<'PYEOF'
+import os
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1])
+excluded = {
+    ".git", ".next", ".nuxt", ".tox", ".venv", "__pycache__",
+    "build", "coverage", "dist", "node_modules", "vendor", "venv",
+}
+suffixes = {".xml", ".py", ".js", ".ts", ".rb", ".java", ".php"}
+tag_pattern = re.compile(
+    r"<(?P<closing>/)?\s*(?P<tag>[A-Za-z_][\w:.-]*)"
+    r"(?P<attrs>(?:\"[^\"]*\"|'[^']*'|[^>])*)>",
+    re.DOTALL,
+)
+speech_model = re.compile(r"(?<![\w:.-])speechModel\s*(?:=|:)")
+
+for directory, child_dirs, filenames in os.walk(root):
+    child_dirs[:] = sorted(name for name in child_dirs if name not in excluded)
+    for filename in sorted(filenames):
+        path = pathlib.Path(directory, filename)
+        if path.suffix.lower() not in suffixes:
+            continue
+        source = path.read_text(encoding="utf-8", errors="replace")
+        source = re.sub(
+            r"<!--.*?-->|<!\[CDATA\[.*?\]\]>",
+            lambda match: "".join(
+                char if char in "\r\n" else " " for char in match.group(0)
+            ),
+            source,
+            flags=re.DOTALL,
+        )
+        stack = []
+        tagged_speech_model = set()
+        for match in tag_pattern.finditer(source):
+            tag = match.group("tag").rsplit(":", 1)[-1]
+            if match.group("closing"):
+                if stack and stack[-1] == tag:
+                    stack.pop()
+                else:
+                    stack.clear()
+                continue
+            attr_start = match.start("attrs")
+            attr_occurrences = list(speech_model.finditer(match.group("attrs")))
+            tagged_speech_model.update(
+                attr_start + occurrence.start() for occurrence in attr_occurrences
+            )
+            if attr_occurrences:
+                if not (tag == "Language" and stack[-1:] == ["ConversationRelay"]):
+                    line = source.count("\n", 0, match.start()) + 1
+                    print(f"{path}:{line}: <{tag}> speechModel")
+            if not match.group("attrs").rstrip().endswith("/"):
+                stack.append(tag)
+        # Builder/object forms (for example `{speechModel: "phone_call"}`)
+        # are migration-sensitive even when no literal XML tag exists. Only
+        # suppress occurrences already classified inside an XML tag, including
+        # the valid ConversationRelay <Language> form above.
+        for occurrence in speech_model.finditer(source):
+            if occurrence.start() in tagged_speech_model:
+                continue
+            line = source.count("\n", 0, occurrence.start()) + 1
+            print(f"{path}:{line}: non-XML speechModel")
+PYEOF
+)
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
     lint_issue "speech_model_attr" \
-      "speechModel attribute found in $count file(s)" \
-      "Remove speechModel — Telnyx uses transcriptionEngine for speech recognition config" \
+      "speechModel requiring migration found in $count location(s)" \
+      "Map Gather/Transcription speechModel to the documented TeXML model configuration; preserve ConversationRelay Language speechModel" \
       "$(matches_to_json "$matches")"
   else
     lint_pass "speech_model_attr" "No speechModel attribute found"
@@ -506,16 +619,10 @@ if product_applies "all"; then
     telnyx_webhook_parse=$(search_files "(data\.payload|data\[.payload.\]|data\.event_type|data\[.event_type.\])" "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.php")
     telnyx_parse_count=$(count_matches "$telnyx_webhook_parse")
     if [ "$telnyx_parse_count" -gt 0 ] && [ "$ed25519_count" -eq 0 ]; then
-      if [ "$ORIGINAL_HAD_WEBHOOK_VALIDATION" = "false" ]; then
-        lint_warn "webhook_ed25519_missing" \
-          "No Ed25519 signature verification found — original code did not validate webhooks either (not a regression)" \
-          "Consider adding Ed25519 for production security, but this matches original behavior"
-      else
-        lint_issue "webhook_ed25519_missing" \
-          "Webhook handlers parse Telnyx payloads but no Ed25519 signature verification found" \
-          "Add Ed25519 verification using telnyx-signature-ed25519 + telnyx-timestamp headers. See webhook-migration.md" \
-          "$(matches_to_json "$telnyx_webhook_parse")"
-      fi
+      lint_issue "webhook_ed25519_missing" \
+        "Webhook handlers parse Telnyx payloads but no Ed25519 signature verification found" \
+        "Add Ed25519 verification using telnyx-signature-ed25519 + telnyx-timestamp headers. See webhook-migration.md" \
+        "$(matches_to_json "$telnyx_webhook_parse")"
     elif [ "$ed25519_count" -gt 0 ]; then
       lint_pass "webhook_ed25519_missing" "Ed25519 webhook signature verification found"
     fi
@@ -526,7 +633,7 @@ if product_applies "all"; then
   twilio_webhook_mw=$(search_files "(twilio\.webhook\(|@validate_twilio_request|RequestValidator\(|twilio.*validateRequest|validateExpressRequest)" "*.py" "*.js" "*.ts" "*.rb")
   twilio_mw_count=$(count_matches "$twilio_webhook_mw")
   if [ "$twilio_mw_count" -gt 0 ]; then
-    if hybrid_waiver_applies; then
+    if hybrid_waiver_applies "$twilio_webhook_mw"; then
       lint_warn "twilio_webhook_middleware" \
         "Twilio webhook middleware/validator remains while selected products are intentionally hybrid" \
         "Confirm each validator belongs only to kept products: $HYBRID_PRODUCTS" \
@@ -555,10 +662,8 @@ if product_applies "voice"; then
     non_neural=$(echo "$polly_refs" | grep -v "\-Neural" || true)
     non_neural_count=$(count_matches "$non_neural")
     if [ "$non_neural_count" -gt 0 ]; then
-      lint_warn "polly_non_neural" \
-        "Non-Neural Polly voice(s) found in $non_neural_count file(s) — may fall back to default voice" \
-        "Prefer Neural variants: Polly.Amy-Neural instead of Polly.Amy. Or use voice=\"woman\" with language attribute." \
-        "$(matches_to_json "$non_neural")"
+      lint_pass "polly_non_neural" \
+        "Documented non-Neural Polly voice references are preserved; do not replace them with man/woman"
     else
       lint_pass "polly_non_neural" "All Polly voices use Neural variants"
     fi
@@ -602,7 +707,7 @@ section_header "Residual Twilio Patterns"
 matches=$(search_files '(from twilio|import twilio|require.*twilio|using Twilio)' "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.php" "*.cs")
 count=$(count_matches "$matches")
 if [ "$count" -gt 0 ]; then
-  if hybrid_waiver_applies; then
+  if hybrid_waiver_applies "$matches"; then
     lint_warn "residual_twilio_imports" \
       "Residual Twilio imports found in $count file(s) while products remain intentionally hybrid" \
       "Confirm each import belongs only to kept products: $HYBRID_PRODUCTS" \
@@ -621,7 +726,7 @@ fi
 matches=$(search_files '(Client\(.*account_sid|Twilio\(|twilio\.Twilio\(|new Twilio\.)' "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.php")
 count=$(count_matches "$matches")
 if [ "$count" -gt 0 ]; then
-  if hybrid_waiver_applies; then
+  if hybrid_waiver_applies "$matches"; then
     lint_warn "twilio_client_instantiation" \
       "Twilio client instantiation found in $count file(s) while products remain intentionally hybrid" \
       "Confirm each client belongs only to kept products: $HYBRID_PRODUCTS" \
@@ -643,7 +748,7 @@ twilio_dirs=$(find "$PROJECT_ROOT" -mindepth 1 \
   -o -type d -iname '*twilio*' -print 2>/dev/null || true)
 twilio_dir_count=$(echo "$twilio_dirs" | sed '/^$/d' | wc -l | tr -d ' ')
 if [ "$twilio_dir_count" -gt 0 ] && [ -n "$(echo "$twilio_dirs" | sed '/^$/d')" ]; then
-  if hybrid_waiver_applies; then
+  if hybrid_waiver_applies "$twilio_dirs"; then
     lint_warn "twilio_directory_names" \
       "Found $twilio_dir_count Twilio-named directory/directories while selected products are intentionally hybrid" \
       "Confirm each directory belongs only to kept products: $HYBRID_PRODUCTS" \

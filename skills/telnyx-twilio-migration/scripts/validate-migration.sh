@@ -43,6 +43,7 @@ PROJECT_ROOT=""
 STATE_FILE=""
 SCAN_JSON=""
 KEPT_ON_TWILIO=""
+MIGRATED_FILES=""
 EXTRA_EXCLUDE_DIRS=""
 
 EXCLUDE_DIRS="node_modules .git vendor __pycache__ venv .venv dist build"
@@ -125,14 +126,47 @@ check_warn() {
   fi
 }
 
-# Downgrade FAIL to WARN when hybrid deployment keeps some products on Twilio.
-# Use this instead of check_fail for checks that flag residual Twilio references
-# (imports, env vars, dependencies) which are expected in hybrid mode.
-check_fail_or_hybrid_warn() {
-  if [ -n "$KEPT_ON_TWILIO" ]; then
-    check_warn "$1" "$2 (hybrid deployment — $KEPT_ON_TWILIO kept on Twilio)" "${3:-}"
-  else
-    check_fail "$1" "$2" "${3:-}"
+# In a hybrid migration, residual Twilio code is allowed only outside files
+# recorded as migrated. `add-file` makes that boundary explicit: a Twilio URL
+# or validator in a migrated file is still a failure, while the same evidence
+# in an intentionally retained/unmigrated file remains visible as a warning.
+check_residual_matches_with_hybrid_scope() {
+  local name="$1" message="$2" matches="$3"
+  if [ -z "$KEPT_ON_TWILIO" ]; then
+    check_fail "$name" "$message" "$(matches_to_json "$matches")"
+    return
+  fi
+
+  local migrated_matches="" retained_matches="" line file relative
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    file=${line%%:*}
+    relative=${file#"$PROJECT_ROOT/"}
+    relative=${relative#./}
+    is_migrated=false
+    while IFS= read -r migrated; do
+      [ -n "$migrated" ] || continue
+      migrated=${migrated%/}
+      if [ "$relative" = "$migrated" ] || [[ "$relative" == "$migrated/"* ]]; then
+        is_migrated=true
+        break
+      fi
+    done <<< "$MIGRATED_FILES"
+    if [ "$is_migrated" = true ]; then
+      migrated_matches="${migrated_matches}${line}"$'\n'
+    else
+      retained_matches="${retained_matches}${line}"$'\n'
+    fi
+  done <<< "$matches"
+
+  if [ -n "$migrated_matches" ]; then
+    check_fail "$name" "$message (inside files recorded as migrated)" \
+      "$(matches_to_json "$migrated_matches")"
+  fi
+  if [ -n "$retained_matches" ]; then
+    check_warn "${name}_retained" \
+      "$message (retained hybrid files — $KEPT_ON_TWILIO kept on Twilio)" \
+      "$(matches_to_json "$retained_matches")"
   fi
 }
 
@@ -317,10 +351,20 @@ fi
 # Resolve to absolute path
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 
+if [ -z "$STATE_FILE" ] && [ -f "$PROJECT_ROOT/migration-state.json" ]; then
+  STATE_FILE="$PROJECT_ROOT/migration-state.json"
+fi
+
 # Load hybrid deployment state if state file provided
 if [ -n "$STATE_FILE" ] && [ -f "$STATE_FILE" ]; then
   if command -v jq >/dev/null 2>&1; then
-    KEPT_ON_TWILIO=$(jq -r '.kept_on_twilio // {} | keys | join(",")' "$STATE_FILE" 2>/dev/null || true)
+    KEPT_ON_TWILIO=$(jq -r '.kept_on_twilio // {} | to_entries | map(select(.value != false and .value != null and .value != "")) | map(.key) | join(",")' "$STATE_FILE" 2>/dev/null || true)
+    MIGRATED_FILES=$(jq -r --arg root "$PROJECT_ROOT/" '
+      .migrated_files // {} | [.[]?[]?] | unique[] |
+      if startswith($root) then ltrimstr($root)
+      elif startswith("./") then ltrimstr("./")
+      else . end
+    ' "$STATE_FILE" 2>/dev/null || true)
   fi
 elif [ -n "$STATE_FILE" ] && [ ! -f "$STATE_FILE" ]; then
   echo "Warning: --state-file '$STATE_FILE' not found, ignoring" >&2
@@ -369,7 +413,7 @@ if product_applies "all"; then
   matches=$(search_files "(from twilio|import twilio)" "*.py")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
-    check_fail_or_hybrid_warn "twilio_python_imports" "Twilio Python imports found in $count file(s):" "$(matches_to_json "$matches")"
+    check_residual_matches_with_hybrid_scope "twilio_python_imports" "Twilio Python imports found in $count file(s):" "$matches"
   else
     check_pass "twilio_python_imports" "No Twilio Python imports found"
   fi
@@ -380,7 +424,7 @@ if product_applies "all"; then
   matches=$(search_files "(require\(['\"]twilio['\"]|from ['\"]twilio['\"])" "*.js" "*.ts" "*.jsx" "*.tsx" "*.mjs" "*.cjs")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
-    check_fail_or_hybrid_warn "twilio_js_imports" "Twilio JS/TS imports found in $count file(s):" "$(matches_to_json "$matches")"
+    check_residual_matches_with_hybrid_scope "twilio_js_imports" "Twilio JS/TS imports found in $count file(s):" "$matches"
   else
     check_pass "twilio_js_imports" "No Twilio JS/TS imports found"
   fi
@@ -391,7 +435,7 @@ if product_applies "all"; then
   matches=$(search_files "github\.com/twilio/twilio-go" "*.go" "go.mod" "go.sum")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
-    check_fail_or_hybrid_warn "twilio_go_imports" "Twilio Go imports found in $count file(s):" "$(matches_to_json "$matches")"
+    check_residual_matches_with_hybrid_scope "twilio_go_imports" "Twilio Go imports found in $count file(s):" "$matches"
   else
     check_pass "twilio_go_imports" "No Twilio Go imports found"
   fi
@@ -402,7 +446,7 @@ if product_applies "all"; then
   matches=$(search_files "(require ['\"]twilio-ruby['\"]|require ['\"]twilio['\"])" "*.rb")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
-    check_fail_or_hybrid_warn "twilio_ruby_imports" "Twilio Ruby imports found in $count file(s):" "$(matches_to_json "$matches")"
+    check_residual_matches_with_hybrid_scope "twilio_ruby_imports" "Twilio Ruby imports found in $count file(s):" "$matches"
   else
     check_pass "twilio_ruby_imports" "No Twilio Ruby imports found"
   fi
@@ -413,7 +457,7 @@ if product_applies "all"; then
   matches=$(search_files "import com\.twilio\." "*.java" "*.kt" "*.scala")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
-    check_fail_or_hybrid_warn "twilio_java_imports" "Twilio Java imports found in $count file(s):" "$(matches_to_json "$matches")"
+    check_residual_matches_with_hybrid_scope "twilio_java_imports" "Twilio Java imports found in $count file(s):" "$matches"
   else
     check_pass "twilio_java_imports" "No Twilio Java imports found"
   fi
@@ -424,7 +468,7 @@ if product_applies "all"; then
   matches=$(search_files "(use Twilio|require.*twilio.php)" "*.php")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
-    check_fail_or_hybrid_warn "twilio_php_imports" "Twilio PHP imports found in $count file(s):" "$(matches_to_json "$matches")"
+    check_residual_matches_with_hybrid_scope "twilio_php_imports" "Twilio PHP imports found in $count file(s):" "$matches"
   else
     check_pass "twilio_php_imports" "No Twilio PHP imports found"
   fi
@@ -435,7 +479,7 @@ if product_applies "all"; then
   matches=$(search_files "using Twilio" "*.cs")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
-    check_fail_or_hybrid_warn "twilio_csharp_imports" "Twilio C# imports found in $count file(s):" "$(matches_to_json "$matches")"
+    check_residual_matches_with_hybrid_scope "twilio_csharp_imports" "Twilio C# imports found in $count file(s):" "$matches"
   else
     check_pass "twilio_csharp_imports" "No Twilio C# imports found"
   fi
@@ -446,7 +490,8 @@ if product_applies "all"; then
   matches=$(search_source_files "(api\.twilio\.com|verify\.twilio\.com|video\.twilio\.com|taskrouter\.twilio\.com|chat\.twilio\.com|conversations\.twilio\.com|sync\.twilio\.com|proxy\.twilio\.com|studio\.twilio\.com)")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
-    check_fail "twilio_api_urls" "Twilio API URLs found in $count file(s):" "$(matches_to_json "$matches")"
+    check_residual_matches_with_hybrid_scope \
+      "twilio_api_urls" "Twilio API URLs found in $count file(s):" "$matches"
   else
     check_pass "twilio_api_urls" "No Twilio API URLs found"
   fi
@@ -457,7 +502,7 @@ if product_applies "all"; then
   matches=$(search_source_files "(TWILIO_ACCOUNT_SID|TWILIO_AUTH_TOKEN|TWILIO_API_KEY|TWILIO_API_SECRET|TWILIO_SID|TWILIO_NUMBER|TWILIO_PHONE_NUMBER|TWILIO_MESSAGING_SERVICE_SID|TWILIO_VERIFY_SERVICE_SID|TWILIO_TWIML_APP_SID)")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
-    check_fail_or_hybrid_warn "twilio_env_vars" "Twilio environment variables found in $count file(s):" "$(matches_to_json "$matches")"
+    check_residual_matches_with_hybrid_scope "twilio_env_vars" "Twilio environment variables found in $count file(s):" "$matches"
   else
     check_pass "twilio_env_vars" "No Twilio environment variables found"
   fi
@@ -468,7 +513,9 @@ if product_applies "all"; then
   matches=$(search_files "(RequestValidator|X-Twilio-Signature|twilio\.validateRequest|validate_request)")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
-    check_fail "twilio_signature_validation" "Twilio signature validation patterns found in $count file(s):" "$(matches_to_json "$matches")"
+    check_residual_matches_with_hybrid_scope \
+      "twilio_signature_validation" \
+      "Twilio signature validation patterns found in $count file(s):" "$matches"
   else
     check_pass "twilio_signature_validation" "No Twilio signature validation patterns found"
   fi
@@ -647,17 +694,9 @@ if product_applies "voice,messaging,verify,sip,fax"; then
     telnyx_webhook_parse=$(search_files "(data\.payload|data\[.payload.\]|event_type|data\.event_type)" "*.py" "*.js" "*.ts" "*.rb" "*.go")
     telnyx_parse_count=$(count_matches "$telnyx_webhook_parse")
     if [ "$telnyx_parse_count" -gt 0 ]; then
-      if [ "$ORIGINAL_HAD_WEBHOOK_VALIDATION" = "false" ]; then
-        check_warn "ed25519_validation" "No Ed25519 webhook signature validation found — original code did not validate webhooks either (no RequestValidator/X-Twilio-Signature detected in scan). Consider adding Ed25519 for production security, but this is not a regression."
-      else
-        check_fail "ed25519_validation" "Webhook handlers parse Telnyx payloads but NO Ed25519 signature validation found — production webhooks are vulnerable to spoofing. Add verification using the pattern in references/webhook-migration.md"
-      fi
+      check_fail "ed25519_validation" "Webhook handlers parse Telnyx payloads but NO Ed25519 signature validation found — production webhooks are vulnerable to spoofing. Add verification using the pattern in references/webhook-migration.md"
     elif [ "$webhook_count" -gt 0 ]; then
-      if [ "$ORIGINAL_HAD_WEBHOOK_VALIDATION" = "false" ]; then
-        check_pass "ed25519_validation" "No Ed25519 webhook signature validation found — original code did not validate webhooks either (not a regression)"
-      else
-        check_warn "ed25519_validation" "No Ed25519 webhook signature validation found — add verification for production security (see references/webhook-migration.md)"
-      fi
+      check_warn "ed25519_validation" "A webhook-like handler was found without a recognized Telnyx payload parse or Ed25519 verifier; verify the handler's purpose and add production verification if it receives Telnyx webhooks"
     else
       check_pass "ed25519_validation" "No webhook handlers detected — Ed25519 validation not applicable"
     fi

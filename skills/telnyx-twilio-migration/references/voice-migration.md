@@ -114,15 +114,18 @@ return TEXML_MENU.format(prompt=escape(prompt))
 
 The emitted XML is unchanged — only the source layout differs. If the project has a linter, run it after the migration and before declaring Phase 5 done.
 
-**XML escaping — do NOT escape apostrophes**: when interpolating dynamic values into a TeXML string, escape `&` → `&amp;`, `<` → `&lt;` and `>` → `&gt;` in text nodes, plus `"` → `&quot;` inside attribute values. Do **not** escape `'` to `&apos;`. Twilio's `VoiceResponse` builder leaves apostrophes literal, so escaping them changes the bytes of your response relative to the pre-migration output and will break existing snapshot/string-equality tests (and any downstream diffing) for no benefit — `'` is legal, unescaped, in XML text nodes and inside double-quoted attribute values.
+**XML escaping must match the context and active quote delimiter**: when interpolating dynamic values into a TeXML string, escape `&` → `&amp;`, `<` → `&lt;` and `>` → `&gt;` in text nodes. Inside a double-quoted attribute also escape `"` → `&quot;`; inside a single-quoted attribute escape `'` → `&apos;`. An apostrophe remains literal in text nodes and double-quoted attributes, preserving Twilio output bytes where it is safe, but it must be escaped when `'` is the delimiter.
 
 ```javascript
-// Correct: apostrophe stays literal
+// Text nodes: apostrophe stays literal
 const escapeXmlText = (s) =>
   String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-// Attribute values additionally need the double quote escaped
-const escapeXmlAttr = (s) => escapeXmlText(s).replace(/"/g, '&quot;');
+// Use the helper matching the attribute delimiter in the emitted XML.
+const escapeXmlDoubleQuotedAttr = (s) =>
+  escapeXmlText(s).replace(/"/g, '&quot;');
+const escapeXmlSingleQuotedAttr = (s) =>
+  escapeXmlText(s).replace(/'/g, '&apos;');
 ```
 
 ```python
@@ -326,8 +329,8 @@ client := twilio.NewRestClientWithParams(twilio.ClientParams{
 
 // Telnyx
 import (
-    "github.com/team-telnyx/telnyx-go"
-    "github.com/team-telnyx/telnyx-go/option"
+    "github.com/team-telnyx/telnyx-go/v4"
+    "github.com/team-telnyx/telnyx-go/v4/option"
 )
 client := telnyx.NewClient(option.WithAPIKey("YOUR_TELNYX_API_KEY"))
 ```
@@ -434,7 +437,8 @@ func verifyWebhook(r *http.Request, publicKeyBase64 string) ([]byte, bool) {
     // verifies forever, so an attacker can replay it indefinitely. Telnyx
     // documents a 5-minute tolerance.
     ts, err := strconv.ParseInt(timestamp, 10, 64)
-    if err != nil || time.Since(time.Unix(ts, 0)) > 5*time.Minute {
+    age := time.Since(time.Unix(ts, 0))
+    if err != nil || age > 5*time.Minute || age < -5*time.Minute {
         return nil, false
     }
 
@@ -461,8 +465,10 @@ client = Telnyx::Client.new(api_key: 'YOUR_API_KEY')
 
 post '/webhook' do
   payload = request.body.read
-  signature = request.env['HTTP_TELNYX_SIGNATURE_ED25519']
-  timestamp = request.env['HTTP_TELNYX_TIMESTAMP']
+  telnyx_headers = {
+    'telnyx-signature-ed25519' => request.env['HTTP_TELNYX_SIGNATURE_ED25519'],
+    'telnyx-timestamp'         => request.env['HTTP_TELNYX_TIMESTAMP']
+  }
   begin
     # Verification lives on the CLIENT. There is no Telnyx::Webhook module -
     # naming one raises NameError, which `rescue` swallows, so every webhook
@@ -539,21 +545,50 @@ def handle_recording():
     return '', 204
 
 # Telnyx TeXML callback (form-encoded; URL expires in 10 minutes)
+import os
+import pathlib
+import re
+import base64
+import time
+import requests
+from nacl.signing import VerifyKey
+
+# TeXML callbacks use Telnyx's form-compatible Ed25519 contract. Verify the
+# exact raw bytes before Flask parses them (`pip install pynacl`).
+def verify_telnyx_form_webhook(raw_body: bytes, headers) -> None:
+    timestamp = headers.get('telnyx-timestamp', '')
+    signature = headers.get('telnyx-signature-ed25519', '')
+    if not timestamp.isdigit() or abs(time.time() - int(timestamp)) > 300:
+        raise ValueError('stale or invalid webhook timestamp')
+    signed = timestamp.encode('ascii') + b'|' + raw_body
+    VerifyKey(base64.b64decode(os.environ['TELNYX_PUBLIC_KEY'])).verify(
+        signed, base64.b64decode(signature)
+    )
+
 @app.route('/recording-callback', methods=['POST'])
 def handle_recording():
+    raw_body = request.get_data(cache=True, as_text=False)
+    try:
+        verify_telnyx_form_webhook(raw_body, request.headers)
+    except Exception:
+        return 'Forbidden', 403
+
     recording_url = request.form['RecordingUrl']
     recording_sid = request.form['RecordingSid']
     call_sid = request.form['CallSid']
+    if not re.fullmatch(r'[A-Za-z0-9_-]+', recording_sid):
+        return 'Invalid RecordingSid', 400
 
     # Download NOW — URL expires in 10 minutes
     response = requests.get(recording_url)
     response.raise_for_status()  # Fail loudly if download fails (e.g., URL expired)
-    filename = f"recordings/{recording_sid}.mp3"
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    recording_dir = pathlib.Path('recordings').resolve()
+    recording_dir.mkdir(parents=True, exist_ok=True)
+    filename = recording_dir / f'{recording_sid}.mp3'
     # Save to local filesystem (or upload to S3/GCS)
-    with open(filename, 'wb') as f:
+    with filename.open('wb') as f:
         f.write(response.content)
-    db.save_recording(call_id=call_sid, recording_id=recording_sid, path=filename)
+    db.save_recording(call_id=call_sid, recording_id=recording_sid, path=str(filename))
     return '', 200
 ```
 
@@ -567,20 +602,53 @@ app.post('/recording-callback', (req, res) => {
   res.sendStatus(204);
 });
 
-// Telnyx TeXML callback (requires app.use(express.urlencoded({ extended: false })))
+// Telnyx TeXML callback. Capture the original bytes before form parsing.
+const crypto = require('crypto');
+function verifyTelnyxFormWebhook(rawBody, headers) {
+  const timestamp = headers['telnyx-timestamp'] || '';
+  const signature = headers['telnyx-signature-ed25519'] || '';
+  if (!/^\d+$/.test(timestamp) || Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) {
+    throw new Error('stale or invalid webhook timestamp');
+  }
+  const rawKey = Buffer.from(process.env.TELNYX_PUBLIC_KEY, 'base64');
+  if (rawKey.length !== 32) throw new Error('invalid Telnyx public key');
+  const spki = Buffer.concat([
+    Buffer.from('302a300506032b6570032100', 'hex'), rawKey,
+  ]);
+  const signed = Buffer.concat([Buffer.from(`${timestamp}|`), rawBody]);
+  if (!crypto.verify(null, signed, { key: spki, format: 'der', type: 'spki' }, Buffer.from(signature, 'base64'))) {
+    throw new Error('invalid Telnyx webhook signature');
+  }
+}
+app.use(express.urlencoded({
+  extended: false,
+  verify: (req, _res, buffer) => { req.rawBody = buffer; },
+}));
 const fs = require('fs');
+const path = require('path');
 const { pipeline } = require('stream/promises');
 
 app.post('/recording-callback', async (req, res) => {
+  try {
+    // Verify the original form body without attempting JSON.parse().
+    verifyTelnyxFormWebhook(req.rawBody, req.headers);
+  } catch (_error) {
+    return res.status(403).send('Forbidden');
+  }
+
   const recordingUrl = req.body.RecordingUrl;
   const recordingSid = req.body.RecordingSid;
   const callSid = req.body.CallSid;
+  if (!/^[A-Za-z0-9_-]+$/.test(recordingSid)) {
+    return res.status(400).send('Invalid RecordingSid');
+  }
 
   // Download NOW — URL expires in 10 minutes
   const response = await fetch(recordingUrl);
   if (!response.ok) throw new Error(`Recording download failed: ${response.status} (URL may have expired)`);
-  const filename = `recordings/${recordingSid}.mp3`;
-  fs.mkdirSync('recordings', { recursive: true });
+  const recordingDir = path.resolve('recordings');
+  const filename = path.join(recordingDir, `${recordingSid}.mp3`);
+  fs.mkdirSync(recordingDir, { recursive: true });
   // Save to local filesystem (or upload to S3/GCS)
   await pipeline(response.body, fs.createWriteStream(filename));
   await db.saveRecording({ callId: callSid, recordingId: recordingSid, path: filename });

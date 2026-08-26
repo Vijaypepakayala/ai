@@ -455,7 +455,7 @@ Telnyx provides built-in client-side hold and unhold. Call transfer is not a cli
 **Telnyx pattern**: provision one telephony credential per durable user/agent, store its ID and server-assigned `sip_username`, and mint short-lived JWTs from that same credential for each login or refresh. Do not create a new telephony credential for every call or token refresh: that changes the routable SIP identity and leaves old credentials active.
 
 ```javascript
-import { SwEvent, TELNYX_WARNING_CODES } from '@telnyx/webrtc';
+import { TelnyxRTC, SwEvent, TELNYX_WARNING_CODES } from '@telnyx/webrtc';
 
 class TelnyxSession {
   constructor() {
@@ -594,22 +594,61 @@ These patterns apply when migrating Twilio-based contact centers, PBX systems, o
 
 **Telnyx pattern**: Conferences are only needed for true multi-party audio (3+ participants).
 
-> **`supervisorRole` is a Conference REST API parameter, not a TeXML attribute.**
-> It is set when joining a participant to a conference via the API
-> (`supervisor_role: barge | whisper | monitor`), and there is no
-> `<Dial supervisorRole="...">` in TeXML — the skill's own validator rejects the
-> attribute and the runtime silently drops it, so a migration written that way
-> loses supervisor behaviour with no error. Supervisor features therefore still
-> require a conference; only plain two-party calls avoid one.
+> **`supervisorRole` is not a TeXML attribute.** For a conference, set
+> `supervisor_role: barge | whisper | monitor` when joining the participant. For
+> a bridged Call Control call, create the supervisor leg with
+> `supervise_call_control_id` and `supervisor_role`; `switchSupervisorRole`
+> changes an already-established supervisor leg and cannot create one.
 
 ```javascript
 // Twilio: requires conference for supervisor
 // Supervisor joins a conference room where the agent and customer are already connected
 
-// Telnyx: supervisor via Dial — no conference needed for 2-party monitoring
+// Telnyx: establish a supervisor leg for the bridged call first. Refresh the
+// per-minute price from the current Telnyx pricing source immediately before
+// this action; these environment values are approvals, not hard-coded prices.
+const maxDurationSeconds = 60;
+const currentPricePerMinute = Number(process.env.TELNYX_CURRENT_VOICE_PRICE_USD_PER_MINUTE);
+const approvedMaxUsd = Number(process.env.TELNYX_APPROVED_SUPERVISOR_MAX_USD);
+const estimatedMaxUsd = currentPricePerMinute * (maxDurationSeconds / 60);
+if (!Number.isFinite(currentPricePerMinute) || currentPricePerMinute <= 0 ||
+    !Number.isFinite(approvedMaxUsd) || approvedMaxUsd < estimatedMaxUsd) {
+  throw new Error('Missing current price or sufficient maximum-spend approval');
+}
+const supervisorApproval = [
+  process.env.TELNYX_CONNECTION_ID,
+  telnyxNumber,
+  supervisorNumber,
+  agentCallControlId,
+  'monitor',
+  `${maxDurationSeconds}s`,
+  `price:${currentPricePerMinute}`,
+  `max:${approvedMaxUsd}`
+].join('|');
+if (process.env.TELNYX_APPROVE_SUPERVISOR_DIAL !== supervisorApproval) {
+  throw new Error(`Supervisor dial not approved; expected ${supervisorApproval}`);
+}
+const supervisor = await client.calls.dial({
+  connection_id: process.env.TELNYX_CONNECTION_ID,
+  to: supervisorNumber,
+  from: telnyxNumber,
+  supervise_call_control_id: agentCallControlId,
+  supervisor_role: 'monitor',
+  // Provider-enforced ceiling: remains effective if this process exits or its
+  // event loop stalls. The local timer below is only an earlier fallback.
+  time_limit_secs: maxDurationSeconds
+});
+const supervisorCallId = supervisor.data.call_control_id;
+const supervisorTimeout = setTimeout(() => {
+  client.calls.actions.hangup(supervisorCallId).catch(console.error);
+}, maxDurationSeconds * 1000);
+
+// Later, switch the role of that established supervisor leg.
 await client.calls.actions.switchSupervisorRole(supervisorCallId, {
   role: 'barge'  // 'whisper' | 'barge' | 'monitor'
 });
+// Clear only after another path has definitively ended the supervisor leg.
+// clearTimeout(supervisorTimeout);
 ```
 
 **When you DO need conferences on Telnyx:**
@@ -619,7 +658,7 @@ await client.calls.actions.switchSupervisorRole(supervisorCallId, {
 
 **When you DON'T need conferences (use bridge/dial instead):**
 - Simple call transfers
-- Two-party calls with supervisor monitoring
+- Two-party bridged calls with an explicitly established Call Control supervisor leg
 - Warm transfers (bridge, then drop the transferring agent)
 
 > **Complete conference API examples** (CRUD, participant management with `supervisor_role`/`whisper_call_control_ids`/`mute`/`hold`, recording) are in `sdk-reference/{language}/voice-conferencing.md`. Supervisor role switching and `client_state` on all commands are in `sdk-reference/{language}/voice-advanced.md`.
@@ -756,6 +795,16 @@ async function sipUriFor(identity) {
   if (!agent) throw new Error(`No Telnyx credential provisioned for "${identity}"`);
   return agent.sip_uri;
 }
+
+// Expose the directory through an authenticated backend route. Apply your
+// application's authorization policy before revealing or dialing an identity.
+app.get('/api/voice-identities/:identity', async (req, res) => {
+  if (!req.user) return res.sendStatus(401);
+  if (!req.user.allowedVoiceIdentities.includes(req.params.identity)) {
+    return res.sendStatus(403);
+  }
+  res.json({ sip_uri: await sipUriFor(req.params.identity) });
+});
 ```
 
 ```python
@@ -798,8 +847,13 @@ def voice():
 **Telnyx (A) browser-originated — delete the endpoint, dial from the client:**
 ```javascript
 // bobClient is already connected in the browser
+const identityResponse = await fetch('/api/voice-identities/agent_jane');
+if (!identityResponse.ok) {
+  throw new Error(`Identity lookup failed: ${identityResponse.status}`);
+}
+const { sip_uri: destinationNumber } = await identityResponse.json();
 const call = bobClient.newCall({
-  destinationNumber: await sipUriFor('agent_jane'),   // sip:gencred…@sip.telnyx.com
+  destinationNumber,   // sip:gencred…@sip.telnyx.com
   callerNumber: '+15551234567',
 });
 ```
@@ -809,24 +863,75 @@ const call = bobClient.newCall({
 There is no `client.newCall()` on an inbound PSTN leg, so this endpoint **cannot** be deleted. Serve TeXML instead:
 
 ```python
+import os
+import base64
+import time
+from nacl.signing import VerifyKey
+from xml.sax.saxutils import escape
+
+def verify_telnyx_form_webhook(raw_body: bytes, headers) -> None:
+    timestamp = headers.get('telnyx-timestamp', '')
+    signature = headers.get('telnyx-signature-ed25519', '')
+    if not timestamp.isdigit() or abs(time.time() - int(timestamp)) > 300:
+        raise ValueError('stale or invalid webhook timestamp')
+    VerifyKey(base64.b64decode(os.environ['TELNYX_PUBLIC_KEY'])).verify(
+        timestamp.encode('ascii') + b'|' + raw_body,
+        base64.b64decode(signature),
+    )
+
 @app.route('/voice', methods=['POST'])
 def voice():
+    raw_body = request.get_data(cache=True, as_text=False)
+    try:
+        verify_telnyx_form_webhook(raw_body, request.headers)
+    except Exception:
+        return 'Forbidden', 403
     uri = sip_uri_for('agent_jane')            # sip:gencred…@sip.telnyx.com
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Dial callerId="+15551234567">
-    <Sip>{uri}</Sip>
+    <Sip>{escape(uri)}</Sip>
   </Dial>
 </Response>""", 200, {'Content-Type': 'text/xml'}
 ```
 
 ```javascript
+const crypto = require('crypto');
+function verifyTelnyxFormWebhook(rawBody, headers) {
+  const timestamp = headers['telnyx-timestamp'] || '';
+  const signature = headers['telnyx-signature-ed25519'] || '';
+  if (!/^\d+$/.test(timestamp) || Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) {
+    throw new Error('stale or invalid webhook timestamp');
+  }
+  const rawKey = Buffer.from(process.env.TELNYX_PUBLIC_KEY, 'base64');
+  if (rawKey.length !== 32) throw new Error('invalid Telnyx public key');
+  const spki = Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), rawKey]);
+  const signed = Buffer.concat([Buffer.from(`${timestamp}|`), rawBody]);
+  if (!crypto.verify(null, signed, { key: spki, format: 'der', type: 'spki' }, Buffer.from(signature, 'base64'))) {
+    throw new Error('invalid Telnyx webhook signature');
+  }
+}
+function escapeXmlText(value) {
+  return value.replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;',
+  })[character]);
+}
+app.use(express.urlencoded({
+  extended: false,
+  verify: (req, _res, buffer) => { req.rawBody = buffer; },
+}));
+
 app.post('/voice', async (req, res) => {
+  try {
+    verifyTelnyxFormWebhook(req.rawBody, req.headers);
+  } catch (_error) {
+    return res.status(403).send('Forbidden');
+  }
   const uri = await sipUriFor('agent_jane');
   res.type('text/xml').send(`<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Dial callerId="+15551234567">
-    <Sip>${uri}</Sip>
+    <Sip>${escapeXmlText(uri)}</Sip>
   </Dial>
 </Response>`);
 });
@@ -915,26 +1020,35 @@ Android does **not** take `certificate`/`private_key` — it takes the FCM servi
 > credential id via `PATCH /v2/credential_connections/{id}`. Send only the
 > field for the platform you are configuring.
 >
-> For an iOS-only app:
+> Use this helper for either platform. It retrieves the current assignment,
+> displays the exact replacement, and requires approval bound to the connection,
+> field, old credential, and new credential before changing live push routing:
 >
 > ```bash
-> curl -X PATCH "https://api.telnyx.com/v2/credential_connections/$CONNECTION_ID" \
->   -H "Authorization: Bearer $TELNYX_API_KEY" \
->   -H "Content-Type: application/json" \
->   -d "{
->     \"ios_push_credential_id\": \"$IOS_PUSH_CREDENTIAL_ID\"
->   }"
-> ```
+> attach_push_credential() {
+>   field="$1" new_id="$2"
+>   case "$field" in ios_push_credential_id|android_push_credential_id) ;; *) return 2 ;; esac
+>   test -n "$CONNECTION_ID" -a -n "$new_id" || return 2
+>   current_id=$(curl -fsS \
+>     -H "Authorization: Bearer $TELNYX_API_KEY" \
+>     "https://api.telnyx.com/v2/credential_connections/$CONNECTION_ID" |
+>     jq -er --arg field "$field" '.data[$field] // ""') || return 1
+>   test "$current_id" = "$new_id" && return 0
+>   approval="$CONNECTION_ID|$field|$current_id|$new_id"
+>   printf 'Replace %s on connection %s: %s -> %s\n' \
+>     "$field" "$CONNECTION_ID" "${current_id:-<unset>}" "$new_id"
+>   test "${TELNYX_APPROVE_PUSH_CREDENTIAL_REPLACEMENT:-}" = "$approval" || {
+>     echo "Push credential replacement not approved" >&2; return 1;
+>   }
+>   jq -n --arg field "$field" --arg id "$new_id" '{($field): $id}' |
+>     curl -fsS -X PATCH \
+>       "https://api.telnyx.com/v2/credential_connections/$CONNECTION_ID" \
+>       -H "Authorization: Bearer $TELNYX_API_KEY" \
+>       -H "Content-Type: application/json" --data-binary @-
+> }
 >
-> For an Android-only app:
->
-> ```bash
-> curl -X PATCH "https://api.telnyx.com/v2/credential_connections/$CONNECTION_ID" \
->   -H "Authorization: Bearer $TELNYX_API_KEY" \
->   -H "Content-Type: application/json" \
->   -d "{
->     \"android_push_credential_id\": \"$ANDROID_PUSH_CREDENTIAL_ID\"
->   }"
+> attach_push_credential ios_push_credential_id "$IOS_PUSH_CREDENTIAL_ID"
+> attach_push_credential android_push_credential_id "$ANDROID_PUSH_CREDENTIAL_ID"
 > ```
 >
 > If you ship both platforms, set both fields by running both requests or by

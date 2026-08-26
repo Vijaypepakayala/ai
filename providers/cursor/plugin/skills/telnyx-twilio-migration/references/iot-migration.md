@@ -53,56 +53,15 @@ Telnyx differentiates with **Private Wireless Gateways** — dedicated infrastru
 
 ### Order Physical SIMs
 
-Order SIM cards through the Telnyx Mission Control Portal or via API:
-
-```bash
-SIM_QUANTITY=100
-SHIPPING_ADDRESS_ID="YOUR_SHIPPING_ADDRESS_ID"
-[[ "$SIM_QUANTITY" =~ ^[1-9][0-9]*$ ]] || {
-  echo "SIM quantity must be a positive integer" >&2; exit 1;
-}
-[[ "$SHIPPING_ADDRESS_ID" =~ ^[0-9]+$ ]] || {
-  echo "Shipping address ID must be replaced with a numeric Telnyx address ID" >&2; exit 1;
-}
-PREVIEW_PAYLOAD=$(jq -cn \
-  --argjson quantity "$SIM_QUANTITY" \
-  --arg address_id "$SHIPPING_ADDRESS_ID" \
-  '{quantity: $quantity, address_id: $address_id}')
-PREVIEW=$(curl -fsS -X POST https://api.telnyx.com/v2/sim_card_order_preview \
-  -H "Authorization: Bearer $TELNYX_API_KEY" \
-  -H "Content-Type: application/json" \
-  --data "$PREVIEW_PAYLOAD")
-QUOTE=$(printf '%s' "$PREVIEW" | jq -ce --argjson quantity "$SIM_QUANTITY" '
-  .data
-  | select(.quantity == $quantity)
-  | .total_cost
-  | select(
-      (.amount | type) == "string" and
-      (.amount | test("^[0-9]+([.][0-9]+)?$")) and
-      (.currency | type) == "string" and
-      (.currency | test("^[A-Z]{3}$"))
-    )
-') || { echo "SIM order preview was incomplete" >&2; exit 1; }
-TOTAL_COST=$(printf '%s' "$QUOTE" | jq -r '.amount')
-CURRENCY=$(printf '%s' "$QUOTE" | jq -r '.currency')
-APPROVAL_TOKEN="$SIM_QUANTITY|$SHIPPING_ADDRESS_ID|$TOTAL_COST|$CURRENCY"
-printf 'Physical SIM quote: %s cards to %s; total %s %s\n' \
-  "$SIM_QUANTITY" "$SHIPPING_ADDRESS_ID" "$TOTAL_COST" "$CURRENCY"
-# Approve the exact quantity, shipping address, and displayed total-cost tuple.
-test "${TELNYX_APPROVE_SIM_ORDER:-}" = "$APPROVAL_TOKEN" || {
-  echo "Physical SIM order not approved" >&2; exit 1;
-}
-ORDER_PAYLOAD=$(jq -cn \
-  --argjson quantity "$SIM_QUANTITY" \
-  --arg address_id "$SHIPPING_ADDRESS_ID" \
-  '{quantity: $quantity, address_id: $address_id}')
-curl -fsS -X POST https://api.telnyx.com/v2/sim_card_orders \
-  -H "Authorization: Bearer $TELNYX_API_KEY" \
-  -H "Content-Type: application/json" \
-  --data "$ORDER_PAYLOAD"
-```
-
-The preview response is not a server-side price lock: the order request accepts no quote ID or maximum-charge field. If a price change between preview and order creation is unacceptable, place the order in the Mission Control Portal after reviewing its final total.
+Order physical SIM cards in the Telnyx Mission Control Portal. Review the final
+quantity, shipping address, total, and currency in the checkout UI immediately
+before confirming. This guide intentionally does not provide a copyable
+`POST /v2/sim_card_orders` command: the public create contract exposes no
+idempotency key, customer reference, or server-side quote identifier, so an
+ambiguous timeout cannot be retried automatically without risking a duplicate
+billable order. If an API order attempt has an ambiguous result, do not submit
+another order; reconcile it with the Portal or Telnyx support first and require
+a fresh approval for any subsequent purchase.
 
 ### Purchase eSIMs
 

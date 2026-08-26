@@ -201,18 +201,25 @@ For a profile created in the setup step, explicitly approve updating that
 named profile, then attach its WhatsApp channel settings:
 
 ```bash
-curl -X PATCH "https://api.telnyx.com/v2/verify_profiles/$TELNYX_VERIFY_PROFILE_ID" \
+WHATSAPP_COUNTRY="US"
+WHATSAPP_WABA_ID="YOUR_WABA_ID"
+WHATSAPP_SENDER="+13035551234"
+WHATSAPP_TEMPLATE="YOUR_AUTHENTICATION_TEMPLATE_NAME"
+WHATSAPP_APPROVAL="$TELNYX_VERIFY_PROFILE_ID|countries:$WHATSAPP_COUNTRY|waba:$WHATSAPP_WABA_ID|sender:$WHATSAPP_SENDER|template:$WHATSAPP_TEMPLATE"
+printf 'Verify profile update approval token: %s\n' "$WHATSAPP_APPROVAL"
+test "${TELNYX_APPROVE_VERIFY_PROFILE_UPDATE:-}" = "$WHATSAPP_APPROVAL" || {
+  echo "Verify profile WhatsApp update not approved" >&2; exit 1;
+}
+
+curl -fsS -X PATCH "https://api.telnyx.com/v2/verify_profiles/$TELNYX_VERIFY_PROFILE_ID" \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "whatsapp": {
-      "whitelisted_destinations": ["US"],
-      "default_verification_timeout_secs": 300,
-      "waba_id": "YOUR_WABA_ID",
-      "sender_phone_number": "+13035551234",
-      "template_id": "YOUR_AUTHENTICATION_TEMPLATE_NAME"
-    }
-  }'
+  --data "$(jq -cn \
+    --arg country "$WHATSAPP_COUNTRY" \
+    --arg waba "$WHATSAPP_WABA_ID" \
+    --arg sender "$WHATSAPP_SENDER" \
+    --arg template "$WHATSAPP_TEMPLATE" \
+    '{"whatsapp": {whitelisted_destinations:[$country],default_verification_timeout_secs:300,waba_id:$waba,sender_phone_number:$sender,template_id:$template}}')" || exit 1
 ```
 
 Replace `US`, the WABA ID, sender, and template with the resources approved for
@@ -361,11 +368,14 @@ Message templates are a **separate resource** managed via `/verify_profiles/temp
 
 ```bash
 # Create the template and capture its ID (separate resource)
-TEMPLATE_ID=$(curl -sS -X POST https://api.telnyx.com/v2/verify_profiles/templates \
+if ! TEMPLATE_ID=$(curl -fsS -X POST https://api.telnyx.com/v2/verify_profiles/templates \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"text": "Your {{app_name}} verification code is: {{code}}."}' \
-  | jq -er '.data.id')
+  | jq -er '.data.id'); then
+  echo "Verify template creation failed; profile was not changed" >&2
+  exit 1
+fi
 
 # Read and preserve the profile's existing SMS settings, then select the new
 # template. Replacing the nested `sms` object with only one key can erase other
@@ -373,17 +383,25 @@ TEMPLATE_ID=$(curl -sS -X POST https://api.telnyx.com/v2/verify_profiles/templat
 CURRENT_SMS=$(curl -fsS \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   "https://api.telnyx.com/v2/verify_profiles/$TELNYX_VERIFY_PROFILE_ID" \
-  | jq -ec '.data.sms // {}')
+  | jq -ec '.data.sms // {}') || exit 1
+CURRENT_TEMPLATE_ID=$(jq -r '.messaging_template_id // "unassigned"' \
+  <<<"$CURRENT_SMS") || exit 1
+
+TEMPLATE_UPDATE_APPROVAL="$TELNYX_VERIFY_PROFILE_ID|sms-template:$CURRENT_TEMPLATE_ID->$TEMPLATE_ID"
+printf 'Verify template update approval token: %s\n' "$TEMPLATE_UPDATE_APPROVAL"
+test "${TELNYX_APPROVE_VERIFY_TEMPLATE_UPDATE:-}" = "$TEMPLATE_UPDATE_APPROVAL" || {
+  echo "Verify profile template update not approved" >&2; exit 1;
+}
 
 PATCH_BODY=$(jq -cn \
   --argjson sms "$CURRENT_SMS" \
   --arg template "$TEMPLATE_ID" \
   '{sms: ($sms + {messaging_template_id: $template})}')
 
-curl -X PATCH "https://api.telnyx.com/v2/verify_profiles/$TELNYX_VERIFY_PROFILE_ID" \
+curl -fsS -X PATCH "https://api.telnyx.com/v2/verify_profiles/$TELNYX_VERIFY_PROFILE_ID" \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   -H "Content-Type: application/json" \
-  -d "$PATCH_BODY"
+  -d "$PATCH_BODY" || exit 1
 ```
 
 ```python

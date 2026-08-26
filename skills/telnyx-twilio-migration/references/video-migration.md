@@ -270,28 +270,51 @@ Telnyx provides server-side REST API endpoints for participant management that T
 ### Mute Participants
 
 ```bash
-curl -X POST "https://api.telnyx.com/v2/room_sessions/$SESSION_ID/actions/mute" \
+MUTE_EXCLUDE_ID="participant_id_to_keep_unmuted"
+MUTE_APPROVAL="$SESSION_ID|mute|all|exclude:$MUTE_EXCLUDE_ID"
+test -n "$SESSION_ID" -a -n "$MUTE_EXCLUDE_ID" || exit 1
+printf 'Mute-all approval token: %s\n' "$MUTE_APPROVAL"
+test "${TELNYX_APPROVE_ROOM_MUTATION:-}" = "$MUTE_APPROVAL" || {
+  echo "Session-wide mute not approved" >&2; exit 1;
+}
+curl -fsS -X POST "https://api.telnyx.com/v2/room_sessions/$SESSION_ID/actions/mute" \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"participants": "all", "exclude": ["participant_id_to_keep_unmuted"]}'
+  --data "$(jq -cn --arg id "$MUTE_EXCLUDE_ID" \
+    '{participants: "all", exclude: [$id]}')" || exit 1
 ```
 
 ### Unmute Participants
 
 ```bash
-curl -X POST "https://api.telnyx.com/v2/room_sessions/$SESSION_ID/actions/unmute" \
+UNMUTE_APPROVAL="$SESSION_ID|unmute|all|exclude:none"
+test -n "$SESSION_ID" || exit 1
+printf 'Unmute-all approval token: %s\n' "$UNMUTE_APPROVAL"
+test "${TELNYX_APPROVE_ROOM_MUTATION:-}" = "$UNMUTE_APPROVAL" || {
+  echo "Session-wide unmute not approved" >&2; exit 1;
+}
+curl -fsS -X POST "https://api.telnyx.com/v2/room_sessions/$SESSION_ID/actions/unmute" \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"participants": "all", "exclude": []}'
+  -d '{"participants": "all", "exclude": []}' || exit 1
 ```
 
 ### Kick Participants
 
 ```bash
-curl -X POST "https://api.telnyx.com/v2/room_sessions/$SESSION_ID/actions/kick" \
+PARTICIPANT_ID="participant-id-to-kick"
+KICK_APPROVAL="$SESSION_ID|$PARTICIPANT_ID"
+test -n "$SESSION_ID" -a -n "$PARTICIPANT_ID" || exit 1
+printf 'Kick participant %s from room session %s\n' "$PARTICIPANT_ID" "$SESSION_ID"
+test "${TELNYX_APPROVE_ROOM_KICK:-}" = "$KICK_APPROVAL" || {
+  echo "Participant kick not approved" >&2; exit 1;
+}
+jq -n --arg participant "$PARTICIPANT_ID" \
+  '{participants: [$participant], exclude: []}' |
+curl -fsS -X POST "https://api.telnyx.com/v2/room_sessions/$SESSION_ID/actions/kick" \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"participants": "all", "exclude": []}'
+  --data-binary @-
 ```
 
 ### List Participants
@@ -330,29 +353,39 @@ curl -X GET "https://api.telnyx.com/v2/room_recordings/$RECORDING_ID" \
 ### Delete Recordings
 
 ```bash
-# Delete a single recording
-curl -X DELETE "https://api.telnyx.com/v2/room_recordings/$RECORDING_ID" \
-  -H "Authorization: Bearer $TELNYX_API_KEY"
-
-# Preview a specific room's recordings before destructive cleanup
-curl -G -H "Authorization: Bearer $TELNYX_API_KEY" \
+# Enumerate the exact recording IDs for one room and review the final set.
+RECORDINGS=$(curl -fsS -G -H "Authorization: Bearer $TELNYX_API_KEY" \
   --data-urlencode "filter[room_id]=$ROOM_ID" \
-  "https://api.telnyx.com/v2/room_recordings"
+  --data-urlencode "page[size]=250" \
+  "https://api.telnyx.com/v2/room_recordings") || exit 1
+RECORDING_IDS=$(jq -cer --arg room "$ROOM_ID" '
+  select(.meta.total_pages == 1)
+  | [.data[] | select(.room_id == $room) | .id]
+  | select(length > 0 and all(.[]; type == "string" and test("\\S")))
+  | unique | sort
+' <<<"$RECORDINGS") || exit 1
+: "${RECORDING_RECOVERY_PLAN:?Set to the reviewed backup location or irreversible-no-recovery}"
+RECORDING_APPROVAL="$ROOM_ID|delete-recordings|$(jq -r 'join(",")' <<<"$RECORDING_IDS")|recovery:$RECORDING_RECOVERY_PLAN"
+printf 'Recordings selected for irreversible deletion:\n%s\n' \
+  "$(jq -r '.[]' <<<"$RECORDING_IDS")"
+printf 'Reviewed recovery plan: %s\n' "$RECORDING_RECOVERY_PLAN"
+printf 'Recording deletion approval token: %s\n' "$RECORDING_APPROVAL"
+test "${TELNYX_APPROVE_RECORDING_DELETE:-}" = "$RECORDING_APPROVAL" || {
+  echo "Recording deletion not approved" >&2; exit 1;
+}
 
-# After explicit confirmation, bulk-delete only that room's recordings.
-# The DELETE endpoint supports room/session/participant/date/status/type/duration filters.
-curl -G -X DELETE \
-  -H "Authorization: Bearer $TELNYX_API_KEY" \
-  --data-urlencode "filter[room_id]=$ROOM_ID" \
-  "https://api.telnyx.com/v2/room_recordings"
+# Delete only the reviewed IDs; never issue a collection DELETE.
+jq -r '.[]' <<<"$RECORDING_IDS" | while IFS= read -r recording_id; do
+  curl -fsS -X DELETE \
+    "https://api.telnyx.com/v2/room_recordings/$recording_id" \
+    -H "Authorization: Bearer $TELNYX_API_KEY" || exit 1
+done
 
-# DANGER — omitting every filter makes this an ACCOUNT-WIDE bulk delete. It
-# deletes every room recording the API key can access. Only use an unfiltered
-# request when that is genuinely the intent, after explicit user confirmation;
-# never run it as part of an automated migration.
-curl -X DELETE "https://api.telnyx.com/v2/room_recordings" \
-  -H "Authorization: Bearer $TELNYX_API_KEY"
 ```
+
+Do not issue an unfiltered collection DELETE. For broader cleanup, enumerate
+the exact recording IDs from a reviewed export and delete those IDs one at a
+time after explicit confirmation.
 
 **Recording comparison:**
 
@@ -378,7 +411,13 @@ curl -X GET "https://api.telnyx.com/v2/room_sessions/$SESSION_ID" \
   -H "Authorization: Bearer $TELNYX_API_KEY"
 
 # End a session (disconnect all participants)
-curl -X POST "https://api.telnyx.com/v2/room_sessions/$SESSION_ID/actions/end" \
+END_APPROVAL="$SESSION_ID|end|all-participants"
+test -n "$SESSION_ID" || exit 1
+printf 'End-session approval token: %s\n' "$END_APPROVAL"
+test "${TELNYX_APPROVE_ROOM_MUTATION:-}" = "$END_APPROVAL" || {
+  echo "Ending the room session not approved" >&2; exit 1;
+}
+curl -fsS -X POST "https://api.telnyx.com/v2/room_sessions/$SESSION_ID/actions/end" \
   -H "Authorization: Bearer $TELNYX_API_KEY"
 ```
 

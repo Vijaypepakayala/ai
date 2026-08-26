@@ -2069,7 +2069,7 @@ class MigrationScriptContracts(unittest.TestCase):
             extra_environment={
                 "TELNYX_SIP_CONNECTION_ID": "conn-existing",
                 "TELNYX_OVP_ID": "ovp-chosen",
-                "TELNYX_ALLOW_TRUNK_MODIFY": "yes",
+                "TELNYX_APPROVE_TRUNK_MODIFY": "conn-existing|ovp-chosen",
             },
         )
         mutations = [
@@ -2084,6 +2084,28 @@ class MigrationScriptContracts(unittest.TestCase):
             {"outbound": {"outbound_voice_profile_id": "ovp-chosen"}},
             json.loads(mutations[0]["body"]),
         )
+
+    def test_sip_trunk_approval_requires_explicit_connection_and_exact_pair(self) -> None:
+        for environment in (
+            {
+                "TELNYX_OVP_ID": "ovp-chosen",
+                "TELNYX_APPROVE_TRUNK_MODIFY": "conn-existing|ovp-chosen",
+            },
+            {
+                "TELNYX_SIP_CONNECTION_ID": "conn-existing",
+                "TELNYX_OVP_ID": "ovp-chosen",
+                "TELNYX_APPROVE_TRUNK_MODIFY": "another-connection|ovp-chosen",
+            },
+        ):
+            with self.subTest(environment=environment):
+                _, requests = self.run_script(
+                    "test-sip.sh",
+                    "sip_existing_no_opt_in",
+                    "--confirm",
+                    expected_exit=1,
+                    extra_environment=environment,
+                )
+                self.assert_no_account_mutations(requests)
 
     def test_sip_empty_account_mutates_only_resources_created_this_run(self) -> None:
         _, requests = self.run_script(
@@ -2136,6 +2158,33 @@ class MigrationScriptContracts(unittest.TestCase):
         )
         self.assertIn("Manual cleanup required", result.stdout)
         self.assertIn("connection=conn-new", result.stdout)
+
+    def test_sip_creation_aborts_when_secure_password_generation_fails(self) -> None:
+        fake_tr = self.fake_bin / "tr"
+        real_tr = fake_tr.resolve()
+        fake_tr.unlink()
+        fake_tr.write_text(
+            "#!/bin/sh\n"
+            "if [ \"${1:-}\" = '-dc' ]; then exit 0; fi\n"
+            f"exec {real_tr} \"$@\"\n",
+            encoding="utf-8",
+        )
+        fake_tr.chmod(fake_tr.stat().st_mode | stat.S_IXUSR)
+
+        result, requests = self.run_script(
+            "test-sip.sh",
+            "sip_empty_account",
+            "--confirm",
+            expected_exit=1,
+        )
+        self.assertIn("cryptographically secure SIP test password", result.stdout)
+        self.assertFalse(
+            any(
+                request["method"] == "POST"
+                and request["url"].endswith("/credential_connections")
+                for request in requests
+            )
+        )
 
     def test_sip_cleanup_keeps_signal_traps_armed_during_deletion(self) -> None:
         source = (MIGRATION_SCRIPTS / "test-sip.sh").read_text(encoding="utf-8")
@@ -2208,7 +2257,7 @@ class MigrationScriptContracts(unittest.TestCase):
                 {
                     "TELNYX_SIP_CONNECTION_ID": "conn-existing",
                     "TELNYX_OVP_ID": "ovp-chosen",
-                    "TELNYX_ALLOW_TRUNK_MODIFY": "yes",
+                    "TELNYX_APPROVE_TRUNK_MODIFY": "conn-existing|ovp-chosen",
                 },
                 "did not match conn-existing",
                 0,
@@ -2224,7 +2273,7 @@ class MigrationScriptContracts(unittest.TestCase):
                 {
                     "TELNYX_SIP_CONNECTION_ID": "conn-existing",
                     "TELNYX_OVP_ID": "ovp-chosen",
-                    "TELNYX_ALLOW_TRUNK_MODIFY": "yes",
+                    "TELNYX_APPROVE_TRUNK_MODIFY": "conn-existing|ovp-chosen",
                 },
                 "PATCH accepted but the connection does not report the profile",
                 1,
@@ -2284,7 +2333,7 @@ class MigrationScriptContracts(unittest.TestCase):
             extra_environment={
                 "TELNYX_SIP_CONNECTION_ID": "conn-existing",
                 "TELNYX_OVP_ID": "ovp-chosen",
-                "TELNYX_ALLOW_TRUNK_MODIFY": "yes",
+                "TELNYX_APPROVE_TRUNK_MODIFY": "conn-existing|ovp-chosen",
             },
         )
         self.assert_no_account_mutations(requests)
@@ -2335,6 +2384,47 @@ class TeXMLValidatorContracts(unittest.TestCase):
             '<Response><Stop><Stream nane="media-1"/></Stop></Response>'
         )
         self.assertEqual(1, rejected.returncode, rejected.stdout)
+
+    def test_stopped_stream_cannot_carry_start_parameters(self) -> None:
+        rejected = self.run_validator(
+            '<Response><Stop><Stream name="media-1">'
+            '<Parameter name="tenant" value="demo"/>'
+            '</Stream></Stop></Response>'
+        )
+        self.assertEqual(1, rejected.returncode, rejected.stdout + rejected.stderr)
+        self.assertIn(
+            "<Parameter> — Invalid TeXML nesting under <Stream>",
+            rejected.stdout,
+        )
+
+        accepted = self.run_validator(
+            '<Response><Start><Stream url="wss://example.com/audio">'
+            '<Parameter name="tenant" value="demo"/>'
+            '</Stream></Start></Response>'
+        )
+        self.assertEqual(0, accepted.returncode, accepted.stdout + accepted.stderr)
+
+    def test_record_transcription_callback_contract_is_consistent(self) -> None:
+        missing = self.run_validator(
+            '<Response><Record transcription="true"/></Response>'
+        )
+        self.assertEqual(1, missing.returncode, missing.stdout + missing.stderr)
+        self.assertIn("requires transcriptionCallback", missing.stdout)
+
+        accepted = self.run_validator(
+            '<Response><Record transcription="true" '
+            'transcriptionCallback="/handle-transcription"/></Response>'
+        )
+        self.assertEqual(0, accepted.returncode, accepted.stdout + accepted.stderr)
+
+        reference = (
+            ROOT
+            / "skills/telnyx-twilio-migration/references/texml-verbs.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            'transcription="true"\n  transcriptionCallback="/handle-transcription"',
+            reference,
+        )
 
     def test_pay_is_accepted_as_runtime_supported(self) -> None:
         result = self.run_validator(
@@ -2538,11 +2628,57 @@ class TeXMLValidatorContracts(unittest.TestCase):
                 self.assertIn(expected, result.stdout)
 
     def test_conversation_relay_requires_a_websocket_url(self) -> None:
-        result = self.run_validator(
-            "<Response><Connect><ConversationRelay/></Connect></Response>"
+        for fragment in (
+            "<Connect><ConversationRelay/></Connect>",
+            '<Connect><ConversationRelay url="https://example.com"/></Connect>',
+            '<Connect><ConversationRelay url="wss://"/></Connect>',
+            '<Connect><ConversationRelay url="wss:///path"/></Connect>',
+            '<Start><Stream url="https://example.com"/></Start>',
+            '<Connect><Stream url="http://example.com"/></Connect>',
+            '<Start><Stream url="wss://"/></Start>',
+            '<Connect><Stream url="wss:///path"/></Connect>',
+            '<Start><Stream url="wss://user@"/></Start>',
+            '<Connect><ConversationRelay url="wss://:443"/></Connect>',
+            '<Connect><ConversationRelay url="wss://example.com:bad"/></Connect>',
+        ):
+            with self.subTest(fragment=fragment):
+                result = self.run_validator(f"<Response>{fragment}</Response>")
+                self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        accepted = self.run_validator(
+            '<Response><Connect><ConversationRelay url="wss://example.com"/>'
+            "</Connect></Response>"
         )
-        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
-        self.assertIn("under Connect requires a non-empty url", result.stdout)
+        self.assertEqual(0, accepted.returncode, accepted.stdout + accepted.stderr)
+        uppercase_scheme = self.run_validator(
+            '<Response><Start><Stream url="WSS://example.com"/></Start></Response>'
+        )
+        self.assertEqual(
+            0,
+            uppercase_scheme.returncode,
+            uppercase_scheme.stdout + uppercase_scheme.stderr,
+        )
+
+    def test_static_dtmf_attributes_reject_unsupported_characters(self) -> None:
+        cases = (
+            '<Play digits="X"/>',
+            '<Record finishOnKey="garbage"/>',
+            '<Gather finishOnKey="X"/>',
+            '<Gather validDigits="ABC"/>',
+            '<Dial><Number sendDigits="XYZ">+12025550123</Number></Dial>',
+        )
+        for fragment in cases:
+            with self.subTest(fragment=fragment):
+                result = self.run_validator(f"<Response>{fragment}</Response>")
+                self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+                self.assertIn("unsupported DTMF characters", result.stdout)
+
+        accepted = self.run_validator(
+            '<Response><Play digits="ww12#*"/><Gather finishOnKey="" '
+            'validDigits="123#*"/><Record finishOnKey="#"/>'
+            '<Dial><Number sendDigits="ww123#*">+12025550123</Number>'
+            '</Dial></Response>'
+        )
+        self.assertEqual(0, accepted.returncode, accepted.stdout + accepted.stderr)
 
     def test_ai_assistant_requires_exactly_one_selector(self) -> None:
         for fragment in (
@@ -2650,6 +2786,235 @@ class TeXMLValidatorContracts(unittest.TestCase):
 
 
 class MigrationGuidanceContracts(unittest.TestCase):
+    def test_video_guidance_omits_account_wide_recording_delete(self) -> None:
+        guide = (
+            ROOT
+            / "skills/telnyx-twilio-migration/references/video-migration.md"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn(
+            'curl -X DELETE "https://api.telnyx.com/v2/room_recordings"',
+            guide,
+        )
+        self.assertIn(
+            '--data-urlencode "filter[room_id]=$ROOM_ID"',
+            guide,
+        )
+
+    def test_destructive_guidance_requires_target_bound_approval(self) -> None:
+        references = ROOT / "skills" / "telnyx-twilio-migration" / "references"
+        video = (references / "video-migration.md").read_text(encoding="utf-8")
+        webrtc = (references / "webrtc-migration.md").read_text(encoding="utf-8")
+        account = (references / "account-setup-guide.md").read_text(
+            encoding="utf-8"
+        )
+        iot = (references / "iot-migration.md").read_text(encoding="utf-8")
+        numbers = (references / "numbers-migration.md").read_text(encoding="utf-8")
+
+        configuring = numbers.split("## Configuring Numbers", 1)[1].split(
+            "### Configuration Mapping", 1
+        )[0]
+        self.assertIn("CURRENT_CONNECTION_ID", configuring)
+        self.assertIn("CURRENT_PROFILE_ID", configuring)
+        self.assertIn("TELNYX_APPROVE_NUMBER_ASSIGNMENT", configuring)
+        self.assertIn(
+            '--data-urlencode "filter[phone_number]=$REQUESTED_NUMBER"',
+            configuring,
+        )
+        self.assertLess(
+            configuring.index("TELNYX_APPROVE_NUMBER_ASSIGNMENT"),
+            configuring.index("curl -fsS -X PATCH"),
+        )
+        self.assertLess(
+            configuring.index('os.environ.get("TELNYX_APPROVE_NUMBER_ASSIGNMENT")'),
+            configuring.index("client.phone_numbers.update"),
+        )
+        self.assertEqual(3, configuring.count("curl -fsS -X PATCH"))
+        self.assertIn("/v2/connections/$NEW_CONNECTION_ID", configuring)
+        self.assertIn("/v2/messaging_profiles/$NEW_PROFILE_ID", configuring)
+        self.assertIn("CURRENT_CONNECTION_JSON", configuring)
+        self.assertIn("voice rollback failed", configuring)
+        self.assertIn("FINAL_NUMBER=$(curl -fsS", configuring)
+        self.assertIn("FINAL_MESSAGING=$(curl -fsS", configuring)
+        self.assertIn(".data.connection_id == $id", configuring)
+        self.assertIn(".data.messaging_profile_id == $id", configuring)
+
+        for document in (numbers, account):
+            assignment = document.split("ASSIGNMENT_APPROVAL=", 1)[1]
+            self.assertLess(
+                document.index("/v2/connections/$NEW_CONNECTION_ID"),
+                document.index("ASSIGNMENT_APPROVAL="),
+            )
+            self.assertIn("CURRENT_CONNECTION_JSON", assignment)
+            self.assertIn("Messaging assignment failed", assignment)
+            self.assertIn("CRITICAL: voice rollback failed", assignment)
+
+        self.assertNotIn(
+            "POST https://api.telnyx.com/v2/sim_card_orders", iot
+        )
+        self.assertIn("ambiguous timeout", iot)
+        self.assertIn("fresh approval", iot)
+
+        kick = video.split("### Kick Participants", 1)[1].split(
+            "### List Participants", 1
+        )[0]
+        self.assertNotIn('"participants": "all"', kick)
+        self.assertIn('$SESSION_ID|$PARTICIPANT_ID', kick)
+        self.assertLess(kick.index("TELNYX_APPROVE_ROOM_KICK"), kick.index("curl -fsS"))
+
+        attachment = webrtc.split("attach_push_credential()", 1)[1].split("```", 1)[0]
+        self.assertIn('test -n "$CONNECTION_ID" -a -n "$new_id"', attachment)
+        self.assertIn("current_id=$(curl -fsS", attachment)
+        self.assertIn("$CONNECTION_ID|$field|$current_id|$new_id", attachment)
+        self.assertLess(
+            attachment.index("TELNYX_APPROVE_PUSH_CREDENTIAL_REPLACEMENT"),
+            attachment.index("curl -fsS -X PATCH"),
+        )
+
+        assignment = account.split("### Number Assignment", 1)[1].split(
+            "### Verify Profile", 1
+        )[0]
+        self.assertIn("CURRENT_CONNECTION_ID", assignment)
+        self.assertIn("CURRENT_PROFILE_ID", assignment)
+        self.assertIn("$CURRENT_CONNECTION_ID->$NEW_CONNECTION_ID", assignment)
+        self.assertIn("$CURRENT_PROFILE_ID->$NEW_PROFILE_ID", assignment)
+        self.assertLess(
+            assignment.index("TELNYX_APPROVE_NUMBER_ASSIGNMENT"),
+            assignment.index("curl -fsS -X PATCH"),
+        )
+        self.assertEqual(3, assignment.count("curl -fsS -X PATCH"), assignment)
+        self.assertIn("if ! curl -fsS -X PATCH", assignment)
+        self.assertIn("CURRENT_CONNECTION_JSON", assignment)
+        self.assertIn("CRITICAL: voice rollback failed", assignment)
+        self.assertIn("FINAL_NUMBER=$(curl -fsS", assignment)
+        self.assertIn("FINAL_MESSAGING=$(curl -fsS", assignment)
+        self.assertIn(".data.connection_id == $id", assignment)
+        self.assertIn(".data.messaging_profile_id == $id", assignment)
+
+        voice = (references / "voice-migration.md").read_text(encoding="utf-8")
+        self.assertIn('"github.com/team-telnyx/telnyx-go/v4"', voice)
+        self.assertIn('"github.com/team-telnyx/telnyx-go/v4/option"', voice)
+        self.assertNotIn('"github.com/team-telnyx/telnyx-go"', voice)
+
+        fax_assignment = account.split("# Resolve the exact owned sender", 1)[1].split(
+            "The owned-number response", 1
+        )[0]
+        self.assertIn("CURRENT_FAX_CONNECTION_ID", fax_assignment)
+        self.assertIn("$CURRENT_FAX_CONNECTION_ID->$NEW_FAX_APPLICATION_ID", fax_assignment)
+        self.assertIn("TELNYX_APPROVE_FAX_REROUTE", fax_assignment)
+        self.assertLess(
+            fax_assignment.index("TELNYX_APPROVE_FAX_REROUTE"),
+            fax_assignment.index("curl -fsS -X PATCH"),
+        )
+
+        recordings = video.split("### Delete Recordings", 1)[1].split(
+            "**Recording comparison:**", 1
+        )[0]
+        self.assertIn("RECORDING_IDS", recordings)
+        self.assertIn(".meta.total_pages == 1", recordings)
+        self.assertIn("RECORDING_RECOVERY_PLAN", recordings)
+        self.assertIn("TELNYX_APPROVE_RECORDING_DELETE", recordings)
+        self.assertIn("$ROOM_ID|delete-recordings|", recordings)
+        self.assertNotIn("curl -G -X DELETE", recordings)
+        self.assertLess(
+            recordings.index("TELNYX_APPROVE_RECORDING_DELETE"),
+            recordings.index("curl -fsS -X DELETE"),
+        )
+
+        for heading, action in (
+            ("### Mute Participants", "mute|all"),
+            ("### Unmute Participants", "unmute|all"),
+        ):
+            section = video.split(heading, 1)[1].split("###", 1)[0]
+            self.assertIn(action, section)
+            self.assertIn("TELNYX_APPROVE_ROOM_MUTATION", section)
+            self.assertLess(
+                section.index("TELNYX_APPROVE_ROOM_MUTATION"),
+                section.index("curl -fsS -X POST"),
+            )
+
+        end_session = video.split("# End a session", 1)[1].split("```", 1)[0]
+        self.assertIn("$SESSION_ID|end|all-participants", end_session)
+        self.assertIn("TELNYX_APPROVE_ROOM_MUTATION", end_session)
+        self.assertLess(
+            end_session.index("TELNYX_APPROVE_ROOM_MUTATION"),
+            end_session.index("curl -fsS -X POST"),
+        )
+
+        supervisor = webrtc.split("// Telnyx: establish a supervisor leg", 1)[1].split(
+            "```", 1
+        )[0]
+        self.assertIn("TELNYX_CURRENT_VOICE_PRICE_USD_PER_MINUTE", supervisor)
+        self.assertIn("TELNYX_APPROVED_SUPERVISOR_MAX_USD", supervisor)
+        self.assertIn("TELNYX_APPROVE_SUPERVISOR_DIAL", supervisor)
+        self.assertIn("maxDurationSeconds", supervisor)
+        self.assertIn("time_limit_secs: maxDurationSeconds", supervisor)
+        self.assertLess(
+            supervisor.index("TELNYX_APPROVE_SUPERVISOR_DIAL"),
+            supervisor.index("client.calls.dial"),
+        )
+        self.assertIn("client.calls.actions.hangup", supervisor)
+
+        for heading in ("### Mute Participants", "### Unmute Participants"):
+            section = video.split(heading, 1)[1].split("###", 1)[0]
+            self.assertIn("curl -fsS -X POST", section)
+            self.assertIn("|| exit 1", section)
+
+    def test_voice_webhook_and_supervisor_examples_are_complete(self) -> None:
+        references = ROOT / "skills" / "telnyx-twilio-migration" / "references"
+        voice = (references / "voice-migration.md").read_text(encoding="utf-8")
+        webrtc = (references / "webrtc-migration.md").read_text(encoding="utf-8")
+
+        self.assertIn("age < -5*time.Minute", voice)
+        self.assertIn("telnyx_headers = {", voice)
+        self.assertIn("'telnyx-signature-ed25519'", voice)
+        self.assertNotIn("signature = request.env", voice)
+        self.assertIn("supervise_call_control_id", webrtc)
+        self.assertIn("supervisor_role: 'monitor'", webrtc)
+        self.assertIn(
+            "import { TelnyxRTC, SwEvent, TELNYX_WARNING_CODES }",
+            webrtc,
+        )
+        self.assertIn("app.get('/api/voice-identities/:identity'", webrtc)
+        self.assertIn(
+            "fetch('/api/voice-identities/agent_jane')",
+            webrtc,
+        )
+        browser_section = webrtc.split(
+            "**Telnyx (A) browser-originated", 1
+        )[1].split("**Telnyx (B) PSTN-originated", 1)[0]
+        self.assertNotIn("sipUriFor(", browser_section)
+        self.assertLess(
+            webrtc.index("supervise_call_control_id"),
+            webrtc.index("switchSupervisorRole"),
+        )
+        self.assertIn(
+            "const supervisorCallId = supervisor.data.call_control_id;",
+            webrtc,
+        )
+        supervisor_example = webrtc.split(
+            "const supervisor = await client.calls.dial", 1
+        )[1].split("```", 1)[0]
+        self.assertLess(
+            supervisor_example.index("const supervisorCallId ="),
+            supervisor_example.index("switchSupervisorRole"),
+        )
+        pstn_section = webrtc.split(
+            "**Telnyx (B) PSTN-originated", 1
+        )[1].split("**Key mapping:**", 1)[0]
+        self.assertIn("verify_telnyx_form_webhook", pstn_section)
+        self.assertIn("verifyTelnyxFormWebhook", pstn_section)
+        self.assertIn("telnyx-signature-ed25519", pstn_section)
+        self.assertIn("telnyx-timestamp", pstn_section)
+        self.assertIn("function escapeXmlText", pstn_section)
+        self.assertLess(
+            pstn_section.index("verify_telnyx_form_webhook(raw_body"),
+            pstn_section.index("sip_uri_for"),
+        )
+        self.assertLess(
+            pstn_section.index("verifyTelnyxFormWebhook(req.rawBody"),
+            pstn_section.index("sipUriFor"),
+        )
+
     def test_inbound_sms_reply_examples_authenticate_before_side_effects(self) -> None:
         messaging_guide = (
             ROOT
@@ -2688,6 +3053,8 @@ class MigrationGuidanceContracts(unittest.TestCase):
                     example.index("message.received"),
                     example.index("client.messages.send"),
                 )
+            self.assertIn("40300", example)
+            self.assertIn("completed", example)
 
         python_examples = [
             example for example in (*reply_examples, survey_example) if "def " in example
@@ -2698,11 +3065,53 @@ class MigrationGuidanceContracts(unittest.TestCase):
             survey_example.index("message.received"),
             survey_example.index("r.setex"),
         )
+        terminal_branch = survey_example.split(
+            "if telnyx_error_code(error) == '40300':", 1
+        )[1].split("return '', 200", 1)[0]
+        self.assertIn("save_survey", terminal_branch)
+        self.assertIn("r.setex", terminal_branch)
+        self.assertLess(
+            terminal_branch.index("r.setex"), terminal_branch.index("completed")
+        )
         node_example = next(
             example for example in reply_examples if "app.post('/sms'" in example
         )
         self.assertIn("req.rawBody", node_example)
         self.assertIn("verify: (req, res, buf)", node_example)
+        self.assertIn("error?.error?.errors?.[0]?.code", node_example)
+
+    def test_verify_template_creation_fails_before_profile_patch(self) -> None:
+        guide = (
+            ROOT
+            / "skills/telnyx-twilio-migration/references/verify-migration.md"
+        ).read_text(encoding="utf-8")
+        block = next(
+            item
+            for item in re.findall(r"```bash\n(.*?)```", guide, re.DOTALL)
+            if "/verify_profiles/templates" in item and "TEMPLATE_ID" in item
+        )
+        self.assertIn("if ! TEMPLATE_ID=$(curl -fsS -X POST", block)
+        self.assertIn("exit 1", block.split("CURRENT_SMS=", 1)[0])
+        self.assertIn("CURRENT_SMS=$(curl -fsS", block)
+        self.assertIn(") || exit 1", block)
+        self.assertIn("CURRENT_TEMPLATE_ID", block)
+        self.assertIn("TELNYX_APPROVE_VERIFY_TEMPLATE_UPDATE", block)
+        self.assertIn("$CURRENT_TEMPLATE_ID->$TEMPLATE_ID", block)
+        self.assertLess(
+            block.index("TELNYX_APPROVE_VERIFY_TEMPLATE_UPDATE"),
+            block.index("curl -fsS -X PATCH"),
+        )
+        self.assertIn("curl -fsS -X PATCH", block)
+
+    def test_xml_attribute_escaping_matches_the_active_delimiter(self) -> None:
+        voice = (
+            ROOT
+            / "skills/telnyx-twilio-migration/references/voice-migration.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("escapeXmlDoubleQuotedAttr", voice)
+        self.assertIn("escapeXmlSingleQuotedAttr", voice)
+        self.assertIn("replace(/'/g, '&apos;')", voice)
+        self.assertIn("active quote delimiter", voice)
 
     def test_copyable_comparison_mutations_are_gated_before_execution(
         self,
@@ -2884,6 +3293,11 @@ class MigrationGuidanceContracts(unittest.TestCase):
         self.assertIn("WhatsApp", verify_mapping)
         for channel in ("sms", "call", "flashcall", "whatsapp"):
             self.assertIn(f'"{channel}": {{', verify_guide)
+        self.assertIn("TELNYX_APPROVE_VERIFY_PROFILE_UPDATE", verify_guide)
+        self.assertIn(
+            'WHATSAPP_APPROVAL="$TELNYX_VERIFY_PROFILE_ID|countries:',
+            verify_guide,
+        )
         create_profile = re.search(
             r'POST https://api\.telnyx\.com/v2/verify_profiles.*?'
             r'-d \'(\{.*?\})\'\n```',
@@ -2914,24 +3328,17 @@ class MigrationGuidanceContracts(unittest.TestCase):
             'PATCH "https://api.telnyx.com/v2/verify_profiles/$TELNYX_VERIFY_PROFILE_ID"',
             verify_guide,
         )
-        whatsapp_patch = re.search(
-            r'PATCH "https://api\.telnyx\.com/v2/verify_profiles/'
-            r'\$TELNYX_VERIFY_PROFILE_ID".*?-d \'(\{.*?\})\'\n```',
-            verify_guide,
-            re.DOTALL,
-        )
-        self.assertIsNotNone(whatsapp_patch)
-        whatsapp_payload = json.loads(whatsapp_patch.group(1))
-        self.assertEqual(
-            {
-                "whitelisted_destinations",
-                "default_verification_timeout_secs",
-                "waba_id",
-                "sender_phone_number",
-                "template_id",
-            },
-            set(whatsapp_payload["whatsapp"]),
-        )
+        whatsapp_section = verify_guide.split("### WhatsApp Verification", 1)[1].split(
+            "### Parameter Mapping", 1
+        )[0]
+        for field in (
+            "whitelisted_destinations",
+            "default_verification_timeout_secs",
+            "waba_id",
+            "sender_phone_number",
+            "template_id",
+        ):
+            self.assertIn(field, whatsapp_section)
 
     def test_voice_recording_guidance_distinguishes_record_and_dial_defaults(
         self,
@@ -2957,6 +3364,26 @@ class MigrationGuidanceContracts(unittest.TestCase):
             'set `channels="single"` / `recordingChannels="single"`',
             voice_migration,
         )
+        callback_section = voice_migration.split(
+            "# Telnyx TeXML callback (form-encoded", 1
+        )[1].split("## Migration Checklist", 1)[0]
+        self.assertNotIn("client.webhooks.unwrap", callback_section)
+        self.assertNotIn("standardwebhooks", callback_section)
+        self.assertIn("VerifyKey", callback_section)
+        self.assertIn("crypto.verify", callback_section)
+        self.assertIn("telnyx-signature-ed25519", callback_section)
+        self.assertIn("telnyx-timestamp", callback_section)
+        self.assertLess(
+            callback_section.index("verify_telnyx_form_webhook(raw_body"),
+            callback_section.index("request.form['RecordingSid']"),
+        )
+        self.assertLess(
+            callback_section.index("verifyTelnyxFormWebhook(req.rawBody"),
+            callback_section.index("req.body.RecordingSid"),
+        )
+        self.assertIn("re.fullmatch(r'[A-Za-z0-9_-]+'", callback_section)
+        self.assertIn("/^[A-Za-z0-9_-]+$/", callback_section)
+        self.assertIn("path.resolve('recordings')", callback_section)
 
     def test_ruby_webhook_samples_initialize_clients_and_wire_headers(self) -> None:
         webhook_migration = (
@@ -3039,6 +3466,7 @@ class RunValidationContracts(unittest.TestCase):
         files: dict[str, str],
         *extra_args: str,
         env_overrides: dict[str, str] | None = None,
+        unreadable_files: set[str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         self._tmp = tempfile.TemporaryDirectory(prefix="run-validation-")
         self.addCleanup(self._tmp.cleanup)
@@ -3047,6 +3475,8 @@ class RunValidationContracts(unittest.TestCase):
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(contents, encoding="utf-8")
+            if unreadable_files and relative in unreadable_files:
+                path.chmod(0)
         env = {k: v for k, v in os.environ.items() if k != "TELNYX_API_KEY"}
         if env_overrides:
             env.update(env_overrides)
@@ -3070,7 +3500,10 @@ class RunValidationContracts(unittest.TestCase):
     VALID_TEXML = "<Response>\n  <Say>Welcome</Say>\n</Response>\n"
 
     def run_correctness(
-        self, files: dict[str, str], *extra_args: str
+        self,
+        files: dict[str, str],
+        *extra_args: str,
+        env_overrides: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         self._correctness_tmp = tempfile.TemporaryDirectory(
             prefix="correctness-linter-"
@@ -3081,9 +3514,13 @@ class RunValidationContracts(unittest.TestCase):
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(contents, encoding="utf-8")
+        env = {k: v for k, v in os.environ.items() if k != "TELNYX_API_KEY"}
+        if env_overrides:
+            env.update(env_overrides)
         return subprocess.run(
             [BASH, str(CORRECTNESS_LINTER), str(root), *extra_args],
             cwd=root,
+            env=env,
             text=True,
             capture_output=True,
             check=False,
@@ -3114,7 +3551,20 @@ class RunValidationContracts(unittest.TestCase):
         )
         self.assertIn("texml:fail", result.stdout)
 
-    def test_hybrid_state_is_preserved_in_the_correctness_pass(self) -> None:
+    def test_correctness_analysis_requires_python_instead_of_guessing(self) -> None:
+        result = self.run_correctness(
+            {
+                "src/relay.xml": (
+                    '<Response><Connect><ConversationRelay '
+                    'url="wss://example.com" language="en-US"/></Connect></Response>'
+                ),
+            },
+            env_overrides={"PATH": ""},
+        )
+        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+        self.assertIn("python3 is required for correctness analysis", result.stderr)
+
+    def test_hybrid_state_is_preserved_in_migration_validation(self) -> None:
         with tempfile.TemporaryDirectory(prefix="phase5-hybrid-state-") as tmp:
             state_file = Path(tmp) / "migration-state.json"
             state_file.write_text(
@@ -3133,7 +3583,42 @@ class RunValidationContracts(unittest.TestCase):
                 str(state_file),
             )
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        self.assertIn("correctness:pass", result.stdout)
+        self.assertIn("migration:pass", result.stdout)
+
+    def test_project_hybrid_state_is_loaded_by_the_prescribed_command(self) -> None:
+        result = self.run_phase5(
+            {
+                "src/app.py": (
+                    "import telnyx\n"
+                    "from twilio.twiml.voice_response import VoiceResponse\n"
+                    "response = VoiceResponse()\n"
+                ),
+                "migration-state.json": (
+                    '{"kept_on_twilio":{"voice":{"reason":"phased rollout"}}}\n'
+                ),
+            },
+        )
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn("migration:pass", result.stdout)
+
+    def test_false_hybrid_state_entry_does_not_waive_phase5_checks(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="phase5-false-hybrid-state-") as tmp:
+            state_file = Path(tmp) / "migration-state.json"
+            state_file.write_text(
+                '{"kept_on_twilio":{"voice":false}}\n', encoding="utf-8"
+            )
+            result = self.run_phase5(
+                {
+                    "src/app.py": (
+                        "from twilio.twiml.voice_response import VoiceResponse\n"
+                        "response = VoiceResponse()\n"
+                    ),
+                },
+                "--state-file",
+                str(state_file),
+            )
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        self.assertIn("migration:fail", result.stdout)
 
     def test_hybrid_state_waives_cross_product_twilio_webhook_checks(self) -> None:
         result = self.run_correctness(
@@ -3148,9 +3633,133 @@ class RunValidationContracts(unittest.TestCase):
             },
             "--state-file",
             "migration-state.json",
+            "--product",
+            "voice",
         )
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertIn("Twilio webhook middleware/validator remains", result.stdout)
+
+    def test_default_all_scan_loads_state_and_allows_recorded_hybrid_code(self) -> None:
+        result = self.run_correctness(
+            {
+                "src/messaging.py": "from twilio.rest import Client\n",
+                "migration-state.json": (
+                    '{"kept_on_twilio":{"voice":{"reason":"phased"}}}\n'
+                ),
+            },
+        )
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn("Residual Twilio imports found", result.stdout)
+
+    def test_unsigned_telnyx_webhook_fails_even_when_twilio_was_unsigned(self) -> None:
+        files = {
+            "src/webhook.js": (
+                "app.post('/webhook', (req, res) => {\n"
+                "  console.log(req.body.data.payload);\n"
+                "  res.sendStatus(200);\n"
+                "});\n"
+            ),
+            "twilio-scan.json": (
+                '{"has_webhook_validation":false,"products_used":["messaging"]}\n'
+            ),
+        }
+        lint = self.run_correctness(
+            files,
+            "--scan-json",
+            "twilio-scan.json",
+            "--product",
+            "messaging",
+        )
+        self.assertEqual(1, lint.returncode, lint.stdout + lint.stderr)
+        self.assertIn("no Ed25519 signature verification", lint.stdout)
+
+        phase5 = self.run_phase5(
+            files,
+            "--scan-json",
+            "twilio-scan.json",
+        )
+        self.assertEqual(1, phase5.returncode, phase5.stdout + phase5.stderr)
+        self.assertIn("NO Ed25519 signature validation", phase5.stdout)
+
+    def test_hybrid_residuals_are_waived_only_outside_migrated_files(self) -> None:
+        retained = (
+            "const endpoint = 'https://conversations.twilio.com/v1';\n"
+            "const validator = new RequestValidator(process.env.TWILIO_AUTH_TOKEN);\n"
+        )
+        common = {
+            "package.json": '{"dependencies":{"telnyx":"^6.0.0"}}\n',
+            "src/retained.js": retained,
+            "migration-state.json": (
+                '{"kept_on_twilio":{"conversations":true},'
+                '"migrated_files":{}}\n'
+            ),
+        }
+        passing = self.run_phase5(common)
+        self.assertEqual(0, passing.returncode, passing.stdout + passing.stderr)
+        self.assertIn("retained hybrid files", passing.stdout)
+        lint_passing = self.run_correctness(common)
+        self.assertEqual(
+            0, lint_passing.returncode, lint_passing.stdout + lint_passing.stderr
+        )
+
+        failing = self.run_phase5(
+            {
+                **common,
+                "migration-state.json": (
+                    '{"kept_on_twilio":{"conversations":true},'
+                    '"migrated_files":{"messaging":["src/retained.js"]}}\n'
+                ),
+            }
+        )
+        self.assertEqual(1, failing.returncode, failing.stdout + failing.stderr)
+        self.assertIn("inside files recorded as migrated", failing.stdout)
+        lint_failing = self.run_correctness(
+            {
+                **common,
+                "migration-state.json": (
+                    '{"kept_on_twilio":{"conversations":true},'
+                    '"migrated_files":{"messaging":["src/retained.js"]}}\n'
+                ),
+            }
+        )
+        self.assertEqual(
+            1, lint_failing.returncode, lint_failing.stdout + lint_failing.stderr
+        )
+
+    def test_hybrid_scope_normalizes_absolute_recorded_file_paths(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="absolute-migrated-file-") as directory:
+            root = Path(directory)
+            source = root / "src" / "migrated.js"
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                "const endpoint = 'https://api.twilio.com/2010-04-01';\n",
+                encoding="utf-8",
+            )
+            state = root / "migration-state.json"
+            state.write_text(
+                json.dumps(
+                    {
+                        "kept_on_twilio": {"conversations": True},
+                        "migrated_files": {"messaging": [str(source)]},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [
+                    BASH,
+                    str(MIGRATION_SCRIPTS.parent / "validate-migration.sh"),
+                    str(root),
+                    "--state-file",
+                    str(state),
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        self.assertIn("inside files recorded as migrated", result.stdout)
 
     def test_hybrid_waiver_does_not_apply_to_another_selected_product(self) -> None:
         result = self.run_correctness(
@@ -3167,6 +3776,45 @@ class RunValidationContracts(unittest.TestCase):
         )
         self.assertEqual(1, result.returncode, result.stdout + result.stderr)
         self.assertIn("Residual Twilio imports found", result.stdout)
+
+    def test_hybrid_waiver_does_not_hide_migrated_file_in_twilio_directory(self) -> None:
+        result = self.run_correctness(
+            {
+                "src/twilio_voice/app.py": "from twilio.rest import Client\n",
+                "migration-state.json": json.dumps(
+                    {
+                        "kept_on_twilio": {"voice": {"reason": "phased"}},
+                        "migrated_files": {"messaging": ["src/twilio_voice/app.py"]},
+                    }
+                ),
+            },
+            "--product",
+            "all",
+            "--state-file",
+            "migration-state.json",
+        )
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        self.assertIn("Residual Twilio imports found", result.stdout)
+        self.assertIn("directory name(s) containing 'twilio'", result.stdout)
+
+        validation = self.run_phase5(
+            {
+                "src/migrated/app.py": (
+                    "from twilio.rest import Client\n"
+                    "token = os.environ['TWILIO_AUTH_TOKEN']\n"
+                ),
+                "migration-state.json": json.dumps(
+                    {
+                        "kept_on_twilio": {"voice": {"reason": "phased"}},
+                        "migrated_files": {"messaging": ["src/migrated"]},
+                    }
+                ),
+            }
+        )
+        self.assertEqual(
+            1, validation.returncode, validation.stdout + validation.stderr
+        )
+        self.assertIn("inside files recorded as migrated", validation.stdout)
 
     def test_false_hybrid_state_entry_does_not_waive_checks(self) -> None:
         result = self.run_correctness(
@@ -3195,6 +3843,8 @@ class RunValidationContracts(unittest.TestCase):
             },
             "--state-file",
             "migration-state.json",
+            "--product",
+            "voice",
         )
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         self.assertIn("Twilio-named directory", result.stdout)
@@ -3241,7 +3891,9 @@ class RunValidationContracts(unittest.TestCase):
                 "src/ivr.xml": self.VALID_TEXML,
                 "pom.xml": (
                     '<project xmlns="http://maven.apache.org/POM/4.0.0">'
-                    "<modelVersion>4.0.0</modelVersion></project>"
+                    "<modelVersion>4.0.0</modelVersion>"
+                    "<!-- <Response><Say>not TeXML</Say></Response> -->"
+                    "<plugin><Start/><Pay/></plugin></project>"
                 ),
                 "dist/leftover.xml": "<Response><Garbage/></Response>",
                 "src/app.py": "import telnyx\n",
@@ -3277,6 +3929,79 @@ class RunValidationContracts(unittest.TestCase):
         self.assertEqual(1, result.returncode, result.stdout + result.stderr)
         self.assertIn("texml:fail", result.stdout)
 
+    def test_malformed_texml_shaped_xml_is_not_skipped(self) -> None:
+        for contents in (
+            "<Respones><Say>hello</Respones>",
+            "<Respnse><Play>https://example.com/audio.mp3",
+            "<Respnse><Record>",
+            "<Respnse><Start><Stream/></Respnse>",
+            "<Respnse><Connect>",
+            "<Respnse><Pay>",
+            "<Response><Say>unterminated",
+        ):
+            with self.subTest(contents=contents):
+                result = self.run_phase5(
+                    {
+                        "src/ivr.xml": contents,
+                        "src/app.py": "import telnyx\n",
+                    }
+                )
+                self.assertEqual(
+                    1, result.returncode, result.stdout + result.stderr
+                )
+                self.assertIn("texml:fail", result.stdout)
+                self.assertNotIn("texml:skip", result.stdout)
+
+    def test_unreadable_xml_fails_closed_during_discovery(self) -> None:
+        result = self.run_phase5(
+            {
+                "src/ivr.xml": self.VALID_TEXML,
+                "src/app.py": "import telnyx\n",
+            },
+            unreadable_files={"src/ivr.xml"},
+        )
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        self.assertIn("could not read or inspect XML", result.stdout)
+        self.assertIn("texml:fail", result.stdout)
+
+    def test_language_speech_model_and_polly_contracts_match_linter(self) -> None:
+        valid = self.run_correctness(
+            {
+                "src/relay.xml": (
+                    '<Response><Connect><ConversationRelay url="wss://example.com">'
+                    '<Language code="en" speechModel="openai/whisper-large-v3"/>'
+                    '</ConversationRelay></Connect>'
+                    '<Say voice="Polly.Amy">Hello</Say></Response>'
+                )
+            },
+            "--product",
+            "voice",
+        )
+        self.assertEqual(0, valid.returncode, valid.stdout + valid.stderr)
+        self.assertNotIn("may fall back", valid.stdout)
+        self.assertNotIn("Prefer Neural", valid.stdout)
+
+        invalid = self.run_correctness(
+            {
+                "src/ivr.xml": (
+                    '<Response><Gather speechModel="phone_call">'
+                    '<Say>Press one</Say></Gather></Response>'
+                )
+            },
+            "--product",
+            "voice",
+        )
+        self.assertEqual(1, invalid.returncode, invalid.stdout + invalid.stderr)
+        self.assertIn("<Gather> speechModel", invalid.stdout)
+
+        generated = self.run_correctness(
+            {"src/ivr.js": 'const gather = { speechModel: "phone_call" };\n'},
+            "--product",
+            "voice",
+        )
+        self.assertEqual(1, generated.returncode, generated.stdout + generated.stderr)
+        self.assertIn("non-XML speechModel", generated.stdout)
+
     def test_texml_discovery_includes_twiml_and_texml_suffixes(self) -> None:
         # TeXML is also stored as .twiml / .texml, not only .xml. The
         # discovery find only emitted *.xml, so an invalid .twiml was reported
@@ -3285,7 +4010,7 @@ class RunValidationContracts(unittest.TestCase):
             with self.subTest(suffix=suffix):
                 result = self.run_phase5(
                     {
-                        f"src/ivr.{suffix}": "<Response>\n  <Garbage/>\n</Response>\n",
+                        f"src/ivr.{suffix}": "<Respones><Say>hello</Say></Respones>",
                         "src/app.py": "import telnyx\n",
                     }
                 )

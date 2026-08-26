@@ -158,9 +158,10 @@ if [ "$CONFIRMED" = false ]; then
   echo -e "${BOLD}What this test will NOT do without explicit opt-in:${NC}"
   echo "  Modify an existing connection. If your existing connection has no"
   echo "  Outbound Voice Profile, the test FAILS with instructions instead of"
-  echo "  changing it. To let it attach a profile of YOUR choosing to an"
-  echo "  existing connection, opt in explicitly:"
-  echo "    TELNYX_OVP_ID=<profile-uuid> TELNYX_ALLOW_TRUNK_MODIFY=yes bash test-sip.sh --confirm"
+  echo "  changing it. To attach a chosen profile to a chosen existing"
+  echo "  connection, bind approval to both exact IDs:"
+  echo "    TELNYX_SIP_CONNECTION_ID=<connection-uuid> TELNYX_OVP_ID=<profile-uuid> \\"
+  echo "    TELNYX_APPROVE_TRUNK_MODIFY='<connection-uuid>|<profile-uuid>' bash test-sip.sh --confirm"
   echo ""
   echo "  Cost: FREE (created test resources carry no charge)"
   echo ""
@@ -359,7 +360,10 @@ else
     # an inline `|| echo fallback` CONCATENATES onto the generated password.
     # Generate first, validate after.
     SIP_TEST_PASS="$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom 2>/dev/null | head -c 32 || true)"
-    [ "${#SIP_TEST_PASS}" -eq 32 ] || SIP_TEST_PASS="MigrTest$(date +%s)Pw1"
+    if [ "${#SIP_TEST_PASS}" -ne 32 ]; then
+      echo -e "  ${RED}FAIL${NC}  Could not generate a cryptographically secure SIP test password"
+      exit 1
+    fi
 
     CREATE_RESPONSE=$(curl -s -X POST \
       -H "Authorization: Bearer ${TELNYX_API_KEY}" \
@@ -596,8 +600,12 @@ OVP_ATTACHED="unknown"
     OVP_ATTACHED="yes (created and attached this run)"
     echo -e "  ${GREEN}PASS${NC}  Attached ${OVP_ID} to the connection this run created (${CONNECTION_ID})"
 
-  elif [ -n "${TELNYX_OVP_ID:-}" ] && [ "${TELNYX_ALLOW_TRUNK_MODIFY:-}" = "yes" ]; then
-    # Disclosed, explicit opt-in to modify an existing connection.
+  elif [ -n "${TELNYX_OVP_ID:-}" ] \
+    && [ -n "${TELNYX_SIP_CONNECTION_ID:-}" ] \
+    && [ "$CONNECTION_ID" = "$TELNYX_SIP_CONNECTION_ID" ] \
+    && [ "${TELNYX_APPROVE_TRUNK_MODIFY:-}" = "$CONNECTION_ID|$TELNYX_OVP_ID" ]; then
+    # Target-bound opt-in: both resources and their exact relationship are
+    # named before this script may PATCH an existing live connection.
     VERIFY_OVP=$(curl -s -H "Authorization: Bearer ${TELNYX_API_KEY}" \
       "https://api.telnyx.com/v2/outbound_voice_profiles/${TELNYX_OVP_ID}" 2>/dev/null || echo "")
     if ! echo "$VERIFY_OVP" | jq -e --arg id "$TELNYX_OVP_ID" \
@@ -610,7 +618,7 @@ OVP_ATTACHED="unknown"
       echo -e "  ${RED}FAIL${NC}  TELNYX_OVP_ID '${TELNYX_OVP_ID}' does not resolve to an Outbound Voice Profile on this account"
       exit 1
     fi
-    echo -e "  ${YELLOW}WARN${NC}  Opt-in received: attaching YOUR chosen profile ${TELNYX_OVP_ID} (${OVP_NAME})"
+    echo -e "  ${YELLOW}WARN${NC}  Target-bound opt-in received: attaching YOUR chosen profile ${TELNYX_OVP_ID} (${OVP_NAME})"
     echo -e "         to EXISTING connection ${CONNECTION_ID}. This modifies a live trunk."
     attach_profile "$TELNYX_OVP_ID"
     OVP_ID="$TELNYX_OVP_ID"
@@ -626,9 +634,9 @@ OVP_ATTACHED="unknown"
     echo "  To fix, either:"
     echo "    a) Attach a profile yourself in the portal: SIP > Connections >"
     echo "       ${CONNECTION_ID} > Outbound > Outbound Voice Profile, then re-run; or"
-    echo "    b) Re-run with an explicit, disclosed opt-in naming the profile:"
-    echo "         TELNYX_OVP_ID=<profile-uuid> TELNYX_ALLOW_TRUNK_MODIFY=yes \\"
-    echo "         bash test-sip.sh --confirm"
+    echo "    b) Re-run with an approval naming both exact resources:"
+    echo "         TELNYX_SIP_CONNECTION_ID=${CONNECTION_ID} TELNYX_OVP_ID=<profile-uuid> \\"
+    echo "         TELNYX_APPROVE_TRUNK_MODIFY='${CONNECTION_ID}|<profile-uuid>' bash test-sip.sh --confirm"
     exit 1
   fi
 }

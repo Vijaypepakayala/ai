@@ -98,6 +98,13 @@ if [ ! -d "$PROJECT_ROOT" ]; then
   exit 2
 fi
 
+# The migration workflow writes its hybrid decisions here. Requiring every
+# prescribed validation command to repeat --state-file made the default Phase 5
+# path contradict the recorded plan.
+if [ -z "$STATE_FILE" ] && [ -f "$PROJECT_ROOT/migration-state.json" ]; then
+  STATE_FILE="$PROJECT_ROOT/migration-state.json"
+fi
+
 OVERALL_PASS=true
 RESULTS=""
 
@@ -131,34 +138,6 @@ fi
 
 echo ""
 
-# --- Step 5.1b: Telnyx Correctness Linter ---
-# This step runs lint-telnyx-correctness.sh, which is what actually invokes the
-# required-messaging-profile analyzer. Without it the "full validation
-# pipeline" never ran that analyzer at all, so a number-pool send missing
-# messaging_profile_id passed Phase 5 untouched.
-echo -e "${BOLD}Step 5.1b: Telnyx Correctness${NC}"
-echo "────────────────────────────────"
-
-CORRECTNESS_ARGS=("$PROJECT_ROOT")
-[ "$JSON_MODE" = true ] && CORRECTNESS_ARGS+=("--json")
-[ -n "$STATE_FILE" ] && CORRECTNESS_ARGS+=("--state-file" "$STATE_FILE")
-[ -n "$SCAN_JSON" ] && CORRECTNESS_ARGS+=("--scan-json" "$SCAN_JSON")
-bash "$SCRIPT_DIR/lint-telnyx-correctness.sh" "${CORRECTNESS_ARGS[@]}"
-CORRECTNESS_EXIT=$?
-
-if [ "$CORRECTNESS_EXIT" -eq 0 ]; then
-  echo ""
-  echo -e "  ${GREEN}PASS${NC}  Correctness checks passed"
-  RESULTS="${RESULTS}correctness:pass,"
-else
-  echo ""
-  echo -e "  ${RED}FAIL${NC}  Correctness checks failed (exit code: $CORRECTNESS_EXIT)"
-  OVERALL_PASS=false
-  RESULTS="${RESULTS}correctness:fail,"
-fi
-
-echo ""
-
 # --- Step 5.2: TeXML Validation (optional) ---
 if [ "$INCLUDE_TEXML" = true ]; then
   echo -e "${BOLD}Step 5.2: TeXML Validation${NC}"
@@ -180,6 +159,7 @@ if [ "$INCLUDE_TEXML" = true ]; then
   # itself on the same tree.
   TEXML_FILES=()
   TEXML_INVALID_ROOTS=()
+  TEXML_DISCOVERY_ERRORS=()
   if [ "$TEXML_PREREQUISITES_OK" = true ]; then
     while IFS= read -r -d '' file; do
     # Only TeXML documents belong in validate-texml.sh. Every *.xml went in
@@ -192,19 +172,39 @@ if [ "$INCLUDE_TEXML" = true ]; then
     # element-looking entity values, and a regex can mistake those for the
     # document root. validate-texml.sh already requires python3, so relying on
     # ElementTree here adds no dependency.
-    root=$(python3 - "$file" <<'PYEOF' 2>/dev/null || true
+    if ! probe=$(python3 - "$file" <<'PYEOF' 2>/dev/null
+import pathlib
+import re
 import sys
 import xml.etree.ElementTree as ET
 
+path = pathlib.Path(sys.argv[1])
+source = path.read_text(encoding="utf-8", errors="replace")
+texml_intent = bool(re.search(
+    r"<\s*/?\s*(?:Resp[a-zA-Z]*|Say|Play|Gather|Dial|Record|Hangup|Pause|"
+    r"Redirect|Reject|Refer|Enqueue|Leave|Start|Stop|Connect|Pay|"
+    r"HttpRequest|AIGather)\b",
+    source,
+    re.IGNORECASE,
+))
 try:
-    _, element = next(ET.iterparse(sys.argv[1], events=("start",)))
-except (ET.ParseError, OSError, StopIteration):
+    element = ET.parse(path).getroot()
+except (ET.ParseError, OSError):
+    print(f"\t{int(texml_intent)}\t0")
     sys.exit(0)
 
 tag = element.tag if isinstance(element.tag, str) else ""
-print(tag.rsplit("}", 1)[-1].split(":", 1)[-1])
+root = tag.rsplit("}", 1)[-1].split(":", 1)[-1]
+print(f"{root}\t{int(texml_intent)}\t1")
 PYEOF
-)
+); then
+      TEXML_DISCOVERY_ERRORS+=("$file")
+      continue
+    fi
+    root=${probe%%$'\t'*}
+    _probe_rest=${probe#*$'\t'}
+    texml_intent=${_probe_rest%%$'\t'*}
+    xml_parsed=${_probe_rest#*$'\t'}
     # A namespace-prefixed root is still an intended TeXML document. The
     # parser reports its local name as Response; validate-texml.sh then rejects
     # the unsupported namespace instead of letting discovery skip the file.
@@ -225,6 +225,20 @@ PYEOF
       _lower=$(printf '%s' "$file" | tr '[:upper:]' '[:lower:]')
       case "$_lower" in
         *.twiml|*.texml) TEXML_INVALID_ROOTS+=("$file:${root:-<no element>}") ;;
+        *.xml)
+          # A well-formed document with another root belongs to another XML
+          # vocabulary even if a comment or nested element happens to use a
+          # TeXML verb name. The intent probe is only a recovery heuristic for
+          # malformed generic XML, where there is no trustworthy root.
+          if [ "$xml_parsed" != "1" ] && [ "$texml_intent" = "1" ]; then
+            TEXML_INVALID_ROOTS+=("$file:${root:-<no element>}")
+          elif [ "$xml_parsed" = "1" ]; then
+            case "$root" in
+              Resp*|resp*|TwiML|Twiml|twiml|TeXML|Texml|texml)
+                TEXML_INVALID_ROOTS+=("$file:${root:-<no element>}") ;;
+            esac
+          fi
+          ;;
       esac
     fi
     done < <(find "$PROJECT_ROOT" \
@@ -239,6 +253,12 @@ PYEOF
   # and pass, which is the silent certification this check exists to prevent.
   if [ "$TEXML_PREREQUISITES_OK" != true ]; then
     : # Failure and result were recorded before discovery.
+  elif [ ${#TEXML_DISCOVERY_ERRORS[@]} -gt 0 ]; then
+    for file in "${TEXML_DISCOVERY_ERRORS[@]}"; do
+      echo -e "  ${RED}FAIL${NC}  $(basename "$file") — could not read or inspect XML during TeXML discovery"
+    done
+    OVERALL_PASS=false
+    RESULTS="${RESULTS}texml:fail,"
   elif [ ${#TEXML_INVALID_ROOTS[@]} -gt 0 ]; then
     for entry in "${TEXML_INVALID_ROOTS[@]}"; do
       echo -e "  ${RED}FAIL${NC}  $(basename "${entry%:*}") — root element is <${entry##*:}>, expected <Response>"

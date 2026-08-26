@@ -120,17 +120,68 @@ if ! PHONE_NUMBER_ID="$(
   exit 1
 fi
 
-# Assign number to voice connection
-curl -X PATCH "https://api.telnyx.com/v2/phone_numbers/$PHONE_NUMBER_ID" \
+# Inspect both current assignments, then bind approval to the exact transition.
+CURRENT_NUMBER=$(curl -fsS \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"connection_id": "YOUR_CONNECTION_ID"}'
+  "https://api.telnyx.com/v2/phone_numbers/$PHONE_NUMBER_ID") || exit 1
+CURRENT_MESSAGING=$(curl -fsS \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  "https://api.telnyx.com/v2/phone_numbers/$PHONE_NUMBER_ID/messaging") || exit 1
+CURRENT_CONNECTION_ID=$(jq -er '.data.connection_id // "unassigned"' \
+  <<<"$CURRENT_NUMBER") || exit 1
+CURRENT_PROFILE_ID=$(jq -er '.data.messaging_profile_id // "unassigned"' \
+  <<<"$CURRENT_MESSAGING") || exit 1
+CURRENT_CONNECTION_JSON=$(jq -c '.data.connection_id // null' \
+  <<<"$CURRENT_NUMBER") || exit 1
+NEW_CONNECTION_ID="YOUR_CONNECTION_ID"
+NEW_PROFILE_ID="YOUR_MESSAGING_PROFILE_ID"
+# Preflight both target resources before changing either live assignment.
+curl -fsS -H "Authorization: Bearer $TELNYX_API_KEY" \
+  "https://api.telnyx.com/v2/connections/$NEW_CONNECTION_ID" \
+  | jq -e --arg id "$NEW_CONNECTION_ID" '.data.id == $id' >/dev/null || exit 1
+curl -fsS -H "Authorization: Bearer $TELNYX_API_KEY" \
+  "https://api.telnyx.com/v2/messaging_profiles/$NEW_PROFILE_ID" \
+  | jq -e --arg id "$NEW_PROFILE_ID" '.data.id == $id' >/dev/null || exit 1
+ASSIGNMENT_APPROVAL="$PHONE_NUMBER_ID|$REQUESTED_NUMBER|voice:$CURRENT_CONNECTION_ID->$NEW_CONNECTION_ID|messaging:$CURRENT_PROFILE_ID->$NEW_PROFILE_ID"
+printf 'Assignment approval token: %s\n' "$ASSIGNMENT_APPROVAL"
+test "${TELNYX_APPROVE_NUMBER_ASSIGNMENT:-}" = "$ASSIGNMENT_APPROVAL" || {
+  echo "Number rerouting not approved" >&2; exit 1;
+}
 
-# Assign number to messaging profile
-curl -X PATCH "https://api.telnyx.com/v2/phone_numbers/$PHONE_NUMBER_ID/messaging" \
+# Assign the reviewed number to the reviewed voice connection.
+curl -fsS -X PATCH "https://api.telnyx.com/v2/phone_numbers/$PHONE_NUMBER_ID" \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"messaging_profile_id": "YOUR_MESSAGING_PROFILE_ID"}'
+  --data "$(jq -cn --arg id "$NEW_CONNECTION_ID" '{connection_id: $id}')" || exit 1
+
+# Assign the same reviewed number to the reviewed messaging profile. Restore
+# the previous voice assignment if this second mutation fails.
+if ! curl -fsS -X PATCH "https://api.telnyx.com/v2/phone_numbers/$PHONE_NUMBER_ID/messaging" \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  --data "$(jq -cn --arg id "$NEW_PROFILE_ID" '{messaging_profile_id: $id}')"; then
+  echo "Messaging assignment failed; restoring previous voice assignment" >&2
+  curl -fsS -X PATCH "https://api.telnyx.com/v2/phone_numbers/$PHONE_NUMBER_ID" \
+    -H "Authorization: Bearer $TELNYX_API_KEY" \
+    -H "Content-Type: application/json" \
+    --data "$(jq -cn --argjson id "$CURRENT_CONNECTION_JSON" '{connection_id: $id}')" || {
+      echo "CRITICAL: voice rollback failed; inspect the number immediately" >&2;
+    }
+  exit 1
+fi
+
+# Read both resources back. A successful PATCH response alone does not prove
+# that the requested routing state is active.
+FINAL_NUMBER=$(curl -fsS \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  "https://api.telnyx.com/v2/phone_numbers/$PHONE_NUMBER_ID") || exit 1
+FINAL_MESSAGING=$(curl -fsS \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  "https://api.telnyx.com/v2/phone_numbers/$PHONE_NUMBER_ID/messaging") || exit 1
+jq -e --arg id "$NEW_CONNECTION_ID" '.data.connection_id == $id' \
+  <<<"$FINAL_NUMBER" >/dev/null || exit 1
+jq -e --arg id "$NEW_PROFILE_ID" '.data.messaging_profile_id == $id' \
+  <<<"$FINAL_MESSAGING" >/dev/null || exit 1
 ```
 
 ### Verify Profile (required for verify/2FA)
@@ -180,11 +231,22 @@ FAX_PHONE_NUMBER_ID="$(
       '[.data[] | select(.phone_number == $number and .status == "active")] | .[0].id'
 )"
 
-# This changes live routing. Run only after approval naming this exact number and Fax Application.
-curl -X PATCH "https://api.telnyx.com/v2/phone_numbers/$FAX_PHONE_NUMBER_ID" \
+# Inspect the current assignment and bind approval to the exact reroute.
+CURRENT_FAX_NUMBER=$(curl -fsS \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  "https://api.telnyx.com/v2/phone_numbers/$FAX_PHONE_NUMBER_ID") || exit 1
+CURRENT_FAX_CONNECTION_ID=$(jq -er '.data.connection_id // "unassigned"' \
+  <<<"$CURRENT_FAX_NUMBER") || exit 1
+NEW_FAX_APPLICATION_ID="YOUR_FAX_APPLICATION_ID"
+FAX_ASSIGNMENT_APPROVAL="$FAX_PHONE_NUMBER_ID|$FAX_FROM_NUMBER|fax:$CURRENT_FAX_CONNECTION_ID->$NEW_FAX_APPLICATION_ID"
+printf 'Fax reroute approval token: %s\n' "$FAX_ASSIGNMENT_APPROVAL"
+test "${TELNYX_APPROVE_FAX_REROUTE:-}" = "$FAX_ASSIGNMENT_APPROVAL" || {
+  echo "Fax-number reroute not approved" >&2; exit 1;
+}
+curl -fsS -X PATCH "https://api.telnyx.com/v2/phone_numbers/$FAX_PHONE_NUMBER_ID" \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"connection_id": "YOUR_FAX_APPLICATION_ID"}'
+  --data "$(jq -cn --arg id "$NEW_FAX_APPLICATION_ID" '{connection_id: $id}')"
 ```
 
 The owned-number response does not include the available-inventory `features` array. Fax readiness is established by the exact active-number assignment and the Fax Application/OVP checks below.

@@ -79,6 +79,7 @@ import sys
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 import xml.etree.ElementTree as ET
+from urllib.parse import urlsplit
 
 
 def emit(*fields: object) -> None:
@@ -107,6 +108,18 @@ def is_dynamic(value: str, *, single_brace: bool = True) -> bool:
     if single_brace:
         patterns.append(r"^\{[^{}]+\}$")  # single-brace / PHP placeholder
     return any(re.search(pattern, value) for pattern in patterns)
+
+
+def is_secure_websocket_url(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+        # Access the port too so malformed static ports fail validation rather
+        # than raising outside this predicate.
+        _ = parsed.port
+    except ValueError:
+        return False
+    return parsed.scheme.lower() == "wss" and bool(hostname)
 
 
 def text_value(element: ET.Element) -> str:
@@ -318,6 +331,17 @@ DECIMAL_RANGES = {
     ("AIGather.Voice", "voice_speed"): (Decimal("0.1"), Decimal("2.0")),
     ("Suppression", "suppressionLevel"): (Decimal("0"), Decimal("100")),
     ("Suppression", "enhancementLevel"): (Decimal("0"), Decimal("1")),
+}
+
+# Static DTMF attributes have closed character alphabets. Accept an empty
+# Gather finishOnKey because the public contract uses it to disable the
+# terminator; the other attributes must contain at least one valid symbol.
+DTMF_ATTRS = {
+    ("Play", "digits"): (re.compile(r"[0-9*#w]+"), False),
+    ("Gather", "finishOnKey"): (re.compile(r"[0-9*#]?"), True),
+    ("Gather", "validDigits"): (re.compile(r"[0-9*#]+"), False),
+    ("Record", "finishOnKey"): (re.compile(r"[0-9*#]+"), False),
+    ("Dial.Number", "sendDigits"): (re.compile(r"[0-9*#w]+"), False),
 }
 
 # The TeXML runtime silently ignores unknown/miscased attributes. Keep these
@@ -536,6 +560,8 @@ for element in tree.iter():
     tag = local_name(element.tag)
     parent = parents.get(element)
     parent_tag = local_name(parent.tag) if parent is not None else ""
+    grandparent = parents.get(parent) if parent is not None else None
+    grandparent_tag = local_name(grandparent.tag) if grandparent is not None else ""
     position_valid[element] = False
 
     if not tag:
@@ -560,6 +586,11 @@ for element in tree.iter():
                 # The public HttpRequest contract documents both response
                 # headers/body and type/status/content extraction families.
                 allowed = {"Headers", "Body", "Type", "StatusCode", "Content"}
+            elif parent_tag == "Stream" and grandparent_tag == "Stop":
+                # A stopping Stream is a selector, not a new stream
+                # configuration. Parameter children belong only to streams
+                # started under Start or Connect.
+                allowed = set()
             else:
                 allowed = children.get(parent_tag, set())
             valid_position = tag in allowed
@@ -664,6 +695,19 @@ for element in tree.iter():
         if not number.is_finite() or number < minimum or number > maximum:
             report_once("SCHEMA_ERROR", tag, attr, f"expected a finite number in {minimum}..{maximum}")
 
+    for (schema_context, attr), (pattern, allows_empty) in DTMF_ATTRS.items():
+        if schema_context != context or attr not in element.attrib:
+            continue
+        value = element.attrib[attr]
+        if is_dynamic(value):
+            unresolved(tag, attr, "dynamic DTMF value cannot be statically validated")
+        elif not pattern.fullmatch(value):
+            empty_note = "; empty is allowed" if allows_empty else ""
+            report_once(
+                "SCHEMA_ERROR", tag, attr,
+                f"contains unsupported DTMF characters{empty_note}",
+            )
+
 # Required children and cross-field dependencies.
 for element in tree.iter():
     tag = local_name(element.tag)
@@ -766,6 +810,8 @@ for element in tree.iter():
             report_once("STRUCTURE_ERROR", tag, f"under {parent_tag} requires a non-empty url attribute")
         elif is_dynamic(stream_url):
             unresolved(tag, "url", "dynamic required stream URL cannot be statically validated")
+        elif not is_secure_websocket_url(stream_url):
+            report_once("SCHEMA_ERROR", tag, "url", "expected a secure WebSocket URL beginning with wss://")
 
     if tag == "ConversationRelay" and parent_tag == "Connect":
         relay_url = element.attrib.get("url", "").strip()
@@ -773,6 +819,8 @@ for element in tree.iter():
             report_once("STRUCTURE_ERROR", tag, "under Connect requires a non-empty url attribute")
         elif is_dynamic(relay_url):
             unresolved(tag, "url", "dynamic required WebSocket URL cannot be statically validated")
+        elif not is_secure_websocket_url(relay_url):
+            report_once("SCHEMA_ERROR", tag, "url", "expected a secure WebSocket URL beginning with wss://")
 
     if tag == "Siprec" and parent_tag == "Start":
         connector_name = element.attrib.get("connectorName", "").strip()

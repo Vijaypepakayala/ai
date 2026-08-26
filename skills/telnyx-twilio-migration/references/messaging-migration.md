@@ -374,6 +374,15 @@ def claim_event(event_id):
         return 'claimed'
     return (redis_client.get(key) or b'pending').decode()
 
+def telnyx_error_code(error):
+    """Extract the first API error code without depending on one SDK version."""
+    if getattr(error, 'code', None) is not None:
+        return str(error.code)
+    body = getattr(error, 'body', None)
+    if isinstance(body, dict) and body.get('errors'):
+        return str(body['errors'][0].get('code', ''))
+    return ''
+
 def verified_telnyx_data():
     raw_body = request.get_data(as_text=True)  # original body, before parsing
     try:
@@ -417,7 +426,13 @@ def sms():
             from_=to_number,
             text="Thanks! We got your message.",
         )
-    except Exception:
+    except Exception as error:
+        if telnyx_error_code(error) == '40300':
+            # Recipient opted out: terminal and non-retryable. Mark the inbound
+            # event complete and acknowledge it; retrying repeats a prohibited
+            # send forever.
+            redis_client.set(event_key, 'completed', ex=86400)
+            return '', 200
         redis_client.delete(event_key)  # let the webhook retry resume the send
         raise
     redis_client.set(event_key, 'completed', ex=86400)
@@ -429,6 +444,16 @@ def sms():
 // Telnyx
 const Redis = require('ioredis');
 const redis = new Redis(process.env.REDIS_URL);
+
+function telnyxErrorCode(error) {
+  return String(
+    error?.code ??
+    error?.error?.errors?.[0]?.code ??
+    error?.error?.code ??
+    error?.body?.errors?.[0]?.code ??
+    ''
+  );
+}
 
 // Capture the original body once, when installing Express JSON middleware.
 app.use(express.json({
@@ -473,6 +498,12 @@ app.post('/sms', async (req, res) => {
       text: 'Thanks! We got your message.',
     });
   } catch (error) {
+    if (telnyxErrorCode(error) === '40300') {
+      // Opt-out is terminal. Complete and acknowledge instead of retrying a
+      // prohibited reply on every webhook redelivery.
+      await redis.set(eventKey, 'completed', 'EX', 86400);
+      return res.sendStatus(200);
+    }
     await redis.del(eventKey); // let the webhook retry resume the send
     throw error;
   }
@@ -553,6 +584,14 @@ def verified_telnyx_data():
 def _key(their_number, our_number):
     return f"sms:{our_number}:{their_number}"
 
+def telnyx_error_code(error):
+    if getattr(error, 'code', None) is not None:
+        return str(error.code)
+    body = getattr(error, 'body', None)
+    if isinstance(body, dict) and body.get('errors'):
+        return str(body['errors'][0].get('code', ''))
+    return ''
+
 def claim_survey_event(event_id):
     event_key = f"telnyx:survey-event:{event_id}"
     if r.set(event_key, 'pending', nx=True, ex=300):
@@ -598,7 +637,18 @@ def survey():
             else:
                 r.setex(key, SESSION_TTL, json.dumps(next_state))
             r.set(event_key, 'completed', ex=86400)
-        except Exception:
+        except Exception as error:
+            if telnyx_error_code(error) == '40300':
+                # The inbound answer was accepted even though the recipient
+                # cannot receive our next prompt. Persist that answer before
+                # completing the event so deduplication cannot discard it.
+                if next_state is None:
+                    save_survey(their_number, answers)
+                    r.delete(key)
+                else:
+                    r.setex(key, SESSION_TTL, json.dumps(next_state))
+                r.set(event_key, 'completed', ex=86400)
+                return '', 200
             r.delete(event_key)
             raise
     return '', 200

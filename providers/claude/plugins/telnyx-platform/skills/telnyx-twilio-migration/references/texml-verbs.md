@@ -226,7 +226,7 @@ Records audio from the caller.
 | `recordingStatusCallbackMethod` | string | `POST` | HTTP method for the recording callback (`GET` or `POST`) |
 | `recordingStatusCallbackEvent` | string | `completed` | Space-separated events: `in-progress`, `completed` |
 | `transcription` | boolean | `false` | Enable post-call transcription |
-| `transcriptionCallback` | URL | — | Transcription result webhook |
+| `transcriptionCallback` | URL | — | Transcription result webhook; required when `transcription="true"` |
 | `transcriptionEngine` | string | `A` | `A` (Google), `B` (Telnyx), or `Deepgram` |
 | `transcriptionModel` | string | — | Engine-specific model, such as `deepgram/nova-3` |
 | `transcriptionLanguage` | string | `en-US` | BCP-47 transcription language |
@@ -238,7 +238,8 @@ Recording URLs are valid for 10 minutes after the call ends.
 
 ```xml
 <Say>Please leave a message after the beep.</Say>
-<Record maxLength="120" action="/handle-recording" transcription="true"/>
+<Record maxLength="120" action="/handle-recording" transcription="true"
+  transcriptionCallback="/handle-transcription"/>
 ```
 
 ### `<Hangup>` — End Call
@@ -628,7 +629,7 @@ Twilio `<Start><Recording>` maps to the same TeXML structure. Preserve `recordin
 | `statusCallbackMethod` | string | `POST` | HTTP method for the status callback (`GET` or `POST`) |
 | `enableReconnect` | boolean | `true` | Automatically reconnect the WebSocket if it disconnects |
 
-`<Stream>` may contain `<Parameter name="..." value="..."/>` children. Telnyx includes these custom key-value pairs in the WebSocket `start` message.
+Under `<Start>` or `<Connect>`, `<Stream>` may contain `<Parameter name="..." value="..."/>` children. Telnyx includes these custom key-value pairs in the WebSocket `start` message. A stopping `<Stop><Stream/></Stop>` is bare (or carries only `name`) and cannot contain parameters.
 
 ```xml
 <Start>

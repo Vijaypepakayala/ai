@@ -295,26 +295,47 @@ Two things to note for Telnyx:
 - `messaging_profile_id` is **not** accepted on the base `PATCH /phone_numbers/{id}` endpoint (which handles `connection_id` and other voice/number fields). Messaging assignment is a separate endpoint: `PATCH /phone_numbers/{id}/messaging`.
 
 ```python
+import os
+
 # Twilio — set webhooks on number
 client.incoming_phone_numbers('PN...').update(
     voice_url='https://example.com/voice',
     sms_url='https://example.com/sms'
 )
 
-# Telnyx — look up the internal number ID, then assign connection + messaging profile
-matches = client.phone_numbers.list(filter={"phone_number": "+13125551234"})
-number_id = matches.data[0].id
+# Telnyx — resolve one exact number, inspect current routing, then require an
+# approval token bound to this exact transition before either PATCH.
+requested_number = "+13125551234"
+matches = client.phone_numbers.list(filter={"phone_number": requested_number})
+exact = [item for item in matches.data if item.phone_number == requested_number]
+if len(exact) != 1:
+    raise RuntimeError("Expected exactly one matching Telnyx phone number")
+number_id = exact[0].id
+current_number = client.phone_numbers.retrieve(number_id)
+current_messaging = client.phone_numbers.messaging.retrieve(number_id)
+current_connection_id = current_number.data.connection_id or "unassigned"
+current_profile_id = current_messaging.data.messaging_profile_id or "unassigned"
+new_connection_id = "YOUR_CONNECTION_ID"
+new_profile_id = "YOUR_PROFILE_ID"
+approval = (
+    f"{number_id}|{requested_number}|"
+    f"voice:{current_connection_id}->{new_connection_id}|"
+    f"messaging:{current_profile_id}->{new_profile_id}"
+)
+print(f"Assignment approval token: {approval}")
+if os.environ.get("TELNYX_APPROVE_NUMBER_ASSIGNMENT") != approval:
+    raise RuntimeError("Number rerouting not approved")
 
 # connection_id (and other base fields) go on the phone number itself
 client.phone_numbers.update(
     number_id,
-    connection_id="YOUR_CONNECTION_ID"
+    connection_id=new_connection_id
 )
 
 # messaging_profile_id is assigned via the separate messaging sub-resource
 client.phone_numbers.messaging.update(
     number_id,
-    messaging_profile_id="YOUR_PROFILE_ID"
+    messaging_profile_id=new_profile_id
 )
 # Webhooks are configured on the Connection and Messaging Profile, not on the number
 ```
@@ -325,23 +346,73 @@ curl -X POST "https://api.twilio.com/2010-04-01/Accounts/$SID/IncomingPhoneNumbe
   -u "$SID:$AUTH_TOKEN" \
   -d "VoiceUrl=https://example.com/voice" -d "SmsUrl=https://example.com/sms"
 
-# Telnyx — look up the internal number ID first (PATCH uses the ID, not the E.164 number)
-NUMBER_ID=$(curl -s -H "Authorization: Bearer $TELNYX_API_KEY" \
-  -G --data-urlencode "filter[phone_number]=+13125551234" \
+# Telnyx — look up one exact number (PATCH uses the ID, not the E.164 number).
+REQUESTED_NUMBER="+13125551234"
+NUMBER_ID=$(curl -fsS -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -G --data-urlencode "filter[phone_number]=$REQUESTED_NUMBER" \
   "https://api.telnyx.com/v2/phone_numbers" \
-  | jq -r '.data[0].id')
+  | jq -er --arg number "$REQUESTED_NUMBER" \
+    '[.data[] | select(.phone_number == $number)] | select(length == 1) | .[0].id') || exit 1
+
+# Inspect both current assignments and bind approval to the exact transition.
+CURRENT_NUMBER=$(curl -fsS -H "Authorization: Bearer $TELNYX_API_KEY" \
+  "https://api.telnyx.com/v2/phone_numbers/$NUMBER_ID") || exit 1
+CURRENT_MESSAGING=$(curl -fsS -H "Authorization: Bearer $TELNYX_API_KEY" \
+  "https://api.telnyx.com/v2/phone_numbers/$NUMBER_ID/messaging") || exit 1
+CURRENT_CONNECTION_ID=$(jq -er '.data.connection_id // "unassigned"' \
+  <<<"$CURRENT_NUMBER") || exit 1
+CURRENT_PROFILE_ID=$(jq -er '.data.messaging_profile_id // "unassigned"' \
+  <<<"$CURRENT_MESSAGING") || exit 1
+CURRENT_CONNECTION_JSON=$(jq -c '.data.connection_id // null' \
+  <<<"$CURRENT_NUMBER") || exit 1
+NEW_CONNECTION_ID="YOUR_CONNECTION_ID"
+NEW_PROFILE_ID="YOUR_PROFILE_ID"
+# Preflight both target resources before changing either live assignment.
+curl -fsS -H "Authorization: Bearer $TELNYX_API_KEY" \
+  "https://api.telnyx.com/v2/connections/$NEW_CONNECTION_ID" \
+  | jq -e --arg id "$NEW_CONNECTION_ID" '.data.id == $id' >/dev/null || exit 1
+curl -fsS -H "Authorization: Bearer $TELNYX_API_KEY" \
+  "https://api.telnyx.com/v2/messaging_profiles/$NEW_PROFILE_ID" \
+  | jq -e --arg id "$NEW_PROFILE_ID" '.data.id == $id' >/dev/null || exit 1
+ASSIGNMENT_APPROVAL="$NUMBER_ID|$REQUESTED_NUMBER|voice:$CURRENT_CONNECTION_ID->$NEW_CONNECTION_ID|messaging:$CURRENT_PROFILE_ID->$NEW_PROFILE_ID"
+printf 'Assignment approval token: %s\n' "$ASSIGNMENT_APPROVAL"
+test "${TELNYX_APPROVE_NUMBER_ASSIGNMENT:-}" = "$ASSIGNMENT_APPROVAL" || {
+  echo "Number rerouting not approved" >&2; exit 1;
+}
 
 # Assign the voice connection on the phone number itself
-curl -X PATCH "https://api.telnyx.com/v2/phone_numbers/$NUMBER_ID" \
+curl -fsS -X PATCH "https://api.telnyx.com/v2/phone_numbers/$NUMBER_ID" \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"connection_id": "YOUR_CONNECTION_ID"}'
+  --data "$(jq -cn --arg id "$NEW_CONNECTION_ID" '{connection_id: $id}')" || exit 1
 
-# Assign the messaging profile via the separate messaging endpoint
-curl -X PATCH "https://api.telnyx.com/v2/phone_numbers/$NUMBER_ID/messaging" \
+# Assign the messaging profile via the separate messaging endpoint. If it
+# fails, restore the reviewed voice baseline before returning failure so the
+# live number is not knowingly left half-rerouted.
+if ! curl -fsS -X PATCH "https://api.telnyx.com/v2/phone_numbers/$NUMBER_ID/messaging" \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"messaging_profile_id": "YOUR_PROFILE_ID"}'
+  --data "$(jq -cn --arg id "$NEW_PROFILE_ID" '{messaging_profile_id: $id}')"; then
+  echo "Messaging assignment failed; restoring previous voice assignment" >&2
+  curl -fsS -X PATCH "https://api.telnyx.com/v2/phone_numbers/$NUMBER_ID" \
+    -H "Authorization: Bearer $TELNYX_API_KEY" \
+    -H "Content-Type: application/json" \
+    --data "$(jq -cn --argjson id "$CURRENT_CONNECTION_JSON" '{connection_id: $id}')" || {
+      echo "CRITICAL: voice rollback failed; inspect the number immediately" >&2;
+    }
+  exit 1
+fi
+
+# Verify the active state; an HTTP success alone is not proof that both routing
+# assignments took effect.
+FINAL_NUMBER=$(curl -fsS -H "Authorization: Bearer $TELNYX_API_KEY" \
+  "https://api.telnyx.com/v2/phone_numbers/$NUMBER_ID") || exit 1
+FINAL_MESSAGING=$(curl -fsS -H "Authorization: Bearer $TELNYX_API_KEY" \
+  "https://api.telnyx.com/v2/phone_numbers/$NUMBER_ID/messaging") || exit 1
+jq -e --arg id "$NEW_CONNECTION_ID" '.data.connection_id == $id' \
+  <<<"$FINAL_NUMBER" >/dev/null || exit 1
+jq -e --arg id "$NEW_PROFILE_ID" '.data.messaging_profile_id == $id' \
+  <<<"$FINAL_MESSAGING" >/dev/null || exit 1
 ```
 
 ### Configuration Mapping
