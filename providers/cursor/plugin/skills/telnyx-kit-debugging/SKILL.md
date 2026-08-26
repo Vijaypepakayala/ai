@@ -22,7 +22,8 @@ metadata:
 | 40310 | Invalid `to` address | No — fix input |
 | 40305 | Invalid `from` address or sender/profile association | No — fix provisioning |
 | 40312 | Messaging profile disabled | No — enable the intended profile only after reviewing that change |
-| 40300 | Blocked due to STOP | Never — compliance stop |
+| 40008 | Number opted out (STOP) | Never — compliance stop |
+| 40300 | Carrier rejected | Only after diagnosing carrier filtering, content, and routing |
 | 10004 | Missing required parameter | No — add the required field |
 | 10005 | Resource or URL not found | No — fix the ID or path |
 | — | Rate limited | Yes — after `Retry-After` seconds, not before |

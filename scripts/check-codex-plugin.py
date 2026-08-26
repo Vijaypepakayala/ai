@@ -758,6 +758,24 @@ def validate_kit_skill_semantics(skill_texts: dict[str, str]) -> None:
         "debugging and guardrail guidance must not invent a universal HTTP status "
         "for product error codes",
     )
+    require(
+        re.search(
+            r"\|\s*40008\s*\|\s*Number opted out \(STOP\)\s*\|",
+            debugging,
+        )
+        is not None
+        and re.search(
+            r"\|\s*40300\s*\|\s*Carrier rejected\s*\|",
+            debugging,
+        )
+        is not None
+        and "STOP/40008" in guardrails
+        and "Error 40300 is a carrier rejection" in guardrails
+        and "STOP/40300" not in guardrails
+        and "40300 | Blocked due to STOP" not in debugging,
+        "guardrail and debugging guidance must map STOP opt-outs to 40008 and "
+        "40300 to carrier rejection",
+    )
 
     texml_markers = (
         "current Telnyx TeXML Verbs & Nouns reference",

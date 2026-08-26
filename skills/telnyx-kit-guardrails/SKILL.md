@@ -64,9 +64,11 @@ processing:
 - Pre-flight the sender-appropriate registration and profile assignment in
   code. Surface a clear readiness error instead of letting carriers filter
   silently.
-- Honor consent and opt-outs (STOP) for every sender type — Telnyx enforces
-  org-level blocks (error 40300); never attempt to bypass one. Treat 40300 as
-  a compliance stop, not a bug.
+- Honor consent and opt-outs (STOP) for every sender type — Telnyx reports an
+  opted-out recipient as error 40008. Never attempt to bypass one; treat 40008
+  as a compliance stop, not a bug. Error 40300 is a carrier rejection instead:
+  diagnose carrier filtering, content, and routing without treating it as proof
+  that the recipient opted out.
 
 ## Spend controls
 
@@ -102,7 +104,7 @@ processing:
 - [ ] Every webhook route verifies Ed25519 + timestamp before side effects
 - [ ] API v2 JSON dedupes on `data.id`; TeXML callbacks parse their configured
       form/query shape and dedupe on `(CallSid, SequenceNumber)`
-- [ ] US SMS paths check sender-appropriate registration and treat STOP/40300
+- [ ] US SMS paths check sender-appropriate registration and treat STOP/40008
       as terminal
 - [ ] Recording/transcription starts only after applicable notice and consent;
       retention, access, deletion, and failover preserve the same policy
