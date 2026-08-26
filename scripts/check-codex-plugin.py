@@ -760,21 +760,45 @@ def validate_kit_skill_semantics(skill_texts: dict[str, str]) -> None:
     )
     require(
         re.search(
-            r"\|\s*40008\s*\|\s*Number opted out \(STOP\)\s*\|",
+            r"\|\s*Messaging SMS/MMS delivery\s*\|\s*40008\s*\|\s*"
+            r"Number opted out \(STOP\)\s*\|",
             debugging,
         )
         is not None
         and re.search(
-            r"\|\s*40300\s*\|\s*Carrier rejected\s*\|",
+            r"\|\s*WhatsApp/Meta\s*\|\s*40008\s*\|\s*"
+            r"Meta catch-all error\s*\|",
+            debugging,
+        )
+        is not None
+        and re.search(
+            r"\|\s*Messaging SMS/MMS delivery\s*\|\s*40300\s*\|\s*"
+            r"Carrier rejected\s*\|",
             debugging,
         )
         is not None
         and "STOP/40008" in guardrails
-        and "Error 40300 is a carrier rejection" in guardrails
+        and "WhatsApp/Meta also uses 40008 as a catch-all error" in guardrails
         and "STOP/40300" not in guardrails
         and "40300 | Blocked due to STOP" not in debugging,
-        "guardrail and debugging guidance must map STOP opt-outs to 40008 and "
-        "40300 to carrier rejection",
+        "guardrail and debugging guidance must scope Messaging STOP opt-outs "
+        "to 40008, Messaging 40300 to carrier rejection, and WhatsApp 40008 "
+        "to its Meta catch-all meaning",
+    )
+    require(
+        "Automatic retry only for reads or operations protected by an "
+        "endpoint-supported idempotency mechanism" in debugging
+        and "If a write may have succeeded, reconcile" in debugging
+        and "Do not repeat an ambiguous billable write" in debugging
+        and "Automatically retry only reads or writes protected by an idempotency"
+        in guardrails
+        and "Reconcile an ambiguous write" in guardrails
+        and "Automatic retries are limited to reads and operations protected by an"
+        in architecture
+        and "repeating an unreconciled billable action" in architecture
+        and "| Any | — | Upstream 5xx | Yes — bounded backoff |" not in debugging,
+        "retry guidance must limit automatic retries to idempotent operations "
+        "and reconcile ambiguous billable writes before repeating them",
     )
 
     texml_markers = (
@@ -805,9 +829,10 @@ def validate_kit_skill_semantics(skill_texts: dict[str, str]) -> None:
         and "local 10-digit long code: 10dlc brand + campaign" in guardrails_lower
         and "toll-free: toll-free verification" in guardrails_lower
         and "short code: carrier approval" in guardrails_lower
-        and "consent and opt-outs (stop) for every sender type" in guardrails_lower,
+        and "consent and opt-outs (stop) for every sms/mms sender type"
+        in guardrails_lower,
         "navigator and guardrails must distinguish local long-code 10DLC, "
-        "toll-free verification, short-code approval, and universal consent/STOP",
+        "toll-free verification, short-code approval, and SMS/MMS consent/STOP",
     )
     require(
         "local 10-digit long-code sender uses a messaging profile linked to its "

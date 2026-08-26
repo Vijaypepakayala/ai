@@ -66,11 +66,14 @@ processing:
 - Pre-flight the sender-appropriate registration and profile assignment in
   code. Surface a clear readiness error instead of letting carriers filter
   silently.
-- Honor consent and opt-outs (STOP) for every sender type — Telnyx reports an
-  opted-out recipient as error 40008. Never attempt to bypass one; treat 40008
-  as a compliance stop, not a bug. Error 40300 is a carrier rejection instead:
-  diagnose carrier filtering, content, and routing without treating it as proof
-  that the recipient opted out.
+- Honor consent and opt-outs (STOP) for every SMS/MMS sender type. For
+  Messaging SMS/MMS delivery, Telnyx reports an opted-out recipient as error
+  40008. Never attempt to bypass one; treat that product-scoped code as a
+  compliance stop, not a bug. Error 40300 in the same delivery context is a
+  carrier rejection instead: diagnose carrier filtering, content, and routing
+  without treating it as proof that the recipient opted out. Do not apply
+  either interpretation to another product merely because its numeric code
+  matches; WhatsApp/Meta also uses 40008 as a catch-all error.
 
 ## Spend controls
 
@@ -79,6 +82,11 @@ processing:
   explicit human approval BEFORE the purchase call.
 - Cap loops that touch billable endpoints (max sends/calls per run); a bug
   or prompt injection must hit a ceiling, not a credit card.
+- Automatically retry only reads or writes protected by an idempotency
+  mechanism the endpoint explicitly supports. Reconcile an ambiguous write
+  through its resource ID, status/list endpoint, or webhook; never repeat a
+  possibly accepted billable action without reconciliation or renewed human
+  approval.
 - Treat terminal configuration errors such as 40312 (messaging profile
   disabled) as non-retryable regardless of the accompanying HTTP status;
   review and fix the intended resource state instead of blind backoff.

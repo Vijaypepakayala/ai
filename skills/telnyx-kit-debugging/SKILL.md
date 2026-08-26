@@ -14,20 +14,28 @@ metadata:
 
 # Telnyx Debugging & Observability
 
-## Error-code triage (memorize the retry column)
+## Error-code triage (product and retry context are part of the code)
 
-| Code | Meaning | Retry? |
-|---|---|---|
-| 10009 | Bad/missing API key | No — fix auth |
-| 40310 | Invalid `to` address | No — fix input |
-| 40305 | Invalid `from` address or sender/profile association | No — fix provisioning |
-| 40312 | Messaging profile disabled | No — enable the intended profile only after reviewing that change |
-| 40008 | Number opted out (STOP) | Never — compliance stop |
-| 40300 | Carrier rejected | Only after diagnosing carrier filtering, content, and routing |
-| 10004 | Missing required parameter | No — add the required field |
-| 10005 | Resource or URL not found | No — fix the ID or path |
-| — | Rate limited | Yes — after `Retry-After` seconds, not before |
-| — | Upstream 5xx | Yes — bounded backoff |
+| Product/API | Code | Meaning | Retry? |
+|---|---|---|---|
+| API v2 | 10009 | Bad/missing API key | No — fix auth |
+| Messaging SMS/MMS | 40310 | Invalid `to` address | No — fix input |
+| Messaging SMS/MMS | 40305 | Invalid `from` address or sender/profile association | No — fix provisioning |
+| Messaging SMS/MMS | 40312 | Messaging profile disabled | No — enable the intended profile only after reviewing that change |
+| Messaging SMS/MMS delivery | 40008 | Number opted out (STOP) | Never — compliance stop |
+| WhatsApp/Meta | 40008 | Meta catch-all error | No blind retry — inspect template parameters, number formatting, and the 24-hour window |
+| Messaging SMS/MMS delivery | 40300 | Carrier rejected | Only after diagnosing carrier filtering, content, and routing |
+| API v2 | 10004 | Missing required parameter | No — add the required field |
+| API v2 | 10005 | Resource or URL not found | No — fix the ID or path |
+| Any | — | Rate limited | Honor `Retry-After`; retry only a safe read or an idempotency-protected operation |
+| Any | — | Upstream 5xx | Automatic retry only for reads or operations protected by an endpoint-supported idempotency mechanism |
+
+- Retry safety is separate from HTTP status. For a write, reuse the same
+  endpoint-supported idempotency key; never invent client-side deduplication
+  and assume the server honors it. If a write may have succeeded, reconcile
+  through its resource ID, status/list endpoint, or webhook before another
+  attempt. Do not repeat an ambiguous billable write without reconciliation
+  or explicit human approval.
 
 - Do not infer the HTTP status from the Telnyx error-code prefix or hard-code
   one status for every endpoint. Branch on both the response status and the

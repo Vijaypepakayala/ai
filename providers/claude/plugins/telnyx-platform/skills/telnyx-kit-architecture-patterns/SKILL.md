@@ -112,6 +112,10 @@ TeXML instruction requests and status callbacks are a separate wire format:
 
 - Every Telnyx client call: timeout + surfaced error code (codes are
   precise — see telnyx-kit-debugging) + no retry on 4xx except 429.
+- Automatic retries are limited to reads and operations protected by an
+  endpoint-supported idempotency mechanism. Reconcile an ambiguous write by
+  resource ID, status/list endpoint, or webhook before another attempt; require
+  renewed human approval before repeating an unreconciled billable action.
 - Idempotency: `command_id` on Call Control commands; message `id` dedupe
   on webhooks.
 - Configure distinct primary and failover webhook URLs for critical call
