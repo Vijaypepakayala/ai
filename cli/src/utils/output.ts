@@ -112,7 +112,23 @@ export const BOOLEAN_FLAGS = new Set<string>([
 ]);
 
 const COMMAND_BOOLEAN_FLAGS = new Map<string, Set<string>>([
-  ["call-dial", new Set(["retry-on-timeout", "transcription"])],
+  ["call-control", new Set(["route-to-mobile", "trigger-response"])],
+  ["call-dial", new Set(["retry-on-timeout", "route-to-mobile", "transcription"])],
+  ["create-conference", new Set(["comfort-noise", "start-conference-on-create"])],
+  ["conference-control", new Set([
+    "end-conference-on-exit", "hold", "mute", "play-beep",
+    "soft-end-conference-on-exit", "start-conference-on-enter", "stop-playback-on-dtmf",
+  ])],
+  ["list-conference-participants", new Set(["muted", "on-hold", "whispering"])],
+  ["list-room-sessions", new Set(["active", "include-participants"])],
+  ["get-room-session", new Set(["include-participants"])],
+  ["email-send", new Set([
+    "ignore-suppression", "inline-css", "reply-to-all", "sandbox-mode",
+  ])],
+  ["web-search", new Set(["livecrawl"])],
+  ["web-research", new Set(["background"])],
+  ["create-meeting-session", new Set(["barge-in", "summarize-on-end"])],
+  ["speak-in-meeting", new Set(["interrupt"])],
   ["create-messaging-profile", new Set([
     "daily-spend-limit-enabled", "enabled", "mms-fall-back-to-sms",
     "mms-transcoding", "mobile-only", "smart-encoding",
@@ -121,6 +137,7 @@ const COMMAND_BOOLEAN_FLAGS = new Map<string, Set<string>>([
     "daily-spend-limit-enabled", "enabled", "mms-fall-back-to-sms",
     "mms-transcoding", "mobile-only", "smart-encoding",
   ])],
+  ["update-portout-status", new Set(["host-messaging"])],
 ]);
 
 export function isBooleanFlag(command: string, key: string): boolean {
@@ -151,7 +168,6 @@ const BOOLEAN_VALUE_FLAGS = new Set<string>([
 
 function isBooleanValueFlag(command: string, key: string): boolean {
   return BOOLEAN_VALUE_FLAGS.has(key)
-    || (command === "call-dial" && (key === "retry-on-timeout" || key === "transcription"))
     || COMMAND_BOOLEAN_FLAGS.get(command)?.has(key) === true;
 }
 

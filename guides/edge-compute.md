@@ -27,14 +27,11 @@ git clone --depth 1 https://github.com/team-telnyx/edge-compute.git
 
 ```bash
 telnyx-edge --version
-
 # Interactive OAuth
 telnyx-edge auth login
-
 # Or non-interactive auth; avoid putting the literal key in shell history
 export TELNYX_API_KEY='***'
 telnyx-edge auth api-key set "$TELNYX_API_KEY"
-
 # Local auth marker, then end-to-end validation
 telnyx-edge auth status
 telnyx-edge status
@@ -80,14 +77,12 @@ Equivalent manual flow:
 ```bash
 export TELNYX_API_KEY='***'
 export SHARED_SECRET="$(openssl rand -hex 32)"
-
 EDGE_COMPUTE_SRC="$(mktemp -d)/edge-compute"
 git clone --depth 1 https://github.com/team-telnyx/edge-compute.git "$EDGE_COMPUTE_SRC"
 telnyx-edge new-func \
   --from-dir="$EDGE_COMPUTE_SRC/examples/ts/mcp-server" \
   --name=my-mcp-server
 cd my-mcp-server
-
 npm install
 npm run build
 telnyx-edge secrets add TELNYX_API_KEY "$TELNYX_API_KEY"
@@ -136,14 +131,12 @@ Equivalent manual flow:
 
 ```bash
 export WEBHOOK_SECRET="$(openssl rand -hex 32)"
-
 EDGE_COMPUTE_SRC="$(mktemp -d)/edge-compute"
 git clone --depth 1 https://github.com/team-telnyx/edge-compute.git "$EDGE_COMPUTE_SRC"
 telnyx-edge new-func \
   --from-dir="$EDGE_COMPUTE_SRC/examples/js/webhook-receiver" \
   --name=my-webhook
 cd my-webhook
-
 telnyx-edge secrets add WEBHOOK_SECRET "$WEBHOOK_SECRET"
 telnyx-edge ship
 telnyx-edge inspect my-webhook
@@ -154,7 +147,6 @@ Signed test request:
 ```bash
 PAYLOAD='{"event":"message.received","id":"evt_123"}'
 SIGNATURE="sha256=$(printf '%s' "$PAYLOAD" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | cut -d' ' -f2)"
-
 curl -X POST "https://<your-edge-endpoint>/" \
   -H "Content-Type: application/json" \
   -H "x-webhook-signature: $SIGNATURE" \
@@ -171,7 +163,6 @@ Do not put `WEBHOOK_SECRET` in the request body or an Authorization header unles
 # List deployed functions. Use --page and --page-size for larger accounts.
 telnyx-edge list
 telnyx-edge list --page 2 --page-size 25
-
 # New generated project
 telnyx-edge new-func --language=ts --name=my-function
 
@@ -185,9 +176,10 @@ telnyx-edge inspect my-function
 
 `inspect <function>` is the per-function detail view: deployment status, invoke URL, timestamps, and **every binding the deployed function declares**. Binding rows show the `env.<NAME>` handle, kind, target, and status; actor rows also show their owner/reference role. Probe it with `telnyx-edge inspect --help` when supporting multiple CLI releases.
 
-A failed function can be reset to `created` without changing its identity, fixed, and shipped again:
+Before resetting a failed function, inspect the latest ship outcome: `ship status <function>` prints one actionable, stage-classified reason, and `--logs` adds the build-log or crash-output snippet when the platform supplied one. A failed function can then be reset to `created` without changing its identity, fixed, and shipped again:
 
 ```bash
+telnyx-edge ship status my-function --logs
 telnyx-edge reset-func my-function --yes
 telnyx-edge ship --from-dir=./my-function
 ```
@@ -201,6 +193,18 @@ telnyx-edge delete-func my-function --yes
 ```
 
 `delete-func` is irreversible. Use `--yes` (`-y`) in scripts, agents, and CI to skip the interactive confirmation; see [Non-interactive destructive commands](#non-interactive-destructive-commands) for the full list.
+
+### Custom domains (v0.5.0)
+
+`domains add` prints the DNS TXT record needed for ownership verification. After publishing it, complete the workflow and use `--yes` for destructive teardown:
+```bash
+telnyx-edge domains add api.example.com <function-id>
+telnyx-edge domains verify api.example.com
+telnyx-edge domains cert upload api.example.com --cert ./cert.pem --key ./key.pem
+telnyx-edge domains list
+telnyx-edge domains delete api.example.com --yes
+```
+DNS propagation can delay verification; retry `verify` before certificate upload. `domains list` reports verification and certificate status.
 
 ### Revisions and rollback
 
@@ -274,7 +278,7 @@ limit = 100
 period = 60
 ```
 
-Install `@telnyx/edge-runtime` **0.9.0 or newer**, then regenerate declarations. `telnyx-edge types` emits the binding as a runtime `RateLimiter`:
+Install `@telnyx/edge-runtime` **0.9.2 or newer**, then regenerate declarations. `telnyx-edge types` emits the binding as a runtime `RateLimiter`:
 
 ```bash
 npm install @telnyx/edge-runtime@latest
@@ -292,7 +296,7 @@ The runtime handle is canonicalized to uppercase with hyphens replaced by unders
 
 ### Non-interactive destructive commands
 
-Destructive commands prompt in a terminal and deliberately fail rather than hang when stdin is not a terminal. Scripts, agents, and CI must pass `--yes` (`-y`) to `delete-func`, `reset-func`, `secrets delete`, `bindings delete`, `actors delete`, `storage sqldb delete`, `storage kv delete`, and `storage kv key delete`. Piping the output of `yes` is not accepted.
+Destructive commands prompt in a terminal and deliberately fail rather than hang when stdin is not a terminal. Scripts, agents, and CI must pass `--yes` (`-y`) to `delete-func`, `reset-func`, `domains delete`, `secrets delete`, `bindings delete`, `actors delete`, `storage sqldb delete`, `storage kv delete`, and `storage kv key delete`. Piping the output of `yes` is not accepted.
 
 ```bash
 telnyx-edge delete-func my-function --yes
@@ -327,13 +331,9 @@ Declare a runtime binding in `telnyx.toml` or supported classic project manifest
 id = "<namespace-uuid>"
 ```
 
-```bash
-telnyx-edge types
-```
+Then run `telnyx-edge types`: it generates `telnyx-env.d.ts` with KV handles typed as `KvNamespace`. Rerun it whenever binding declarations change.
 
-`types` generates `telnyx-env.d.ts`; KV handles are typed as `KvNamespace`. Rerun it whenever binding declarations change.
-
-### SQL databases (v0.3.0)
+### SQL databases (v0.3.0; bound parameters v0.4.1)
 
 A SQL database is an account-scoped SQLite database. It exists independently of functions and can be shared by every function that binds its UUID.
 
@@ -358,9 +358,12 @@ telnyx-edge storage sqldb execute "$SQLDB_ID" --remote \
 telnyx-edge storage sqldb execute "$SQLDB_ID" --remote -f ./schema.sql
 telnyx-edge storage sqldb execute "$SQLDB_ID" --remote \
   -c "SELECT id, url FROM links ORDER BY id" --json
+# Bind untrusted values instead of interpolating them into SQL.
+telnyx-edge storage sqldb execute "$SQLDB_ID" --remote \
+  -c "SELECT id, url FROM links WHERE url = ? AND id > ?" --param "https://example.com" --param-json 42
 ```
 
-Do not combine `--command` and `--file`, and do not omit both. Versioned migrations are created locally, then listed or applied against the remote database. Applied migrations are recorded in the database, so `apply` is safe to rerun and applies only pending files in numeric order.
+Do not combine `--command` and `--file`, and do not omit both. `--param` (binds a string) and `--param-json` (binds a JSON number, boolean, or null) are repeatable and fill `?` placeholders left to right in flag order; the count must match the placeholders exactly, and they only work with `--command`. Prefer bindings over interpolating outside values into SQL. Versioned migrations are created locally, then listed or applied against the remote database. Applied migrations are recorded in the database, so `apply` is safe to rerun and applies only pending files in numeric order.
 
 ```bash
 telnyx-edge storage sqldb migrations create "$SQLDB_ID" add-links-table

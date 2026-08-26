@@ -69,9 +69,9 @@ TELNYX_CLI_ARCHIVE_SHA256 = (
     "9a4ea6023370f1a1da11157046c6f1fff34dc70d808076f6e8780c32a3581635"
 )
 PINNED_ACTIONS = {
-    "actions/checkout": "11d5960a326750d5838078e36cf38b85af677262",
-    "actions/setup-python": "a26af69be951a213d495a4c3e4e4022e16d87065",
-    "actions/setup-node": "49933ea5288caeca8642d1e84afbd3f7d6820020",
+    "actions/checkout": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+    "actions/setup-python": "5fda3b95a4ea91299a34e894583c3862153e4b97",
+    "actions/setup-node": "820762786026740c76f36085b0efc47a31fe5020",
 }
 PERMITTED_SECRET_STEPS = {
     "Python API read-only tests": (

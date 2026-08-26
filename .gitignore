@@ -40,3 +40,6 @@ Thumbs.db
 # Local MCP configuration may contain secrets. The Codex plugin config is public.
 .mcp.json
 !/plugins/telnyx-developer-kit/.mcp.json
+
+# Local Claude Code worktrees
+.claude/worktrees/
