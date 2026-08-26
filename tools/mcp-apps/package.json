@@ -1,10 +1,6 @@
 {
   "name": "@telnyx/mcp-apps",
   "private": true,
-  "packageManager": "npm@11.17.0",
-  "engines": {
-    "node": ">=22"
-  },
   "type": "module",
   "description": "App-layer Telnyx MCP servers and MCP Apps UI resources.",
   "main": "dist/src/index.js",
@@ -31,7 +27,6 @@
   },
   "devDependencies": {
     "@types/node": "^24.13.3",
-    "ajv": "^8.20.0",
     "tsx": "^4.23.12",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11"

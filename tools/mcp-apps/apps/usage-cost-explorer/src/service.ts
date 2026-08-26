@@ -25,7 +25,6 @@ export const DEFAULT_AUTO_RECHARGE_POLICY: Required<AutoRechargePolicy> = {
 const AUTO_RECHARGE_ACTION = "billing.update_auto_recharge_preferences";
 const STORED_PAYMENT_ACTION = "billing.create_stored_payment_transaction";
 const BILLING_GROUP_UPDATE_ACTION = "billing.update_billing_group";
-const BILLING_GROUP_CREATE_ACTION = "billing.create_billing_group";
 const MUTABLE_AUTO_RECHARGE_FIELDS = ["threshold_amount", "recharge_amount", "enabled", "invoice_enabled", "preference"] as const;
 const AUTO_RECHARGE_AMOUNT_PATTERN = /^(?:\d+|\d+\.\d+|\.\d+)$/;
 const STORED_PAYMENT_AMOUNT_PATTERN = /^\d+\.\d{2}$/;
@@ -151,34 +150,11 @@ export function createBillingService(client: BillingServiceClient, options: Bill
       return client.updateBillingGroup(id, patch);
     },
 
-    async previewBillingGroupCreate(input: { name: string }): Promise<MutationPreview> {
-      const name = normalizeRequiredString(input.name, "Billing group name is required.");
-      return buildPreview(
-        BILLING_GROUP_CREATE_ACTION,
-        false,
-        { resource: "not_created" },
-        { name },
-        autoRechargePolicy.version
-      );
-    },
-
-    async createBillingGroup(input: { name: string; confirmation_token: string }): Promise<TelnyxEnvelope> {
-      const name = normalizeRequiredString(input.name, "Billing group name is required.");
-      assertNonEmpty(
-        input.confirmation_token,
-        "A confirmation token from billing_preview_billing_group_create is required."
-      );
-      const expected = confirmationToken(
-        BILLING_GROUP_CREATE_ACTION,
-        { resource: "not_created" },
-        { name },
-        autoRechargePolicy.version
-      );
-      if (input.confirmation_token !== expected) {
-        throw new Error(
-          "Invalid confirmation token. Run billing_preview_billing_group_create again for this name."
-        );
+    async createBillingGroup(input: { name: string; confirm?: boolean }): Promise<TelnyxEnvelope> {
+      if (input.confirm !== true) {
+        throw new Error("billing_create_billing_group requires confirm=true because it creates a billing resource.");
       }
+      const name = normalizeRequiredString(input.name, "Billing group name is required.");
       return client.createBillingGroup({ name });
     }
   };
@@ -335,7 +311,7 @@ function normalizeStoredPaymentAmount(value: string, maxAmount: number): string 
   if (numericAmount > maxAmount) {
     throw new Error(`Stored payment amount exceeds app guardrail max of ${maxAmount}. This is an app guardrail, not a Telnyx API policy.`);
   }
-  return numericAmount.toFixed(2);
+  return amount;
 }
 
 function normalizeBillingGroupPatch(input: BillingGroupUpdatePayload): BillingGroupUpdatePayload {

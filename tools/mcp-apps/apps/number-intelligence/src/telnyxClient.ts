@@ -7,12 +7,6 @@ import type {
   TelnyxNumberLookupResponse,
   VoiceSignalInput
 } from "./types.js";
-import { fetchBoundedJson } from "./boundedFetch.js";
-
-const MAX_SAFE_MESSAGE_CHARS = 4096;
-const DEFAULT_BASE_URL = "https://api.telnyx.com/v2";
-const RECORD_SEARCH_PAGE_SIZE = 100;
-const MAX_RECORD_SEARCH_PAGES = 100;
 
 export class TelnyxNumberLookupError extends Error {
   readonly status: number;
@@ -30,9 +24,6 @@ class TelnyxBaseClient {
   protected readonly apiKey: string;
   protected readonly baseUrl: string;
   protected readonly fetchImpl: typeof fetch;
-  protected readonly timeoutMs: number | undefined;
-  protected readonly maxResponseBytes: number | undefined;
-  protected readonly signal: AbortSignal | undefined;
 
   constructor(options: TelnyxClientOptions) {
     if (!options.apiKey) {
@@ -40,11 +31,8 @@ class TelnyxBaseClient {
     }
 
     this.apiKey = options.apiKey;
-    this.baseUrl = normalizeTelnyxV2BaseUrl(options.baseUrl ?? DEFAULT_BASE_URL);
+    this.baseUrl = (options.baseUrl ?? "https://api.telnyx.com").replace(/\/+$/, "");
     this.fetchImpl = options.fetch ?? globalThis.fetch;
-    this.timeoutMs = options.timeoutMs;
-    this.maxResponseBytes = options.maxResponseBytes;
-    this.signal = options.signal;
 
     if (!this.fetchImpl) {
       throw new Error("A fetch implementation is required");
@@ -63,26 +51,18 @@ class TelnyxBaseClient {
       ...(init.headers as Record<string, string> | undefined)
     };
 
-    const { response, body } = await fetchBoundedJson(
-      this.fetchImpl,
-      url.toString(),
-      { ...init, headers },
-      {
-        timeoutMs: this.timeoutMs,
-        maxResponseBytes: this.maxResponseBytes,
-        signal: this.signal
-      }
-    );
+    const response = await this.fetchImpl(url.toString(), {
+      ...init,
+      headers
+    });
+
+    const body = await parseJson(response);
 
     if (!response.ok) {
-      const sanitizedDetails = sanitizeNumberIntelligenceValue(body);
       throw new TelnyxNumberLookupError(
-        sanitizeMessage(
-          extractTelnyxErrorMessage(sanitizedDetails) ??
-            `Telnyx request failed with status ${response.status}`
-        ),
+        extractTelnyxErrorMessage(body) ?? `Telnyx request failed with status ${response.status}`,
         response.status,
-        sanitizedDetails
+        body
       );
     }
 
@@ -92,7 +72,7 @@ class TelnyxBaseClient {
 
 export class TelnyxNumberLookupClient extends TelnyxBaseClient {
   async lookupNumber(phoneNumber: string): Promise<TelnyxNumberLookupResponse> {
-    const url = this.url(`/number_lookup/${encodeURIComponent(normalizeE164ish(phoneNumber))}`);
+    const url = this.url(`/v2/number_lookup/${encodeURIComponent(normalizeE164ish(phoneNumber))}`);
     url.searchParams.append("type", "carrier");
     url.searchParams.append("type", "caller-name");
 
@@ -102,7 +82,14 @@ export class TelnyxNumberLookupClient extends TelnyxBaseClient {
 
 export class TelnyxReadOnlyClient extends TelnyxNumberLookupClient {
   async getOwnedNumber(phoneNumber: string): Promise<OwnershipSignalInput> {
-    const record = await this.findOwnedNumberRecord(phoneNumber);
+    const url = this.url("/v2/phone_numbers");
+    url.searchParams.set("filter[phone_number]", digitsOnly(phoneNumber));
+    url.searchParams.set("page[size]", "1");
+    url.searchParams.set("page[number]", "1");
+    url.searchParams.set("handle_messaging_profile_error", "true");
+
+    const body = await this.request<TelnyxListResponse<Record<string, unknown>>>(url, { method: "GET" });
+    const record = firstRecord(body);
     if (!record) {
       return { owned: false, reason: "No owned Telnyx phone-number inventory record was found." };
     }
@@ -118,43 +105,14 @@ export class TelnyxReadOnlyClient extends TelnyxNumberLookupClient {
     };
   }
 
-  private async findOwnedNumberRecord(phoneNumber: string): Promise<Record<string, unknown> | undefined> {
-    return this.findPhoneNumberAcrossPages("/phone_numbers", phoneNumber, (url) => {
-      url.searchParams.set("filter[phone_number]", digitsOnly(phoneNumber));
-      url.searchParams.set("handle_messaging_profile_error", "true");
-    });
-  }
-
-  private async findPhoneNumberAcrossPages(
-    path: string,
-    phoneNumber: string,
-    configure: (url: URL) => void
-  ): Promise<Record<string, unknown> | undefined> {
-    for (let pageNumber = 1; pageNumber <= MAX_RECORD_SEARCH_PAGES; pageNumber += 1) {
-      const url = this.url(path);
-      configure(url);
-      url.searchParams.set("page[size]", String(RECORD_SEARCH_PAGE_SIZE));
-      url.searchParams.set("page[number]", String(pageNumber));
-
-      const body = await this.request<TelnyxListResponse<Record<string, unknown>>>(url, { method: "GET" });
-      const record = findPhoneNumberRecord(body, phoneNumber);
-      if (record) return record;
-      if (!hasNextPage(body, pageNumber, RECORD_SEARCH_PAGE_SIZE)) return undefined;
-    }
-
-    throw new Error(
-      `Telnyx phone-number search exceeded the ${MAX_RECORD_SEARCH_PAGES}-page safety limit`
-    );
-  }
-
   async checkPortability(phoneNumber: string): Promise<PortabilitySignalInput> {
     const normalized = normalizeE164ish(phoneNumber);
-    const url = this.url("/portability_checks");
+    const url = this.url("/v2/portability_checks");
     const body = await this.request<TelnyxListResponse<Record<string, unknown>>>(url, {
       method: "POST",
       body: JSON.stringify({ phone_numbers: [normalized] })
     });
-    const record = findPhoneNumberRecord(body, normalized);
+    const record = firstRecord(body);
     if (!record) {
       return { status: "unknown", reason: "Portability check returned no result for the number." };
     }
@@ -170,11 +128,13 @@ export class TelnyxReadOnlyClient extends TelnyxNumberLookupClient {
 
   async checkMessagingReadiness(phoneNumber: string): Promise<MessagingSignalInput> {
     const normalized = normalizeE164ish(phoneNumber);
-    const record = await this.findPhoneNumberAcrossPages(
-      "/phone_numbers/messaging",
-      normalized,
-      (url) => url.searchParams.set("filter[phone_number]", normalized)
-    );
+    const url = this.url("/v2/phone_numbers/messaging");
+    url.searchParams.set("filter[phone_number]", normalized);
+    url.searchParams.set("page[size]", "1");
+    url.searchParams.set("page[number]", "1");
+
+    const body = await this.request<TelnyxListResponse<Record<string, unknown>>>(url, { method: "GET" });
+    const record = firstRecord(body);
     if (!record) {
       return { configured: false, capable: false, reason: "No Telnyx messaging settings record was found for this number." };
     }
@@ -185,7 +145,7 @@ export class TelnyxReadOnlyClient extends TelnyxNumberLookupClient {
       return { configured: false, capable, reason: "Messaging settings exist but no messaging profile is attached." };
     }
 
-    const profileUrl = this.url(`/messaging_profiles/${encodeURIComponent(profileId)}`);
+    const profileUrl = this.url(`/v2/messaging_profiles/${encodeURIComponent(profileId)}`);
     const profileBody = await this.request<TelnyxSingleResponse<Record<string, unknown>>>(profileUrl, { method: "GET" });
     const profile = singleRecord(profileBody);
     const enabled = booleanField(profile, "enabled");
@@ -204,26 +164,23 @@ export class TelnyxReadOnlyClient extends TelnyxNumberLookupClient {
   }
 
   async checkVoiceReadiness(phoneNumber: string): Promise<VoiceSignalInput> {
-    const inventoryRecord = await this.findOwnedNumberRecord(phoneNumber);
-    if (!inventoryRecord) {
+    const url = this.url("/v2/phone_numbers/voice");
+    url.searchParams.set("filter[phone_number]", digitsOnly(phoneNumber));
+    url.searchParams.set("page[size]", "1");
+    url.searchParams.set("page[number]", "1");
+
+    const body = await this.request<TelnyxListResponse<Record<string, unknown>>>(url, { method: "GET" });
+    const record = firstRecord(body);
+    if (!record) {
       return { configured: false, reason: "No Telnyx voice settings record was found for this number." };
     }
-
-    const numberId = stringField(inventoryRecord, "id");
-    if (!numberId) {
-      return { configured: false, reason: "Owned number record has no ID for voice-settings lookup." };
-    }
-
-    const voiceUrl = this.url(`/phone_numbers/${encodeURIComponent(numberId)}/voice`);
-    const voiceBody = await this.request<TelnyxSingleResponse<Record<string, unknown>>>(voiceUrl, { method: "GET" });
-    const record = singleRecord(voiceBody);
 
     const connectionId = stringField(record, "connection_id");
     if (!connectionId) {
       return { configured: false, reason: "Voice settings exist but no connection is assigned." };
     }
 
-    const connectionUrl = this.url(`/connections/${encodeURIComponent(connectionId)}`);
+    const connectionUrl = this.url(`/v2/connections/${encodeURIComponent(connectionId)}`);
     const connectionBody = await this.request<TelnyxSingleResponse<Record<string, unknown>>>(connectionUrl, { method: "GET" });
     const connection = singleRecord(connectionBody);
     const active = booleanField(connection, "active");
@@ -236,7 +193,7 @@ export class TelnyxReadOnlyClient extends TelnyxNumberLookupClient {
   }
 
   async getCachedReputation(phoneNumber: string): Promise<ReputationSignalInput> {
-    const url = this.url(`/reputation/numbers/${encodeURIComponent(normalizeE164ish(phoneNumber))}`);
+    const url = this.url(`/v2/reputation/numbers/${encodeURIComponent(normalizeE164ish(phoneNumber))}`);
     url.searchParams.set("fresh", "false");
 
     try {
@@ -268,65 +225,25 @@ export class TelnyxReadOnlyClient extends TelnyxNumberLookupClient {
   }
 }
 
-function normalizeTelnyxV2BaseUrl(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) throw new Error("Telnyx API base URL must not be empty");
-
-  let url: URL;
-  try {
-    url = new URL(trimmed);
-  } catch {
-    throw new Error("Telnyx API base URL must be an absolute HTTP(S) URL");
-  }
-
-  if (!/^https?:$/.test(url.protocol) || url.username || url.password || url.search || url.hash) {
-    throw new Error("Telnyx API base URL must be an absolute HTTP(S) URL without credentials, query, or fragment");
-  }
-
-  const pathname = url.pathname.replace(/\/+$/, "");
-  if (pathname.includes("//")) {
-    throw new Error("Telnyx API base URL path must not contain empty segments");
-  }
-
-  const rawSegments = pathname.split("/").filter(Boolean);
-  let decodedSegments: string[];
-  try {
-    decodedSegments = rawSegments.map((segment) => decodeURIComponent(segment));
-  } catch {
-    throw new Error("Telnyx API base URL path must use valid percent encoding");
-  }
-
-  if (decodedSegments.some((segment) => /[\/\\\u0000-\u001f\u007f]/.test(segment))) {
-    throw new Error("Telnyx API base URL path contains an invalid encoded segment");
-  }
-
-  const versionSegments = decodedSegments
-    .map((segment, index) => ({ segment, index }))
-    .filter(({ segment }) => /^v\d+$/i.test(segment));
-  if (versionSegments.some(({ segment }) => segment !== "v2")) {
-    throw new Error("Telnyx API base URL supports only a literal lowercase /v2 version segment");
-  }
-  if (versionSegments.length > 1 || (versionSegments.length === 1 && versionSegments[0]?.index !== decodedSegments.length - 1)) {
-    throw new Error("Telnyx API base URL must contain at most one trailing /v2 segment");
-  }
-  if (decodedSegments.at(-1)?.toLowerCase() === "v2" && rawSegments.at(-1) !== "v2") {
-    throw new Error("Telnyx API base URL version segment must be literal lowercase /v2");
-  }
-
-  url.pathname = rawSegments.at(-1) === "v2" ? pathname : `${pathname}/v2`;
-  return url.toString().replace(/\/$/, "");
-}
-
 interface TelnyxListResponse<T> {
   data?: T[];
-  meta?: {
-    page_number?: number;
-    total_pages?: number;
-  };
 }
 
 interface TelnyxSingleResponse<T> {
   data?: T;
+}
+
+async function parseJson(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return { text };
+  }
 }
 
 function extractTelnyxErrorMessage(body: unknown): string | undefined {
@@ -349,67 +266,6 @@ function extractTelnyxErrorMessage(body: unknown): string | undefined {
   return [title, detail].filter((value): value is string => typeof value === "string" && value.length > 0).join(": ");
 }
 
-export function sanitizeError(error: unknown): Error {
-  const source = error instanceof Error ? error : new Error(String(error));
-  const sanitized = new Error(sanitizeMessage(source.message));
-  sanitized.name = source.name;
-  return sanitized;
-}
-
-export function sanitizeNumberIntelligenceValue(value: unknown, key = ""): unknown {
-  if (Array.isArray(value)) {
-    return value.map((nested) => sanitizeNumberIntelligenceValue(nested, key));
-  }
-  if (value && typeof value === "object") {
-    const output: Record<string, unknown> = {};
-    for (const [nestedKey, nestedValue] of Object.entries(value)) {
-      output[nestedKey] = isSecretKey(nestedKey)
-        ? "[redacted-secret]"
-        : sanitizeNumberIntelligenceValue(nestedValue, nestedKey);
-    }
-    return output;
-  }
-  if (typeof value === "string") {
-    return sanitizeMessage(value);
-  }
-  return value;
-}
-
-function isSecretKey(key: string): boolean {
-  const normalized = key.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
-  return (
-    /^auth(?!or)/.test(normalized) ||
-    /(authorization|apikey|secret|token|password|credential|privatekey|clientsecret|accesstoken|refreshtoken)/.test(
-      normalized
-    )
-  );
-}
-
-function sanitizeMessage(message: string): string {
-  const sanitized = message
-    .replace(
-      /Authorization\s*:\s*Bearer\s+[^\s;,)]+/gi,
-      "Authorization: Bearer [redacted-secret]"
-    )
-    .replace(/Bearer\s+[^\s;,)]+/gi, "Bearer [redacted-secret]")
-    .replace(
-      /\b(?:sk|pk|key|api)[_-]?(?:live|test|secret)?_[A-Za-z0-9_-]{6,}\b/gi,
-      "[redacted-secret]"
-    )
-    .replace(
-      /(["']?(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key|secret|token|password)["']?\s*[:=]\s*)(["'])[^"'\r\n]*\2/gi,
-      "$1$2[redacted-secret]$2"
-    )
-    .replace(
-      /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key|secret|token|password)\s*(?:[=:]|\s)\s*[^\s;,)]+/gi,
-      (match) => `${match.split(/[=:\s]/)[0]}=[redacted-secret]`
-    )
-    .replace(/\b(?:\d[ -]*?){13,19}\b/g, "[redacted-payment]");
-  return sanitized.length <= MAX_SAFE_MESSAGE_CHARS
-    ? sanitized
-    : `${sanitized.slice(0, MAX_SAFE_MESSAGE_CHARS)}…[truncated]`;
-}
-
 function normalizeE164ish(phoneNumber: string): string {
   const trimmed = phoneNumber.trim();
   const digits = digitsOnly(trimmed);
@@ -423,26 +279,8 @@ function digitsOnly(phoneNumber: string): string {
   return phoneNumber.replace(/\D/g, "");
 }
 
-function findPhoneNumberRecord(
-  body: TelnyxListResponse<Record<string, unknown>>,
-  phoneNumber: string
-): Record<string, unknown> | undefined {
-  const expected = digitsOnly(phoneNumber);
-  return Array.isArray(body.data)
-    ? body.data.find((record) => digitsOnly(stringField(record, "phone_number") ?? "") === expected)
-    : undefined;
-}
-
-function hasNextPage<T>(
-  body: TelnyxListResponse<T>,
-  requestedPage: number,
-  pageSize: number
-): boolean {
-  const totalPages = body.meta?.total_pages;
-  if (Number.isSafeInteger(totalPages) && (totalPages ?? 0) >= 0) {
-    return requestedPage < (totalPages ?? 0);
-  }
-  return Array.isArray(body.data) && body.data.length === pageSize;
+function firstRecord<T>(body: TelnyxListResponse<T>): T | undefined {
+  return Array.isArray(body.data) ? body.data[0] : undefined;
 }
 
 function singleRecord<T extends Record<string, unknown>>(body: TelnyxSingleResponse<T>): T {

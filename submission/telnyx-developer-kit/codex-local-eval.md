@@ -2,11 +2,13 @@
 
 Date: 2026-08-05
 
-Scope: ephemeral, read-only Codex CLI sessions using the locally installed
-Telnyx Developer Kit and the local MCP gateway. Unrelated browser, Chrome, and
-computer-use plugins were disabled for the two MCP App selection cases. The
-local authorization fixture cannot reach a Telnyx account. No credentials or
-raw transcripts are stored here.
+Scope: ephemeral, read-only Codex CLI sessions loading the plugin package
+directly from the review checkout with a local MCP gateway. The evaluation did
+not expose or install the package through the repository marketplace, whose
+release-candidate policy remains `NOT_AVAILABLE`. Unrelated browser, Chrome,
+and computer-use plugins were disabled for the two MCP App selection cases.
+The local authorization fixture cannot reach a Telnyx account. No credentials
+or raw transcripts are stored here.
 
 | Case | Observed activation and tools | Result |
 | --- | --- | --- |

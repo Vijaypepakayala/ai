@@ -1,50 +1,7 @@
-const MCP_APP_CONTENT_SECURITY_POLICY = [
-  "default-src 'none'",
-  "base-uri 'none'",
-  "form-action 'none'",
-  "connect-src 'none'",
-  "frame-src 'none'",
-  "img-src 'none'",
-  "media-src 'none'",
-  "font-src 'none'",
-  "object-src 'none'",
-  "script-src 'unsafe-inline'",
-  "style-src 'unsafe-inline'"
-].join("; ");
-
-const MCP_APP_SECURITY_META = `    <meta name="color-scheme" content="light dark" />
-    <meta http-equiv="Content-Security-Policy" content="${MCP_APP_CONTENT_SECURITY_POLICY}" />`;
-
-export const INITIAL_RESULT_GATE_SOURCE = String.raw`function createInitialResultGate(options) {
-  let accepted = false;
-  let fallbackTimer;
-  return {
-    accept(payload) {
-      if (accepted || !options.isUsable(payload)) return false;
-      accepted = true;
-      if (fallbackTimer !== undefined) {
-        globalThis.clearTimeout(fallbackTimer);
-        fallbackTimer = undefined;
-      }
-      options.render(payload);
-      return true;
-    },
-    scheduleFallback() {
-      if (accepted || fallbackTimer !== undefined) return;
-      fallbackTimer = globalThis.setTimeout(() => {
-        fallbackTimer = undefined;
-        if (accepted) return;
-        Promise.resolve().then(options.loadFallback).catch(options.onFallbackError);
-      }, options.delayMs);
-    }
-  };
-}`;
-
 export const USAGE_COST_EXPLORER_UI_HTML = String.raw`<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-${MCP_APP_SECURITY_META}
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Telnyx Billing Dashboard</title>
     <style>
@@ -140,12 +97,9 @@ ${MCP_APP_SECURITY_META}
 
     <script>
       const PROTOCOL_VERSION = "2026-01-26";
-      const INITIAL_RESULT_FALLBACK_MS = 1000;
-      ${INITIAL_RESULT_GATE_SOURCE}
       let nextId = 1;
       const pending = new Map();
       const state = { initialized: false, overview: {}, autoPatch: null, confirmationToken: null };
-      let initialUsageRequested = false;
 
       const els = {
         bridgeStatus: document.getElementById("bridgeStatus"), error: document.getElementById("error"),
@@ -388,33 +342,6 @@ ${MCP_APP_SECURITY_META}
           resize();
         }
       }
-      function loadInitialUsageOnce() {
-        if (!state.initialized || initialUsageRequested) return;
-        if (!els.productSelect.value || !els.dimensionSelect.value || !els.metricSelect.value) return;
-        initialUsageRequested = true;
-        loadUsage().catch((error) => {
-          els.usageMeta.textContent = error?.message || "Usage query failed.";
-          resize();
-        });
-      }
-      const initialOverviewResult = createInitialResultGate({
-        delayMs: INITIAL_RESULT_FALLBACK_MS,
-        isUsable: (payload) => Boolean(payload && typeof payload === "object" && [
-          "balance", "auto_recharge", "billing_groups", "usage_options", "warnings"
-        ].some((key) => Object.prototype.hasOwnProperty.call(payload, key))),
-        render: (payload) => {
-          renderOverview(payload);
-          renderPreferenceHelp();
-          loadInitialUsageOnce();
-        },
-        loadFallback: async () => {
-          await loadOverview();
-          renderPreferenceHelp();
-          initialUsageRequested = true;
-          await loadUsage();
-        },
-        onFallbackError: (error) => setError(error?.message || "Could not load the billing dashboard.")
-      });
 
       window.addEventListener("message", (event) => {
         if (event.source !== window.parent) return;
@@ -428,11 +355,8 @@ ${MCP_APP_SECURITY_META}
           return;
         }
         if (message.method === "ui/notifications/tool-result") {
-          try {
-            initialOverviewResult.accept(extractResult(message.params));
-          } catch (error) {
-            setError(error?.message || "Could not render the initial billing dashboard.");
-          }
+          const payload = extractResult(message.params);
+          if (payload?.balance || payload?.auto_recharge || payload?.billing_groups) renderOverview(payload);
         }
       });
 
@@ -476,9 +400,9 @@ ${MCP_APP_SECURITY_META}
           state.initialized = true;
           els.bridgeStatus.textContent = "Host bridge: connected";
           notify("ui/notifications/initialized", {});
+          await loadOverview();
           renderPreferenceHelp();
-          initialOverviewResult.scheduleFallback();
-          loadInitialUsageOnce();
+          await loadUsage();
         })
         .catch((error) => {
           els.bridgeStatus.textContent = "Host bridge: unavailable";
@@ -494,7 +418,6 @@ export const STORED_PAYMENT_TOP_UP_UI_HTML = String.raw`<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-${MCP_APP_SECURITY_META}
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Telnyx Stored Payment Top Up</title>
     <style>
@@ -552,8 +475,6 @@ ${MCP_APP_SECURITY_META}
     </main>
     <script>
       const PROTOCOL_VERSION = "2026-01-26";
-      const INITIAL_RESULT_FALLBACK_MS = 1000;
-      ${INITIAL_RESULT_GATE_SOURCE}
       let nextId = 1;
       const pending = new Map();
       const state = { amount: null, token: null };
@@ -616,14 +537,6 @@ ${MCP_APP_SECURITY_META}
         resize();
       }
       async function loadState() { renderBalance(await callTool("billing_stored_payment_top_up")); }
-      const initialStoredPaymentResult = createInitialResultGate({
-        delayMs: INITIAL_RESULT_FALLBACK_MS,
-        isUsable: (payload) => Boolean(payload && typeof payload === "object" &&
-          Object.prototype.hasOwnProperty.call(payload, "balance")),
-        render: renderBalance,
-        loadFallback: loadState,
-        onFallbackError: (error) => setError(error?.message || "Could not load the stored-payment balance.")
-      });
       window.addEventListener("message", (event) => {
         if (event.source !== window.parent) return;
         const message = event.data;
@@ -633,14 +546,6 @@ ${MCP_APP_SECURITY_META}
           pending.delete(message.id);
           if (message.error) handlers.reject(new Error(message.error.message || "Request failed"));
           else handlers.resolve(message.result);
-          return;
-        }
-        if (message.method === "ui/notifications/tool-result") {
-          try {
-            initialStoredPaymentResult.accept(extractResult(message.params));
-          } catch (error) {
-            setError(error?.message || "Could not render the initial stored-payment balance.");
-          }
         }
       });
       els.topUpForm.addEventListener("submit", async (event) => {
@@ -683,10 +588,10 @@ ${MCP_APP_SECURITY_META}
       new ResizeObserver(resize).observe(document.documentElement);
       new ResizeObserver(resize).observe(document.body);
       request("ui/initialize", { appInfo: { name: "telnyx-stored-payment-top-up-ui", version: "0.1.0" }, appCapabilities: {}, protocolVersion: PROTOCOL_VERSION })
-        .then(() => {
+        .then(async () => {
           els.bridgeStatus.textContent = "Host bridge: connected";
           notify("ui/notifications/initialized", {});
-          initialStoredPaymentResult.scheduleFallback();
+          await loadState();
         })
         .catch((error) => {
           els.bridgeStatus.textContent = "Host bridge: unavailable";
@@ -700,7 +605,6 @@ export const AUTO_RECHARGE_SETUP_UI_HTML = String.raw`<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-${MCP_APP_SECURITY_META}
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Telnyx Auto Recharge Setup</title>
     <style>
@@ -759,8 +663,6 @@ ${MCP_APP_SECURITY_META}
     </main>
     <script>
       const PROTOCOL_VERSION = "2026-01-26";
-      const INITIAL_RESULT_FALLBACK_MS = 1000;
-      ${INITIAL_RESULT_GATE_SOURCE}
       let nextId = 1;
       const pending = new Map();
       const state = { patch: null, token: null };
@@ -879,18 +781,6 @@ ${MCP_APP_SECURITY_META}
       async function loadState() {
         renderState(await callTool("billing_auto_recharge_setup"));
       }
-      const initialAutoRechargeResult = createInitialResultGate({
-        delayMs: INITIAL_RESULT_FALLBACK_MS,
-        isUsable: (payload) => Boolean(payload && typeof payload === "object" && [
-          "balance", "auto_recharge", "warnings"
-        ].some((key) => Object.prototype.hasOwnProperty.call(payload, key))),
-        render: (payload) => {
-          renderState(payload);
-          renderPreferenceHelp();
-        },
-        loadFallback: loadState,
-        onFallbackError: (error) => setError(error?.message || "Could not load the auto-recharge state.")
-      });
       window.addEventListener("message", (event) => {
         if (event.source !== window.parent) return;
         const message = event.data;
@@ -900,14 +790,6 @@ ${MCP_APP_SECURITY_META}
           pending.delete(message.id);
           if (message.error) handlers.reject(new Error(message.error.message || "Request failed"));
           else handlers.resolve(message.result);
-          return;
-        }
-        if (message.method === "ui/notifications/tool-result") {
-          try {
-            initialAutoRechargeResult.accept(extractResult(message.params));
-          } catch (error) {
-            setError(error?.message || "Could not render the initial auto-recharge state.");
-          }
         }
       });
       els.autoForm.addEventListener("submit", async (event) => {
@@ -946,11 +828,11 @@ ${MCP_APP_SECURITY_META}
       new ResizeObserver(resize).observe(document.documentElement);
       new ResizeObserver(resize).observe(document.body);
       request("ui/initialize", { appInfo: { name: "telnyx-auto-recharge-setup-ui", version: "0.1.0" }, appCapabilities: {}, protocolVersion: PROTOCOL_VERSION })
-        .then(() => {
+        .then(async () => {
           els.bridgeStatus.textContent = "Host bridge: connected";
           notify("ui/notifications/initialized", {});
+          await loadState();
           renderPreferenceHelp();
-          initialAutoRechargeResult.scheduleFallback();
         })
         .catch((error) => {
           els.bridgeStatus.textContent = "Host bridge: unavailable";

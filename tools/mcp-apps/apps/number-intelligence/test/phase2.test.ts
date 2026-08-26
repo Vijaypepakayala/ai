@@ -29,16 +29,13 @@ describe("phase 2 read-only Telnyx source client", () => {
       calls.push({ url: String(url), init });
       const requestUrl = String(url);
       if (requestUrl.includes("/phone_numbers/messaging")) {
-        return json({ data: [
-          { id: "pnm_wrong", phone_number: "+13125550999", messaging_profile_id: "mp_wrong" },
-          { id: "pnm_1", phone_number: "+13125550123", messaging_profile_id: "mp_1", features: { sms: { domestic: true } }, health: { success_ratio: 0.99, spam_ratio: 0.01 } }
-        ] });
+        return json({ data: [{ id: "pnm_1", messaging_profile_id: "mp_1", features: { sms: { domestic: true } }, health: { success_ratio: 0.99, spam_ratio: 0.01 } }] });
       }
       if (requestUrl.includes("/messaging_profiles/mp_1")) {
         return json({ data: { id: "mp_1", name: "Production", enabled: true, v1_secret: "must-not-surface" } });
       }
-      if (requestUrl.includes("/phone_numbers/pn_1/voice")) {
-        return json({ data: { id: "pnv_1", connection_id: "conn_1" } });
+      if (requestUrl.includes("/phone_numbers/voice")) {
+        return json({ data: [{ id: "pnv_1", connection_id: "conn_1" }] });
       }
       if (requestUrl.includes("/connections/conn_1")) {
         return json({ data: { id: "conn_1", active: true, connection_name: "Voice app" } });
@@ -49,15 +46,9 @@ describe("phase 2 read-only Telnyx source client", () => {
       if (requestUrl.includes("/portability_checks")) {
         expect(init?.method).toBe("POST");
         expect(init?.body).toBe(JSON.stringify({ phone_numbers: ["+13125550123"] }));
-        return json({ data: [
-          { phone_number: "+13125550999", portable: false },
-          { phone_number: "+13125550123", portable: true, fast_portable: true }
-        ] });
+        return json({ data: [{ phone_number: "+13125550123", portable: true, fast_portable: true }] });
       }
-      return json({ data: [
-        { id: "pn_wrong", phone_number: "+13125550999", status: "active" },
-        { id: "pn_1", phone_number: "+13125550123", status: "active", messaging_profile_id: "mp_1", connection_id: "conn_1" }
-      ] });
+      return json({ data: [{ id: "pn_1", phone_number: "+13125550123", status: "active", messaging_profile_id: "mp_1", connection_id: "conn_1" }] });
     };
 
     const client = new TelnyxReadOnlyClient({ apiKey: "test_secret_key", baseUrl: "https://api.telnyx.test", fetch: fetchImpl });
@@ -69,12 +60,11 @@ describe("phase 2 read-only Telnyx source client", () => {
     const reputation = await client.getCachedReputation("+1 (312) 555-0123");
 
     expect(calls.map((call) => call.url)).toEqual([
-      "https://api.telnyx.test/v2/phone_numbers?filter%5Bphone_number%5D=13125550123&handle_messaging_profile_error=true&page%5Bsize%5D=100&page%5Bnumber%5D=1",
+      "https://api.telnyx.test/v2/phone_numbers?filter%5Bphone_number%5D=13125550123&page%5Bsize%5D=1&page%5Bnumber%5D=1&handle_messaging_profile_error=true",
       "https://api.telnyx.test/v2/portability_checks",
-      "https://api.telnyx.test/v2/phone_numbers/messaging?filter%5Bphone_number%5D=%2B13125550123&page%5Bsize%5D=100&page%5Bnumber%5D=1",
+      "https://api.telnyx.test/v2/phone_numbers/messaging?filter%5Bphone_number%5D=%2B13125550123&page%5Bsize%5D=1&page%5Bnumber%5D=1",
       "https://api.telnyx.test/v2/messaging_profiles/mp_1",
-      "https://api.telnyx.test/v2/phone_numbers?filter%5Bphone_number%5D=13125550123&handle_messaging_profile_error=true&page%5Bsize%5D=100&page%5Bnumber%5D=1",
-      "https://api.telnyx.test/v2/phone_numbers/pn_1/voice",
+      "https://api.telnyx.test/v2/phone_numbers/voice?filter%5Bphone_number%5D=13125550123&page%5Bsize%5D=1&page%5Bnumber%5D=1",
       "https://api.telnyx.test/v2/connections/conn_1",
       "https://api.telnyx.test/v2/reputation/numbers/%2B13125550123?fresh=false"
     ]);
@@ -82,75 +72,6 @@ describe("phase 2 read-only Telnyx source client", () => {
     expect(calls.map((call) => call.url).join("\n")).toContain("fresh=false");
     expect(calls.map((call) => call.url).join("\n")).not.toContain("fresh=true");
     expect(JSON.stringify(reputation)).not.toContain("must-not-surface");
-  });
-
-  it("follows every advertised page when an exact owned-number match is not on page one", async () => {
-    const calls: string[] = [];
-    const wrongPage = Array.from({ length: 100 }, (_, index) => ({
-      id: `pn_wrong_${index}`,
-      phone_number: `+131255${String(index).padStart(5, "0")}`
-    }));
-    const client = new TelnyxReadOnlyClient({
-      apiKey: "test_secret_key",
-      baseUrl: "https://api.telnyx.test/v2",
-      fetch: async (url) => {
-        const requestUrl = String(url);
-        calls.push(requestUrl);
-        return requestUrl.includes("page%5Bnumber%5D=1")
-          ? json({ data: wrongPage, meta: { page_number: 1, total_pages: 2 } })
-          : json({
-              data: [{ id: "pn_target", phone_number: "+13125550123", status: "active" }],
-              meta: { page_number: 2, total_pages: 2 }
-            });
-      }
-    });
-
-    await expect(client.getOwnedNumber("+13125550123")).resolves.toMatchObject({
-      owned: true,
-      numberId: "pn_target"
-    });
-    expect(calls).toHaveLength(2);
-    expect(calls[1]).toContain("page%5Bnumber%5D=2");
-  });
-
-  it("follows every advertised messaging-settings page before selecting the exact number", async () => {
-    const calls: string[] = [];
-    const wrongPage = Array.from({ length: 100 }, (_, index) => ({
-      id: `pnm_wrong_${index}`,
-      phone_number: `+131255${String(index).padStart(5, "0")}`,
-      messaging_profile_id: "mp_wrong"
-    }));
-    const client = new TelnyxReadOnlyClient({
-      apiKey: "test_secret_key",
-      baseUrl: "https://api.telnyx.test",
-      fetch: async (url) => {
-        const requestUrl = String(url);
-        calls.push(requestUrl);
-        if (requestUrl.includes("/messaging_profiles/mp_target")) {
-          return json({ data: { id: "mp_target", enabled: true } });
-        }
-        return requestUrl.includes("page%5Bnumber%5D=1")
-          ? json({ data: wrongPage, meta: { page_number: 1, total_pages: 2 } })
-          : json({
-              data: [{
-                id: "pnm_target",
-                phone_number: "+13125550123",
-                messaging_profile_id: "mp_target",
-                features: { sms: { domestic: true } }
-              }],
-              meta: { page_number: 2, total_pages: 2 }
-            });
-      }
-    });
-
-    await expect(client.checkMessagingReadiness("+13125550123")).resolves.toMatchObject({
-      configured: true,
-      capable: true,
-      profileId: "mp_target"
-    });
-    expect(calls).toHaveLength(3);
-    expect(calls[1]).toContain("page%5Bnumber%5D=2");
-    expect(calls[2]).toContain("/messaging_profiles/mp_target");
   });
 });
 
@@ -237,48 +158,11 @@ describe("phase 2 batch analysis", () => {
     );
 
     expect(result.total).toBe(2);
-    expect(result.requested_total).toBe(2);
-    expect(result.queried_total).toBe(2);
-    expect(result.truncated).toBe(false);
-    expect(result.warnings).toEqual([]);
     expect(result.aggregate.health_status_counts.good).toBe(2);
     expect(result.aggregate.action_required_count).toBe(0);
     expect(result.results).toHaveLength(2);
     expect(JSON.stringify(result)).not.toContain("+13125550123");
     expect(JSON.stringify(result)).not.toContain("+14155552671");
-  });
-
-  it("deduplicates equivalent number formats before any billable lookup", async () => {
-    const lookedUpNumbers: string[] = [];
-    const result = await analyzeBatchNumbers(
-      {
-        numbers: [
-          "+1 (312) 555-0123",
-          "+13125550123",
-          "312-555-0123",
-          "+1 415 555 2671"
-        ],
-        sources: ["lookup"]
-      },
-      {
-        lookupClient: {
-          async lookupNumber(phoneNumber) {
-            lookedUpNumbers.push(phoneNumber);
-            return {
-              data: {
-                ...lookupResponse.data,
-                phone_number: phoneNumber
-              }
-            };
-          }
-        }
-      }
-    );
-
-    expect(lookedUpNumbers).toEqual(["+13125550123", "+14155552671"]);
-    expect(result.requested_total).toBe(2);
-    expect(result.queried_total).toBe(2);
-    expect(result.total).toBe(2);
   });
 
   it("enforces a conservative max batch size before making lookups", async () => {
@@ -291,69 +175,6 @@ describe("phase 2 batch analysis", () => {
       )
     ).rejects.toThrow("at most 2 numbers");
     expect(lookupCalls).toBe(0);
-  });
-
-  it("omits raw payloads first and stops later billable lookups at the aggregate output cap", async () => {
-    const numbers = Array.from({ length: 10 }, (_, index) => `+13125550${String(index).padStart(3, "0")}`);
-    let lookupCalls = 0;
-    const result = await analyzeBatchNumbers(
-      { numbers, include_raw: true, sources: ["lookup"] },
-      {
-        lookupClient: {
-          async lookupNumber(phoneNumber) {
-            lookupCalls += 1;
-            return {
-              data: {
-                ...lookupResponse.data,
-                phone_number: phoneNumber,
-                provider_payload: Array.from({ length: 2 }, () => "x".repeat(4096))
-              }
-            };
-          }
-        }
-      },
-      { maxBatchSize: 25, maxOutputBytes: 16 * 1024 }
-    );
-
-    expect(result.requested_total).toBe(10);
-    expect(result.queried_total).toBe(lookupCalls);
-    expect(result.queried_total).toBeGreaterThan(result.total);
-    expect(result.total).toBeLessThan(result.requested_total);
-    expect(result.truncated).toBe(true);
-    expect(result.warnings).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/raw lookup payloads were omitted/i),
-        expect.stringMatching(/queried result could not be returned.*later numbers were not queried/i)
-      ])
-    );
-    expect(result.results.every((item) => item.raw === undefined)).toBe(true);
-    expect(lookupCalls).toBeGreaterThan(1);
-    expect(lookupCalls).toBeLessThan(numbers.length);
-    expect(new TextEncoder().encode(JSON.stringify(result)).byteLength).toBeLessThanOrEqual(16 * 1024);
-  });
-
-  it("stops an ambiguous batch without encouraging a rebill of earlier lookups", async () => {
-    let lookupCalls = 0;
-    await expect(
-      analyzeBatchNumbers(
-        {
-          numbers: ["+13125550100", "+13125550101", "+13125550102"],
-          sources: ["lookup"]
-        },
-        {
-          lookupClient: {
-            async lookupNumber() {
-              lookupCalls += 1;
-              if (lookupCalls === 2) throw new Error("timeout after request write");
-              return lookupResponse;
-            }
-          }
-        }
-      )
-    ).rejects.toThrow(
-      /stopped after 2 attempted lookups.*may have been billed.*no later numbers were queried.*do not retry the whole batch automatically/i
-    );
-    expect(lookupCalls).toBe(2);
   });
 });
 

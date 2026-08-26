@@ -19,8 +19,6 @@ Current scope:
 - **No secrets in tests.** Tests use injected `fetch`/client stubs and do not require a real Telnyx API key.
 - **Default outputs are redacted.** `input.phone_number`, `normalized`, and `display` values use redacted phone-number strings; exact numbers are used only internally for lookup requests.
 - **Raw responses are opt-in and redacted.** `include_raw` defaults to `false`; when enabled, raw values pass through phone-number redaction.
-- **Billable ambiguity is fail-safe.** Network failures, cancellations, timeouts, HTTP 408/429, and 5xx responses leave the lookup outcome unknown. The app warns that the request may have been billed and does not recommend an automatic retry. Deterministic non-auth 4xx rejections return a review action instead of a blind retry action; 401/403 remain hard authentication/authorization failures.
-- **Output is bounded.** Batch results are capped near 1 MiB. Accumulated raw payloads are omitted first; if the remaining result would still exceed the cap, later numbers are not queried and `requested_total`, `queried_total`, `truncated`, and `warnings` make the partial and potentially billable work explicit. A final serialized tool-result cap protects single and batch tools.
 - **Avoid logging full numbers/secrets.** The client does not log requests or Authorization headers.
 
 ## APIs used
@@ -30,7 +28,7 @@ Current scope:
 | Telnyx Number Lookup | Live read-only lookup: `GET /v2/number_lookup/{phone_number}?type=carrier&type=caller-name`. Always used. |
 | Owned-number config | Safe default live source: `GET /v2/phone_numbers?filter[phone_number]=...` to determine account ownership and missing assignment hints. |
 | Messaging readiness | Safe default live source: `GET /v2/phone_numbers/messaging` plus `GET /v2/messaging_profiles/{id}` when attached. The app does not surface sensitive profile secrets. |
-| Voice readiness | Safe default live source: exact inventory lookup via `GET /v2/phone_numbers`, then `GET /v2/phone_numbers/{id}/voice` and `GET /v2/connections/{id}` when attached. |
+| Voice readiness | Safe default live source: `GET /v2/phone_numbers/voice` plus `GET /v2/connections/{id}` when attached. |
 | Portability | Opt-in live source: `POST /v2/portability_checks` as an eligibility-only/read-first check. It does not create a port order. |
 | Reputation | Opt-in cached-only live source: `GET /v2/reputation/numbers/{phone_number}?fresh=false`. |
 
@@ -38,7 +36,7 @@ Current scope:
 
 ```bash
 TELNYX_API_KEY=replac...-key
-TELNYX_API_BASE_URL=https://api.telnyx.com/v2 # optional; root form is also accepted
+TELNYX_API_BASE_URL=https://api.telnyx.com   # optional
 NUMBER_INTELLIGENCE_INCLUDE_RAW=false        # optional; overridden per-call by include_raw
 ```
 
@@ -61,7 +59,6 @@ npm run dev --workspace @telnyx-mcp-apps/number-intelligence
 The server is built on the official `@modelcontextprotocol/sdk` and registers MCP Apps metadata via `@modelcontextprotocol/ext-apps/server`. It runs over stdio.
 
 - tool: `number_intelligence_analyze`
-  - `confirm_billable_lookup` must be `true`; requests without explicit confirmation fail before any Telnyx lookup
   - `phone_number` string, required
   - `include_raw` boolean, optional (defaults to `NUMBER_INTELLIGENCE_INCLUDE_RAW` env, else `false`)
   - `sources` string array, optional. Supported values: `lookup`, `owned`, `portability`, `messaging`, `voice`, `reputation`.
@@ -71,12 +68,9 @@ The server is built on the official `@modelcontextprotocol/sdk` and registers MC
   - tool description carries `_meta.ui.resourceUri = "ui://number-intelligence/index.html"`
   - tool result includes `structuredContent` with the full analysis object so MCP App hosts can hand it to the UI
 - tool: `number_intelligence_batch_analyze`
-  - `confirm_billable_lookup` must be `true`; it approves at most one lookup per unique accepted number, capped at 25
   - `numbers` as newline/CSV text or an array of strings
   - conservative max batch size: 25
   - runs sequentially, redacts per-number output, and returns aggregate health/action counts
-  - caps output near 1 MiB, omits raw payloads before dropping results, and stops later billable lookups when the cap is reached
-  - returns `requested_total`, `queried_total`, `total`, `truncated`, and `warnings` so callers can distinguish requested, queried/billable, returned, and bounded-partial work
 - resource: `ui://number-intelligence/index.html` (mimeType `text/html;profile=mcp-app`)
 
 If `TELNYX_API_KEY` is missing, tool calls return a safe error result instead of attempting a live lookup.
@@ -129,7 +123,7 @@ npm run build --workspace @telnyx-mcp-apps/number-intelligence
 (
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"cli","version":"0"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"number_intelligence_analyze","arguments":{"confirm_billable_lookup":true,"phone_number":"+1XXXXXXXXXX","include_raw":true}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"number_intelligence_analyze","arguments":{"phone_number":"+1XXXXXXXXXX","include_raw":true}}}'
 ) | node apps/number-intelligence/dist/server.js
 ```
 
@@ -157,5 +151,4 @@ A host that supports the MCP Apps extension can resolve the tool's `_meta.ui.res
 - Portability is opt-in because it is a read-first POST, even though it does not create a port order.
 - Cached reputation is opt-in and always uses `fresh=false`; fresh/billed reputation lookups are not exposed.
 - `normalized.e164` is best-effort, not validated (see `normalized.e164_validated`).
-- A transport failure after request upload can be indistinguishable from a completed billable lookup. Ambiguous failures intentionally require a human to verify the prior outcome before choosing whether to retry.
 - The UI resource consumes `structuredContent` and attempts common host bridge names for re-analysis; host-specific MCP Apps client integration can vary.

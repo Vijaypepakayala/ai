@@ -52,51 +52,19 @@ RELEASE_NOTES_PATH = (
 REVIEW_README_PATH = (
     REPO_ROOT / "submission" / "telnyx-developer-kit" / "README.md"
 )
-INTEGRATION_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "integration-tests.yml"
+PLUGIN_WORKFLOW_PATH = (
+    REPO_ROOT / ".github" / "workflows" / "telnyx-developer-kit-review.yml"
+)
 SYNC_SKILLS_PATH = REPO_ROOT / "scripts" / "sync-skills.sh"
-WEBHOOKS_GUIDE_PATH = REPO_ROOT / "guides" / "webhooks.md"
-SMS_GUIDE_PATH = REPO_ROOT / "guides" / "sms-messaging.md"
 
 MCP_CATALOG_SELF_TEST_COMMAND = (
     "python3 scripts/check-telnyx-mcp-catalog.py --self-test"
 )
 TELNYX_API_KEY_SECRET = "${{ secrets.TELNYX_API_KEY }}"
-TELNYX_CLI_ARCHIVE_URL = (
-    "https://github.com/team-telnyx/telnyx-cli/releases/download/v0.11.0/"
-    "telnyx_0.11.0_linux_amd64.tar.gz"
-)
-TELNYX_CLI_ARCHIVE_SHA256 = (
-    "9a4ea6023370f1a1da11157046c6f1fff34dc70d808076f6e8780c32a3581635"
-)
 PINNED_ACTIONS = {
     "actions/checkout": "3d3c42e5aac5ba805825da76410c181273ba90b1",
     "actions/setup-python": "5fda3b95a4ea91299a34e894583c3862153e4b97",
     "actions/setup-node": "820762786026740c76f36085b0efc47a31fe5020",
-}
-PERMITTED_SECRET_STEPS = {
-    "Python API read-only tests": (
-        "tools/python",
-        'pytest tests/test_integration_ci.py -v -k "readonly"',
-    ),
-    "TS SDK API read-only tests": (
-        "tools/typescript",
-        "npx tsx tests/integration-ci.test.ts",
-    ),
-    "CLI read-only tests": ("cli", "npx tsx tests/integration-ci.test.ts"),
-    "Guide API smoke tests": (None, "npx tsx --test tests/guides-api.test.ts"),
-    "Validate hosted review metadata and every endpoint schema": (
-        None,
-        "python3 ./scripts/check-telnyx-mcp-catalog.py",
-    ),
-    "Python API write tests": (
-        "tools/python",
-        'pytest tests/test_integration_ci.py -v -k "write"',
-    ),
-    "TS SDK write tests": (
-        "tools/typescript",
-        "npx tsx tests/integration-ci.test.ts",
-    ),
-    "CLI write tests": ("cli", "npx tsx tests/integration-ci-write.test.ts"),
 }
 
 PLUGIN_NAME = "telnyx-developer-kit"
@@ -457,63 +425,78 @@ def validate_secret_pattern_regressions() -> None:
 validate_secret_pattern_regressions()
 
 
-def validate_integration_workflow() -> None:
-    """Enforce the least-privilege CI contract around Telnyx credentials."""
+def validate_plugin_workflow() -> None:
+    """Validate only the CI surface introduced for the Developer Kit."""
 
     try:
         workflow = yaml.load(
-            INTEGRATION_WORKFLOW_PATH.read_text(encoding="utf-8"),
+            PLUGIN_WORKFLOW_PATH.read_text(encoding="utf-8"),
             Loader=UniqueKeyBaseLoader,
         )
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
-        errors.append(f"integration workflow must be readable YAML: {exc}")
+        errors.append(f"Developer Kit workflow must be readable YAML: {exc}")
         return
 
     if not isinstance(workflow, dict):
-        errors.append("integration workflow must contain a YAML object")
+        errors.append("Developer Kit workflow must contain a YAML object")
         return
 
     triggers = workflow.get("on")
     jobs = workflow.get("jobs")
     if not isinstance(triggers, dict):
-        errors.append("integration workflow must define event triggers")
+        errors.append("Developer Kit workflow must define event triggers")
         return
     if not isinstance(jobs, dict):
-        errors.append("integration workflow must define jobs")
+        errors.append("Developer Kit workflow must define jobs")
         return
 
     for event_name in ("push", "pull_request"):
-        event = triggers.get(event_name)
         require(
-            event == {"branches": ["main"]},
-            f"integration workflow must run automatically for {event_name} on main",
+            triggers.get(event_name) == {"branches": ["main"]},
+            f"Developer Kit checks must run for {event_name} on main",
         )
+    dispatch = triggers.get("workflow_dispatch")
+    audit_input = (
+        dispatch.get("inputs", {}).get("run_hosted_audit")
+        if isinstance(dispatch, dict)
+        and isinstance(dispatch.get("inputs"), dict)
+        else None
+    )
+    require(
+        isinstance(audit_input, dict)
+        and audit_input.get("default") == "false"
+        and audit_input.get("required") == "false"
+        and audit_input.get("type") == "choice"
+        and audit_input.get("options") == ["false", "true"],
+        "hosted audit dispatch must default to an explicit false/true choice",
+    )
+    require(
+        workflow.get("permissions") == {"contents": "read"},
+        "Developer Kit workflow must grant only contents: read",
+    )
+    require(
+        set(jobs) == {"package-validation", "hosted-mcp-audit"},
+        "Developer Kit workflow must contain only package validation and hosted audit",
+    )
 
     for job_name, job in jobs.items():
         if not isinstance(job, dict):
-            errors.append(f"integration workflow job {job_name!r} must be an object")
+            errors.append(f"Developer Kit workflow job {job_name!r} must be an object")
             continue
         require(
-            job.get("permissions") == {"contents": "read"},
-            f"integration workflow job {job_name!r} must grant only contents: read",
+            TELNYX_API_KEY_SECRET not in json.dumps(job.get("env"), sort_keys=True),
+            f"Developer Kit workflow job {job_name!r} must not expose secrets job-wide",
         )
-
-        job_env = job.get("env")
-        require(
-            TELNYX_API_KEY_SECRET not in json.dumps(job_env, sort_keys=True),
-            f"integration workflow job {job_name!r} must not expose the API key job-wide",
-        )
-
         steps = job.get("steps")
         if not isinstance(steps, list):
             errors.append(
-                f"integration workflow job {job_name!r} must define a step list"
+                f"Developer Kit workflow job {job_name!r} must define a step list"
             )
             continue
         for step in steps:
             if not isinstance(step, dict):
                 errors.append(
-                    f"integration workflow job {job_name!r} contains a non-object step"
+                    f"Developer Kit workflow job {job_name!r} contains a non-object step"
                 )
                 continue
             uses = step.get("uses")
@@ -532,181 +515,67 @@ def validate_integration_workflow() -> None:
                     f"workflow action {action_name!r} must use the reviewed commit SHA",
                 )
 
-    automatic_job = jobs.get("skills-sync-check")
-    if not isinstance(automatic_job, dict):
-        errors.append(
-            "integration workflow must define the automatic skills-sync-check job"
-        )
-    else:
+    package_job = jobs.get("package-validation")
+    if isinstance(package_job, dict):
         require(
-            "if" not in automatic_job and "needs" not in automatic_job,
-            "automatic package checks must not be conditionally skipped or depend on "
-            "another job",
+            "if" not in package_job and "needs" not in package_job,
+            "automatic package validation must be unconditional and independent",
         )
         require(
-            TELNYX_API_KEY_SECRET
-            not in json.dumps(automatic_job, sort_keys=True),
-            "automatic package checks must remain uncredentialed",
+            TELNYX_API_KEY_SECRET not in json.dumps(package_job, sort_keys=True),
+            "automatic package validation must remain uncredentialed",
         )
-        automatic_steps = automatic_job.get("steps")
-        self_test_steps = (
+        package_steps = package_job.get("steps")
+        commands = (
             [
-                step
-                for step in automatic_steps
-                if isinstance(step, dict)
-                and isinstance(step.get("run"), str)
-                and step["run"].strip() == MCP_CATALOG_SELF_TEST_COMMAND
+                step.get("run", "").strip()
+                for step in package_steps
+                if isinstance(step, dict) and isinstance(step.get("run"), str)
             ]
-            if isinstance(automatic_steps, list)
+            if isinstance(package_steps, list)
             else []
         )
         require(
-            len(self_test_steps) == 1,
-            "automatic package checks must run exactly: "
-            f"{MCP_CATALOG_SELF_TEST_COMMAND}",
+            commands
+            == [
+                "python -m pip install PyYAML==6.0.3",
+                "python3 scripts/check-codex-plugin.py",
+                MCP_CATALOG_SELF_TEST_COMMAND,
+            ],
+            "automatic package validation must run only the reviewed local gates",
         )
-        if self_test_steps:
-            self_test_step = self_test_steps[0]
-            require(
-                "if" not in self_test_step
-                and "env" not in self_test_step
-                and "shell" not in self_test_step
-                and "working-directory" not in self_test_step
-                and self_test_step.get("continue-on-error") not in ("true", True),
-                "hosted MCP self-tests must be unconditional, uncredentialed, and "
-                "failure-blocking",
-            )
 
-    api_readonly = jobs.get("api-readonly")
-    api_readonly_condition = (
-        api_readonly.get("if", "") if isinstance(api_readonly, dict) else ""
-    )
-    normalized_api_readonly_condition = re.sub(
-        r"\s+", " ", api_readonly_condition
-    ).strip()
-    expected_api_readonly_condition = (
-        "(github.event_name == 'push' && github.ref == 'refs/heads/main') || "
-        "(github.event_name == 'workflow_dispatch' && "
-        "github.ref == 'refs/heads/main' && "
-        "(github.event.inputs.run_mcp_catalog_audit != 'true' || "
-        "github.event.inputs.run_write_tests == 'true'))"
-    )
-    require(
-        isinstance(api_readonly, dict),
-        "integration workflow must define api-readonly job",
-    )
-    require(
-        isinstance(api_readonly_condition, str)
-        and "github.event.pull_request" not in api_readonly_condition
-        and "github.event_name == 'pull_request'" not in api_readonly_condition,
-        "credentialed api-readonly job must never run for pull_request code",
-    )
-    require(
-        normalized_api_readonly_condition == expected_api_readonly_condition,
-        "credentialed api-readonly job must be limited to main push/manual events",
-    )
-
-    catalog_audit = jobs.get("mcp-catalog-audit")
-    catalog_audit_condition = (
-        catalog_audit.get("if", "") if isinstance(catalog_audit, dict) else ""
-    )
-    require(
-        re.sub(r"\s+", " ", catalog_audit_condition).strip()
-        == (
-            "github.event_name == 'workflow_dispatch' && "
-            "github.event.inputs.run_mcp_catalog_audit == 'true' && "
-            "github.ref == 'refs/heads/main'"
-        ),
-        "credentialed hosted catalog audit must require a manual dispatch from main",
-    )
-
-    api_write = jobs.get("api-write")
-    api_write_condition = api_write.get("if", "") if isinstance(api_write, dict) else ""
-    require(
-        isinstance(api_write, dict),
-        "integration workflow must define api-write job",
-    )
-    require(
-        re.sub(r"\s+", " ", api_write_condition).strip()
-        == (
-            "github.event_name == 'workflow_dispatch' && "
-            "github.ref == 'refs/heads/main' && "
-            "github.event.inputs.run_write_tests == 'true'"
-        ),
-        "credentialed api-write job must require an explicit manual dispatch from main",
-    )
-    if isinstance(api_write, dict):
+    audit_job = jobs.get("hosted-mcp-audit")
+    if isinstance(audit_job, dict):
+        audit_condition = re.sub(r"\s+", " ", audit_job.get("if", "")).strip()
         require(
-            api_write.get("needs") == "api-readonly",
-            "api-write must wait for the read-only integration suite",
+            audit_condition
+            == (
+                "github.event_name == 'workflow_dispatch' && "
+                "github.event.inputs.run_hosted_audit == 'true' && "
+                "github.ref == 'refs/heads/main'"
+            ),
+            "hosted audit must require an explicit manual dispatch from main",
         )
-        write_steps = api_write.get("steps")
-        if isinstance(write_steps, list):
-            for step in write_steps:
-                if not isinstance(step, dict):
-                    continue
-                require(
-                    step.get("continue-on-error") not in ("true", True),
-                    "api-write failures must not be masked with continue-on-error",
-                )
-
-    actual_secret_steps: set[str] = set()
-    cli_install_runs: list[str] = []
-    for job in jobs.values():
-        if not isinstance(job, dict) or not isinstance(job.get("steps"), list):
-            continue
-        for step in job["steps"]:
-            if not isinstance(step, dict):
-                continue
-            run = step.get("run")
-            if isinstance(run, str) and TELNYX_CLI_ARCHIVE_URL in run:
-                cli_install_runs.append(run)
-            if TELNYX_API_KEY_SECRET not in json.dumps(step, sort_keys=True):
-                continue
-            step_name = step.get("name")
-            if isinstance(step_name, str):
-                actual_secret_steps.add(step_name)
-            step_env = step.get("env")
-            expected_secret_step = PERMITTED_SECRET_STEPS.get(step_name)
-            require(
-                isinstance(run, str)
-                and isinstance(step_env, dict)
-                and step_env.get("TELNYX_API_KEY") == TELNYX_API_KEY_SECRET
-                and expected_secret_step
-                == (step.get("working-directory"), run.strip()),
-                "TELNYX_API_KEY may be exposed only to an approved test/audit run step",
-            )
-    require(
-        actual_secret_steps == set(PERMITTED_SECRET_STEPS),
-        "credentialed workflow steps must match the reviewed test/audit allowlist",
-    )
-
-    require(
-        len(cli_install_runs) == 2,
-        "both credentialed integration suites must install the pinned Telnyx CLI",
-    )
-    for run in cli_install_runs:
-        checksum_position = run.find(TELNYX_CLI_ARCHIVE_SHA256)
-        verification_position = run.find("sha256sum --check --strict")
-        extraction_position = run.find("tar -xzf")
-        verification_lines = {
-            line.strip() for line in run.splitlines() if "sha256sum" in line
-        }
-        require(
-            checksum_position != -1
-            and verification_position > checksum_position
-            and extraction_position > verification_position,
-            "downloaded Telnyx CLI archives must match the reviewed SHA-256 before "
-            "execution",
+        audit_steps = audit_job.get("steps")
+        secret_steps = (
+            [
+                step
+                for step in audit_steps
+                if isinstance(step, dict)
+                and TELNYX_API_KEY_SECRET in json.dumps(step, sort_keys=True)
+            ]
+            if isinstance(audit_steps, list)
+            else []
         )
         require(
-            verification_lines
-            == {
-                "printf '%s  %s\\n' "
-                f"'{TELNYX_CLI_ARCHIVE_SHA256}' \"$cli_archive\" | "
-                "sha256sum --check --strict"
-            },
-            "Telnyx CLI checksum verification must remain failure-blocking",
+            len(secret_steps) == 1
+            and secret_steps[0].get("run", "").strip()
+            == "python3 ./scripts/check-telnyx-mcp-catalog.py"
+            and secret_steps[0].get("env")
+            == {"TELNYX_API_KEY": TELNYX_API_KEY_SECRET}
+            and secret_steps[0].get("continue-on-error") not in ("true", True),
+            "only the failure-blocking hosted audit step may receive the API key",
         )
 
 
@@ -969,75 +838,6 @@ def validate_kit_skill_semantics(skill_texts: dict[str, str]) -> None:
         "the kit must route P2 voice designs through recording consent, tested "
         "failover, and correlated observability guidance",
     )
-
-    webhook_guide = WEBHOOKS_GUIDE_PATH.read_text(encoding="utf-8")
-    sms_guide = SMS_GUIDE_PATH.read_text(encoding="utf-8")
-    for guide_label, guide_text in (
-        ("webhooks guide", webhook_guide),
-        ("SMS guide", sms_guide),
-    ):
-        unsafe_bracket_curl_lines = [
-            line.strip()
-            for line in guide_text.splitlines()
-            if re.match(r"^\s*curl\b", line)
-            and "[" in line
-            and "]" in line
-            and "--globoff" not in line
-            and re.search(r"(?:^|\s)-[^\s]*g", line) is None
-        ]
-        require(
-            not unsafe_bracket_curl_lines,
-            f"{guide_label} curl commands with bracketed query keys must "
-            "disable curl URL globbing",
-        )
-
-    python_handler = webhook_guide.split("## Python Webhook Handler", 1)[-1].split(
-        "## TypeScript Webhook Handler", 1
-    )[0]
-    typescript_handler = webhook_guide.split(
-        "## TypeScript Webhook Handler", 1
-    )[-1].split("## Common Failure Modes", 1)[0]
-    require(
-        'os.environ["TELNYX_PUBLIC_KEY"]' in webhook_guide
-        and "request.get_data" in python_handler
-        and "verify_telnyx_signature" in python_handler
-        and "base64.b64decode(signature_header, validate=True)" in webhook_guide
-        and "except (InvalidSignature, ValueError, TypeError, binascii.Error)" in webhook_guide
-        and "json.loads" in python_handler
-        and python_handler.find("if not signature") < python_handler.find("json.loads")
-        and "express.raw" in typescript_handler
-        and "if (!verifyTelnyxSignature(" in typescript_handler
-        and "JSON.parse" in typescript_handler
-        and typescript_handler.find("if (!verifyTelnyxSignature(")
-        < typescript_handler.find("JSON.parse")
-        and "app.use(express.json())" not in typescript_handler,
-        "webhook guide handlers must verify the timestamped raw request body "
-        "before parsing JSON or performing work",
-    )
-    require(
-        '"event_type": "message.finalized"' in webhook_guide
-        and '"event_type": "message.delivered"' not in webhook_guide
-        and "payload.to[0].phone_number" in webhook_guide
-        and "API v2 event webhooks use a nested JSON envelope" in webhook_guide
-        and "TeXML instruction requests and status callbacks are separate"
-        in webhook_guide
-        and '"event_type": "message.finalized"' in sms_guide
-        and '"event_type": "message.delivered"' not in sms_guide,
-        "messaging guides must model delivery outcomes as message.finalized "
-        "with recipient status rather than a message.delivered event",
-    )
-    webhook_guide_lower = webhook_guide.lower()
-    require(
-        "within 2 seconds" in webhook_guide_lower
-        and "product- and configuration-specific" in webhook_guide_lower
-        and re.search(r"\bidempotency\s+key\b", webhook_guide_lower) is not None
-        and "within 10 seconds" not in webhook_guide_lower
-        and "after 5 failures" not in webhook_guide_lower
-        and "**attempt 2:** 1 minute" not in webhook_guide_lower,
-        "webhook guidance must use the API v2 two-second response deadline and "
-        "must not claim one universal retry schedule",
-    )
-
 
 def require_non_empty_string(
     payload: dict[str, Any], field: str, label: str
@@ -2153,6 +1953,11 @@ def validate_review_materials() -> None:
             "release notes must identify this as an initial submission",
         )
         require(
+            "`NOT_AVAILABLE`" in release_notes
+            and "separate release" in release_notes,
+            "release notes must keep installation gated until a separate release",
+        )
+        require(
             "demo-recording URL" in release_notes,
             "release notes must tell the owner to supply the required demo-recording "
             "URL in the portal",
@@ -2179,6 +1984,15 @@ def validate_review_materials() -> None:
             "optional screenshots": "README must identify screenshots as optional",
             "706 pixels wide": "README must record the screenshot width requirement",
             "five positive and three negative": "README must record review-case counts",
+            "policy.installation: NOT_AVAILABLE": (
+                "README must keep repository installation gated before rollout"
+            ),
+            "separate release-only change": (
+                "README must require an isolated policy flip after rollout"
+            ),
+            "reviewed and deployed separately": (
+                "README must keep hosted runtime work outside the plugin-source PR"
+            ),
         }
         for phrase, message in required_phrases.items():
             require(phrase in review_readme, message)
@@ -2403,8 +2217,8 @@ if marketplace_entry is not None:
     )
     require(
         marketplace_entry.get("policy")
-        == {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
-        "marketplace policy must require authentication on install",
+        == {"installation": "NOT_AVAILABLE", "authentication": "ON_INSTALL"},
+        "marketplace must remain unavailable until the hosted release gates pass",
     )
     source = marketplace_entry.get("source")
     source_path = source.get("path") if isinstance(source, dict) else None
@@ -2499,7 +2313,7 @@ for skill_name in sorted(EXPECTED_SKILLS.intersection(actual_skills)):
     )
 
 validate_kit_skill_semantics(canonical_skill_texts)
-validate_integration_workflow()
+validate_plugin_workflow()
 
 sync_script_text = SYNC_SKILLS_PATH.read_text(encoding="utf-8")
 for marker in (

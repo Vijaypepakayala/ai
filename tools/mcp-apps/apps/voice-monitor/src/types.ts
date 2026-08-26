@@ -2,9 +2,6 @@ export interface TelnyxClientOptions {
   apiKey: string;
   baseUrl?: string;
   fetch?: typeof fetch;
-  timeoutMs?: number;
-  maxResponseBytes?: number;
-  signal?: AbortSignal;
 }
 
 export interface TelnyxEnvelope<T = unknown> {
@@ -102,7 +99,6 @@ export interface VoiceMonitorServiceOptions {
   maxDiscoveryConnections?: number;
   maxTimelineWindowHours?: number;
   maxRecordingWindowHours?: number;
-  maxAggregateOutputBytes?: number;
   now?: () => Date;
 }
 

@@ -45,9 +45,6 @@ export interface TelnyxClientOptions {
   apiKey: string;
   baseUrl?: string;
   fetch?: typeof fetch;
-  timeoutMs?: number;
-  maxResponseBytes?: number;
-  signal?: AbortSignal;
 }
 
 export interface PortabilitySignalInput {
@@ -177,15 +174,10 @@ export interface BatchAnalyzeInput {
 
 export interface BatchAnalyzeOptions {
   maxBatchSize?: number;
-  maxOutputBytes?: number;
 }
 
 export interface NumberIntelligenceBatchResult {
-  requested_total: number;
-  queried_total: number;
   total: number;
-  truncated: boolean;
-  warnings: string[];
   aggregate: {
     health_status_counts: Record<HealthStatus, number>;
     action_required_count: number;

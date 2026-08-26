@@ -9,7 +9,7 @@
 
 ## What Are Webhooks?
 
-Webhooks are HTTP callbacks that Telnyx sends to your server when events occur — a message reaches a final delivery state, a call is answered, etc. API v2 event webhooks use a nested JSON envelope under `data.*`. TeXML instruction requests and status callbacks are separate: configured POSTs use flat form-encoded fields, while configured GETs use query parameters.
+Webhooks are HTTP POST requests that Telnyx sends to your server when events occur — message delivered, call answered, etc. They enable real-time reactions without polling.
 
 ## Quick Start
 
@@ -30,7 +30,7 @@ curl -X PATCH "https://api.telnyx.com/v2/messaging_profiles/{profile_id}" \
 **`GET /v2/webhook_deliveries`**
 
 ```bash
-curl --globoff "https://api.telnyx.com/v2/webhook_deliveries?page[size]=20" \
+curl "https://api.telnyx.com/v2/webhook_deliveries?page[size]=20" \
   -H "Authorization: Bearer $TELNYX_API_KEY"
 ```
 
@@ -47,7 +47,7 @@ curl --globoff "https://api.telnyx.com/v2/webhook_deliveries?page[size]=20" \
       "finished_at": "2024-01-15T12:00:01Z",
       "webhook": {
         "url": "https://your-app.com/webhooks",
-        "event_type": "message.finalized"
+        "event_type": "message.delivered"
       },
       "attempts": [
         {
@@ -74,7 +74,7 @@ curl --globoff "https://api.telnyx.com/v2/webhook_deliveries?page[size]=20" \
 |-----------|------|-------------|
 | `page[size]` | integer | Results per page (max 250) |
 | `filter[status]` | string | `success`, `failed` |
-| `filter[event_type]` | string | e.g. `message.finalized`, `call.answered` |
+| `filter[event_type]` | string | e.g. `message.delivered`, `call.answered` |
 
 ```python
 import requests
@@ -131,7 +131,7 @@ curl "https://api.telnyx.com/v2/webhook_deliveries/{delivery_id}" \
     "finished_at": "2024-01-15T12:00:01Z",
     "webhook": {
       "url": "https://your-app.com/webhooks",
-      "event_type": "message.finalized"
+      "event_type": "message.delivered"
     },
     "attempts": [
       {
@@ -220,25 +220,21 @@ curl -X PATCH "https://api.telnyx.com/v2/phone_numbers/{number_id}" \
 
 ## Webhook Payload Format
 
-### Message Finalized (delivered outcome)
+### Message Delivered
 
 ```json
 {
   "data": {
-    "event_type": "message.finalized",
+    "event_type": "message.delivered",
     "id": "uuid",
     "occurred_at": "2024-01-15T12:00:00Z",
     "record_type": "event",
     "payload": {
-      "id": "msg-uuid",
-      "to": [
-        {
-          "phone_number": "+15559876543",
-          "status": "delivered"
-        }
-      ],
-      "from": {"phone_number": "+15551234567"},
-      "errors": []
+      "to": "+15559876543",
+      "from": "+15551234567",
+      "message_id": "msg-uuid",
+      "status": "delivered",
+      "delivered_at": "2024-01-15T12:00:05Z"
     }
   }
 }
@@ -289,35 +285,85 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.exceptions import InvalidSignature
 import base64
-import binascii
 import json
-import os
 import time
 
-PUBLIC_KEY_PEM = os.environ["TELNYX_PUBLIC_KEY"]
+PUBLIC_KEY_PEM = "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"
 
 def verify_telnyx_signature(payload: bytes, signature_header: str, timestamp_header: str, tolerance_seconds: int = 300) -> bool:
     """Verify Telnyx webhook signature."""
-    if not timestamp_header.isascii() or not timestamp_header.isdecimal():
+    # Check timestamp
+    timestamp = int(timestamp_header)
+    if abs(time.time() - timestamp) > tolerance_seconds:
         return False
+    
+    # Decode signature
+    signature = base64.b64decode(signature_header)
+    
+    # Load public key
+    public_key = serialization.load_pem_public_key(PUBLIC_KEY_PEM.encode())
+    
+    # Verify
     try:
-        timestamp = int(timestamp_header)
-        if abs(time.time() - timestamp) > tolerance_seconds:
-            return False
-        signature = base64.b64decode(signature_header, validate=True)
-        public_key = serialization.load_pem_public_key(PUBLIC_KEY_PEM.encode())
-        if not isinstance(public_key, Ed25519PublicKey):
-            return False
-        signed_payload = timestamp_header.encode("ascii") + b"|" + payload
-        public_key.verify(signature, signed_payload)
+        public_key.verify(signature, payload)
         return True
-    except (InvalidSignature, ValueError, TypeError, binascii.Error):
+    except InvalidSignature:
         return False
 ```
 
 ## Debugging Webhooks
-Use the list and detail requests in the API Reference above to inspect recent
-delivery attempts and their errors.
+
+### List Recent Deliveries
+
+**`GET /v2/webhook_deliveries`**
+
+```bash
+curl "https://api.telnyx.com/v2/webhook_deliveries?page[size]=20" \
+  -H "Authorization: Bearer $TELNYX_API_KEY"
+```
+
+**Response:**
+
+```json
+{
+  "data": [
+    {
+      "id": "delivery-uuid",
+      "record_type": "webhook_delivery",
+      "status": "delivered",
+      "started_at": "2024-01-15T12:00:00Z",
+      "finished_at": "2024-01-15T12:00:01Z",
+      "webhook": {
+        "url": "https://your-app.com/webhooks",
+        "event_type": "message.delivered"
+      },
+      "attempts": [
+        {
+          "status": "delivered",
+          "started_at": "2024-01-15T12:00:00Z",
+          "finished_at": "2024-01-15T12:00:01Z",
+          "http": {
+            "request": {
+              "url": "https://your-app.com/webhooks",
+              "method": "POST"
+            }
+          },
+          "errors": []
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Get Delivery Details
+
+**`GET /v2/webhook_deliveries/{id}`**
+
+```bash
+curl "https://api.telnyx.com/v2/webhook_deliveries/{delivery_id}" \
+  -H "Authorization: Bearer $TELNYX_API_KEY"
+```
 
 ## Testing Locally with ngrok
 
@@ -336,38 +382,21 @@ curl -X PATCH "https://api.telnyx.com/v2/messaging_profiles/{id}" \
 ```
 
 ## Python Webhook Handler
-The handler verifies the exact raw request body with `verify_telnyx_signature`
-from the previous section before parsing JSON or performing any work.
 
 ```python
-import json
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
 @app.route("/webhooks/telnyx", methods=["POST"])
 def handle_webhook():
-    raw_payload = request.get_data(cache=False)
-    signature = request.headers.get("telnyx-signature-ed25519")
-    timestamp = request.headers.get("telnyx-timestamp")
-    if not signature or not timestamp or not verify_telnyx_signature(
-        raw_payload, signature, timestamp
-    ):
-        return jsonify({"error": "invalid webhook signature"}), 401
-
-    try:
-        payload = json.loads(raw_payload)
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return jsonify({"error": "invalid JSON"}), 400
-
+    payload = request.json
     event_type = payload.get("data", {}).get("event_type")
     
     if event_type == "message.received":
         handle_inbound_sms(payload["data"]["payload"])
-    elif event_type == "message.finalized":
-        message = payload["data"]["payload"]
-        if message["to"][0]["status"] == "delivered":
-            log_delivery(message)
+    elif event_type == "message.delivered":
+        log_delivery(payload["data"]["payload"])
     elif event_type == "call.answered":
         handle_call_answered(payload["data"]["payload"])
     
@@ -382,77 +411,24 @@ def handle_inbound_sms(payload):
 ## TypeScript Webhook Handler
 
 ```typescript
-import { createPublicKey, verify } from "node:crypto";
 import express from "express";
 
 const app = express();
-const publicKeyPem = process.env.TELNYX_PUBLIC_KEY;
-type TelnyxEventPayload = {
-  from?: string;
-  text?: string;
-  to?: Array<{ status?: string; phone_number?: string }>;
-  call_control_id?: string;
-};
+app.use(express.json());
 
-function verifyTelnyxSignature(
-  payload: Buffer,
-  signatureHeader: string | undefined,
-  timestampHeader: string | undefined,
-): boolean {
-  if (!publicKeyPem || !signatureHeader || !timestampHeader) return false;
-  if (!/^\d+$/.test(timestampHeader)) return false;
-  const timestamp = Number(timestampHeader);
-  if (!Number.isSafeInteger(timestamp) || Math.abs(Date.now() / 1000 - timestamp) > 300) {
-    return false;
-  }
-
-  try {
-    const signedPayload = Buffer.concat([
-      Buffer.from(`${timestampHeader}|`, "ascii"),
-      payload,
-    ]);
-    return verify(
-      null,
-      signedPayload,
-      createPublicKey(publicKeyPem),
-      Buffer.from(signatureHeader, "base64"),
-    );
-  } catch {
-    return false;
-  }
-}
-
-app.post("/webhooks/telnyx", express.raw({ type: "application/json" }), (req, res) => {
-  const rawPayload = req.body as Buffer;
-  if (!verifyTelnyxSignature(
-    rawPayload,
-    req.get("telnyx-signature-ed25519"),
-    req.get("telnyx-timestamp"),
-  )) {
-    return res.status(401).json({ error: "invalid webhook signature" });
-  }
-
-  let body: { data?: { event_type?: string; payload?: TelnyxEventPayload } };
-  try {
-    body = JSON.parse(rawPayload.toString("utf8"));
-  } catch {
-    return res.status(400).json({ error: "invalid JSON" });
-  }
-
-  const eventType = body.data?.event_type;
-  const payload = body.data?.payload;
+app.post("/webhooks/telnyx", (req, res) => {
+  const eventType = req.body?.data?.event_type;
+  const payload = req.body?.data?.payload;
 
   switch (eventType) {
     case "message.received":
-      console.log(`SMS from ${payload?.from}: ${payload?.text}`);
+      console.log(`SMS from ${payload.from}: ${payload.text}`);
       break;
-    case "message.finalized":
-      if (payload?.to?.[0]?.status === "delivered") {
-        console.log(`Delivered to ${payload.to[0].phone_number}`);
-      }
+    case "message.delivered":
+      console.log(`Delivered to ${payload.to}`);
       break;
     case "call.answered":
-      console.log(`Call answered: ${payload?.call_control_id}`);
+      console.log(`Call answered: ${payload.call_control_id}`);
       break;
   }
 
@@ -468,23 +444,26 @@ app.listen(3000, () => console.log("Webhook server on :3000"));
 |-------|----------|------------|
 | Invalid URL | 404 responses | Check URL is accessible |
 | SSL errors | Delivery failures | Ensure valid TLS certificate |
-| Timeout | Delivery is retried or sent to a configured failover URL | Return `2xx` within 2 seconds and process asynchronously |
-| Wrong content-type | Parse errors | API v2 events use JSON; TeXML POST callbacks use form encoding |
+| Timeout | Retries increasing | Respond within 10 seconds |
+| Wrong content-type | Parse errors | Expect `application/json` |
 | Signature mismatch | Rejected requests | Verify signature correctly |
 
 ## Retry Behavior
 
-Telnyx retries failed webhook deliveries with backoff and may try a configured
-failover URL. Attempt counts and schedules are product- and configuration-specific,
-so do not build correctness around one universal retry sequence. Treat every
-delivery as potentially duplicated and use the event identifier as an idempotency
-key.
+Telnyx retries failed webhooks:
+- **Attempt 1:** Immediate
+- **Attempt 2:** 1 minute
+- **Attempt 3:** 5 minutes
+- **Attempt 4:** 15 minutes
+- **Attempt 5:** 1 hour
+
+After 5 failures, the webhook is marked as failed.
 
 ## Best Practices
 
-1. **Respond quickly** — For API v2 webhooks, return `2xx` within 2 seconds and process asynchronously
+1. **Respond quickly** — Return 200 within 10 seconds, process async
 2. **Verify signatures** — Ensure requests are from Telnyx
-3. **Handle duplicates** — API v2 events dedupe on `data.id`; TeXML status callbacks dedupe on `(CallSid, SequenceNumber)`
+3. **Handle duplicates** — Same event may be delivered twice
 4. **Log everything** — Store raw payloads for debugging
 5. **Monitor deliveries** — Check webhook_deliveries API regularly
 

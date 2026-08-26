@@ -1,74 +1,7 @@
-const MCP_APP_CONTENT_SECURITY_POLICY = [
-  "default-src 'none'",
-  "base-uri 'none'",
-  "form-action 'none'",
-  "connect-src 'none'",
-  "frame-src 'none'",
-  "img-src 'none'",
-  "media-src 'none'",
-  "font-src 'none'",
-  "object-src 'none'",
-  "script-src 'unsafe-inline'",
-  "style-src 'unsafe-inline'"
-].join("; ");
-
-const MCP_APP_SECURITY_META = `    <meta name="color-scheme" content="light dark" />
-    <meta http-equiv="Content-Security-Policy" content="${MCP_APP_CONTENT_SECURITY_POLICY}" />`;
-
-export const INITIAL_RESULT_GATE_SOURCE = String.raw`function createInitialResultGate(options) {
-  let accepted = false;
-  let fallbackInFlight = false;
-  let pendingLaunchPayload;
-  let fallbackTimer;
-  return {
-    accept(payload) {
-      if (accepted || !options.isUsable(payload)) return false;
-      if (fallbackInFlight) {
-        pendingLaunchPayload = payload;
-        return false;
-      }
-      accepted = true;
-      if (fallbackTimer !== undefined) {
-        globalThis.clearTimeout(fallbackTimer);
-        fallbackTimer = undefined;
-      }
-      options.render(payload);
-      return true;
-    },
-    scheduleFallback() {
-      if (accepted || fallbackInFlight || fallbackTimer !== undefined) return;
-      fallbackTimer = globalThis.setTimeout(() => {
-        fallbackTimer = undefined;
-        if (accepted) return;
-        fallbackInFlight = true;
-        Promise.resolve()
-          .then(options.loadFallback)
-          .then(() => {
-            accepted = true;
-            fallbackInFlight = false;
-            pendingLaunchPayload = undefined;
-          })
-          .catch((error) => {
-            fallbackInFlight = false;
-            if (pendingLaunchPayload !== undefined) {
-              const payload = pendingLaunchPayload;
-              pendingLaunchPayload = undefined;
-              accepted = true;
-              options.render(payload);
-            } else {
-              options.onFallbackError(error);
-            }
-          });
-      }, options.delayMs);
-    }
-  };
-}`;
-
 export const VOICE_MONITOR_UI_HTML = String.raw`<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-${MCP_APP_SECURITY_META}
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Telnyx Voice Monitor</title>
     <style>
@@ -145,8 +78,6 @@ ${MCP_APP_SECURITY_META}
 
     <script>
       const PROTOCOL_VERSION = "2026-01-26";
-      const INITIAL_RESULT_FALLBACK_MS = 1000;
-      ${INITIAL_RESULT_GATE_SOURCE}
       let nextId = 1;
       const pending = new Map();
       const state = { options: null, latest: {} };
@@ -224,8 +155,7 @@ ${MCP_APP_SECURITY_META}
       function renderActive(result) {
         const calls = asArray(result?.active_calls ?? result?.data);
         els.activeCallCount.textContent = String(result?.total_active_calls ?? calls.length);
-        const firstWarning = asArray(result?.warnings)[0]?.message;
-        els.activeMeta.textContent = asArray(result?.connections_consulted).length + " connection(s) consulted" + (result?.truncated_output ? " · partial output (limit reached)" : "") + (firstWarning ? " · " + firstWarning : "");
+        els.activeMeta.textContent = asArray(result?.connections_consulted).length + " connection(s) consulted";
         els.activeBody.replaceChildren();
         if (!calls.length) {
           const tr = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = 4; td.textContent = "No active calls returned."; tr.append(td); els.activeBody.append(tr);
@@ -238,24 +168,12 @@ ${MCP_APP_SECURITY_META}
         state.latest.active_calls = result; renderJson(); resize();
       }
       function renderJson() { els.jsonPre.textContent = JSON.stringify(state.latest, null, 2); }
-      function renderDashboard(dashboard) {
+      async function loadDashboard() {
+        setError("");
+        const dashboard = await callTool("voice_monitor_dashboard", { page_size: 100 });
         if (dashboard?.options) renderOptions(dashboard.options);
         if (dashboard?.active_calls) renderActive(dashboard.active_calls);
       }
-      async function loadDashboard() {
-        setError("");
-        renderDashboard(await callTool("voice_monitor_dashboard", { page_size: 100 }));
-      }
-      const initialDashboardResult = createInitialResultGate({
-        delayMs: INITIAL_RESULT_FALLBACK_MS,
-        isUsable: (payload) => Boolean(payload && typeof payload === "object" && (
-          Object.prototype.hasOwnProperty.call(payload, "options") ||
-          Object.prototype.hasOwnProperty.call(payload, "active_calls")
-        )),
-        render: renderDashboard,
-        loadFallback: loadDashboard,
-        onFallbackError: (error) => setError(error?.message || "Could not load the voice dashboard.")
-      });
       async function loadOptions() { setError(""); renderOptions(await callTool("voice_monitor_list_options", { page_size: 100 })); }
       async function loadActiveCalls() { setError(""); renderActive(await callTool("voice_monitor_active_calls", els.connectionSelect.value ? { connection_id: els.connectionSelect.value, page_size: 100 } : { page_size: 100 })); }
       async function loadTimeline() { const args = JSON.parse(els.fallbackPre.textContent).voice_monitor_call_timeline; state.latest.timeline = await callTool("voice_monitor_call_timeline", { ...args, page_size: 100 }); renderJson(); resize(); }
@@ -268,14 +186,6 @@ ${MCP_APP_SECURITY_META}
         if (message.id !== undefined && pending.has(message.id)) {
           const handlers = pending.get(message.id); pending.delete(message.id);
           if (message.error) handlers.reject(new Error(message.error.message || "Request failed")); else handlers.resolve(message.result);
-          return;
-        }
-        if (message.method === "ui/notifications/tool-result") {
-          try {
-            initialDashboardResult.accept(extractResult(message.params));
-          } catch (error) {
-            setError(error?.message || "Could not render the initial voice dashboard.");
-          }
         }
       });
       [els.connectionSelect, els.sipConnectionSelect, els.idTypeSelect, els.sessionInput, els.callControlInput].forEach((el) => el.addEventListener("input", updateFallback));
@@ -292,11 +202,7 @@ ${MCP_APP_SECURITY_META}
       new ResizeObserver(resize).observe(document.body);
       updateFallback();
       request("ui/initialize", { appInfo: { name: "telnyx-voice-monitor-ui", version: "0.1.0" }, appCapabilities: {}, protocolVersion: PROTOCOL_VERSION })
-        .then(() => {
-          els.bridgeStatus.textContent = "Host bridge: connected";
-          notify("ui/notifications/initialized", {});
-          initialDashboardResult.scheduleFallback();
-        })
+        .then(async () => { els.bridgeStatus.textContent = "Host bridge: connected"; notify("ui/notifications/initialized", {}); await loadDashboard(); })
         .catch((error) => { els.bridgeStatus.textContent = "Host bridge: unavailable"; setError("MCP App bridge unavailable; use the manual JSON fallback. " + error.message); });
     </script>
   </body>

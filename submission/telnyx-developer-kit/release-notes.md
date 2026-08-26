@@ -6,6 +6,11 @@ debugging with the hosted Telnyx MCP server for API discovery, exact request
 schemas, and focused app-based account inspection. It covers Messaging, Voice, Call Control, TeXML, WebRTC,
 Verify, Numbers, 10DLC, and Twilio migrations.
 
+The repository marketplace entry is intentionally `NOT_AVAILABLE` during the
+release-candidate phase. It may be made available only by a separate release
+change after the hosted deployment, gateway challenge, readiness, OAuth, and
+production-scan gates pass.
+
 The release-candidate MCP contract exposes four model-visible tools: catalog
 listing, endpoint-schema inspection, Number Intelligence, and Voice Monitor.
 The catalog is documentation-only and cannot execute an API request. Eight app-owned tools are available only to

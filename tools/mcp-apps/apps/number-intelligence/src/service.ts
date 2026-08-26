@@ -13,7 +13,6 @@ import type {
   RecommendedAction,
   TelnyxNumberLookupResponse
 } from "./types.js";
-import { sanitizeNumberIntelligenceValue } from "./telnyxClient.js";
 
 const UNKNOWN = "unknown";
 const DEFAULT_LIVE_SOURCES: NumberIntelligenceSourceId[] = ["owned", "messaging", "voice"];
@@ -25,21 +24,6 @@ const ALL_ENRICHMENT_SOURCES: Exclude<NumberIntelligenceSourceId, "lookup">[] = 
   "reputation"
 ];
 const DEFAULT_MAX_BATCH_SIZE = 25;
-export const DEFAULT_MAX_BATCH_OUTPUT_BYTES = 1024 * 1024;
-const MIN_BATCH_OUTPUT_BYTES = 4096;
-const RAW_OMITTED_WARNING =
-  "Raw lookup payloads were omitted to keep the batch response within the output byte limit.";
-const OUTPUT_LIMIT_WARNING =
-  "The batch response reached its output byte limit. One queried result could not be returned; later numbers were not queried.";
-const AMBIGUOUS_LOOKUP_ERROR =
-  "Telnyx Number Lookup outcome is unknown. The lookup may have been billed. Do not retry automatically; verify account usage or retry only after confirming the prior outcome.";
-
-class AmbiguousNumberLookupOutcomeError extends Error {
-  constructor() {
-    super(AMBIGUOUS_LOOKUP_ERROR);
-    this.name = "AmbiguousNumberLookupOutcomeError";
-  }
-}
 
 export async function analyzeNumber(
   input: AnalyzeNumberInput,
@@ -62,10 +46,6 @@ export async function analyzeNumber(
       detail: "GET /v2/number_lookup/{phone_number}?type=carrier&type=caller-name"
     });
   } catch (error) {
-    if (isTelnyxAuthFailure(error)) throw error;
-    if (isAmbiguousLookupFailure(error)) {
-      throw new AmbiguousNumberLookupOutcomeError();
-    }
     lookupError = error instanceof Error ? error : new Error(String(error));
     sources.push({
       id: "telnyx.number_lookup",
@@ -89,14 +69,14 @@ export async function analyzeNumber(
       id: "lookup.error",
       label: "Lookup unavailable",
       status: "warning",
-      detail: "Telnyx Number Lookup rejected the request. Review the number and request before choosing whether to try again.",
+      detail: "Telnyx Number Lookup could not be completed. Retry or verify the number format.",
       value: lookupError.name
     });
-    recommendedActions.set("review_lookup_request", {
-      id: "review_lookup_request",
-      label: "Review the lookup request",
-      rationale:
-        "The primary lookup received a deterministic rejection. Correct the number or request before deliberately submitting another billable lookup."
+    recommendedActions.set("retry_lookup", {
+      id: "retry_lookup",
+      label: "Retry number lookup",
+      rationale: "The primary lookup failed, so carrier, caller name, and capability signals may be incomplete.",
+      tool_hint: "number_intelligence_analyze"
     });
   } else if (carrierName !== UNKNOWN || carrierType !== UNKNOWN) {
     signals.push({
@@ -258,7 +238,7 @@ export async function analyzeNumber(
       ? `${redactedNationalFormat} (${redactedNormalized})`
       : redactedNormalized;
 
-  const result: NumberIntelligenceResult = {
+  return {
     input: { phone_number: redactedInput },
     normalized: {
       e164: redactedNormalized,
@@ -285,26 +265,6 @@ export async function analyzeNumber(
     sources,
     ...(input.include_raw && lookup ? { raw: { telnyx_number_lookup: redactRaw(lookup, normalized) } } : {})
   };
-  return sanitizeNumberIntelligenceValue(result) as NumberIntelligenceResult;
-}
-
-function isTelnyxAuthFailure(error: unknown): boolean {
-  if (!error || typeof error !== "object" || !("status" in error)) return false;
-  const status = (error as { status?: unknown }).status;
-  return status === 401 || status === 403;
-}
-
-function isAmbiguousLookupFailure(error: unknown): boolean {
-  if (!error || typeof error !== "object") return true;
-  const status = "status" in error ? (error as { status?: unknown }).status : undefined;
-  if (typeof status === "number") {
-    return !Number.isFinite(status) || status <= 0 || status === 408 || status === 429 || status >= 500;
-  }
-
-  // A failure without an authoritative HTTP response is a network, timeout,
-  // cancellation, or local response-boundary failure. The remote service may
-  // already have accepted and billed the lookup, so retrying is not safe.
-  return true;
 }
 
 export async function analyzeBatchNumbers(
@@ -314,7 +274,6 @@ export async function analyzeBatchNumbers(
 ): Promise<NumberIntelligenceBatchResult> {
   const numbers = parseBatchNumbers(input.numbers);
   const maxBatchSize = options.maxBatchSize ?? DEFAULT_MAX_BATCH_SIZE;
-  const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_BATCH_OUTPUT_BYTES;
 
   if (numbers.length === 0) {
     throw new Error("Batch analysis requires at least one phone number.");
@@ -322,82 +281,17 @@ export async function analyzeBatchNumbers(
   if (numbers.length > maxBatchSize) {
     throw new Error(`Batch analysis accepts at most ${maxBatchSize} numbers per request.`);
   }
-  if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < MIN_BATCH_OUTPUT_BYTES) {
-    throw new Error(`Batch output byte limit must be at least ${MIN_BATCH_OUTPUT_BYTES}.`);
-  }
 
   const results: NumberIntelligenceResult[] = [];
-  const warnings: string[] = [];
-  let queriedTotal = 0;
-  let truncated = false;
-  let outputLimitReached = false;
-  let omitRawPayloads = false;
-
   for (const phoneNumber of numbers) {
-    queriedTotal += 1;
-    let result: NumberIntelligenceResult;
-    try {
-      result = await analyzeNumber(
+    results.push(
+      await analyzeNumber(
         { phone_number: phoneNumber, include_raw: input.include_raw, sources: input.sources },
         deps
-      );
-    } catch (error) {
-      if (error instanceof AmbiguousNumberLookupOutcomeError) {
-        throw new Error(
-          `Batch stopped after ${queriedTotal} attempted lookup${queriedTotal === 1 ? "" : "s"}. Earlier lookups and the failed request may have been billed; no later numbers were queried. Do not retry the whole batch automatically. Verify account usage and resume only after confirming prior outcomes.`
-        );
-      }
-      throw error;
-    }
-
-    let boundedResult = omitRawPayloads ? omitRaw(result) : result;
-    if (!batchResultFits([...results, boundedResult], numbers.length, queriedTotal, warnings, maxOutputBytes)) {
-      if (boundedResult.raw || results.some((item) => item.raw !== undefined)) {
-        omitRawPayloads = true;
-        for (let index = 0; index < results.length; index += 1) {
-          results[index] = omitRaw(results[index]);
-        }
-        boundedResult = omitRaw(boundedResult);
-        if (!warnings.includes(RAW_OMITTED_WARNING)) warnings.push(RAW_OMITTED_WARNING);
-        truncated = true;
-      }
-    }
-
-    if (!batchResultFits([...results, boundedResult], numbers.length, queriedTotal, warnings, maxOutputBytes)) {
-      truncated = true;
-      outputLimitReached = true;
-      break;
-    }
-
-    results.push(boundedResult);
+      )
+    );
   }
 
-  if (outputLimitReached) warnings.push(OUTPUT_LIMIT_WARNING);
-
-  return buildBatchResult(numbers.length, queriedTotal, results, truncated, warnings);
-}
-
-function batchResultFits(
-  results: NumberIntelligenceResult[],
-  requestedTotal: number,
-  queriedTotal: number,
-  warnings: string[],
-  maxOutputBytes: number
-): boolean {
-  const warningsWithReservedLimit = warnings.includes(OUTPUT_LIMIT_WARNING)
-    ? warnings
-    : [...warnings, OUTPUT_LIMIT_WARNING];
-  const candidate = buildBatchResult(requestedTotal, queriedTotal, results, true, warningsWithReservedLimit);
-  return serializedBytes(candidate) <= maxOutputBytes;
-}
-
-function buildBatchResult(
-  requestedTotal: number,
-  queriedTotal: number,
-  results: NumberIntelligenceResult[],
-  truncated: boolean,
-  warnings: string[]
-): NumberIntelligenceBatchResult {
   const health_status_counts: Record<HealthStatus, number> = { good: 0, warning: 0, bad: 0, unknown: 0 };
   let action_required_count = 0;
   for (const result of results) {
@@ -406,25 +300,10 @@ function buildBatchResult(
   }
 
   return {
-    requested_total: requestedTotal,
-    queried_total: queriedTotal,
     total: results.length,
-    truncated,
-    warnings,
     aggregate: { health_status_counts, action_required_count },
     results
   };
-}
-
-function omitRaw(result: NumberIntelligenceResult): NumberIntelligenceResult {
-  if (!result.raw) return result;
-  const withoutRaw = { ...result };
-  delete withoutRaw.raw;
-  return withoutRaw;
-}
-
-function serializedBytes(value: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
 }
 
 export function normalizePhoneNumber(phoneNumber: string): string {
@@ -591,7 +470,6 @@ async function collectSingleSource(
       detail: sourceConsultedDetail(sourceId)
     });
   } catch (error) {
-    if (isTelnyxAuthFailure(error)) throw error;
     const sourceError = error instanceof Error ? error : new Error(String(error));
     sources.push({
       id: sourceStatusId(sourceId),
@@ -651,7 +529,7 @@ function sourceConsultedDetail(sourceId: Exclude<NumberIntelligenceSourceId, "lo
     case "messaging":
       return "GET /v2/phone_numbers/messaging and GET /v2/messaging_profiles/{id} when attached.";
     case "voice":
-      return "GET /v2/phone_numbers, GET /v2/phone_numbers/{id}/voice, and GET /v2/connections/{id} when attached.";
+      return "GET /v2/phone_numbers/voice and GET /v2/connections/{id} when attached.";
     case "reputation":
       return "GET /v2/reputation/numbers/{phone_number}?fresh=false (cached only).";
   }
@@ -673,14 +551,7 @@ function parseBatchNumbers(numbers: string | string[]): string[] {
     parsed.push(firstCsvCell);
   }
 
-  const uniqueByNormalizedNumber = new Map<string, string>();
-  for (const phoneNumber of parsed) {
-    const normalized = normalizePhoneNumber(phoneNumber);
-    if (!uniqueByNormalizedNumber.has(normalized)) {
-      uniqueByNormalizedNumber.set(normalized, normalized);
-    }
-  }
-  return Array.from(uniqueByNormalizedNumber.values());
+  return Array.from(new Set(parsed));
 }
 
 function splitCsvRow(row: string): string[] {

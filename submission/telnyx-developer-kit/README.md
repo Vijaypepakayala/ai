@@ -12,12 +12,24 @@ recorded and deployed and the release
 owner completes the gateway, readiness, Docker, OAuth, reviewer, production-scan,
 recording, identity, and domain-verification gates below.
 
+The repository marketplace therefore keeps `telnyx-developer-kit` at
+`policy.installation: NOT_AVAILABLE`. After every release-owner gate passes, a
+separate release-only change may switch it to `AVAILABLE`; authentication must
+remain `ON_INSTALL`. This prevents local or repository marketplace users from
+being authenticated into an unreleased hosted contract.
+
 The fixtures were reconciled with the hardened local contract on 2026-08-05:
 four model-visible tools, eight app-only tools, two UI resources, and 795
 documentation-only API catalog endpoints (376 read and 419 write). The billing app remains implemented
 internally but is not part of public federation.
 
 ## Ready in this branch
+
+This branch contains the distributable plugin, its synchronized skills, and
+reviewer-facing contract evidence. The hosted MCP Apps runtime/client/UI work
+is intentionally reviewed and deployed separately; it is not bundled into this
+plugin-source change. The marketplace remains unavailable until that separate
+runtime change and the proxy/Node deployment satisfy the gates below.
 
 - Exactly five positive and three negative review cases cover all four bundled
   skills and all four model-visible tools.
@@ -55,7 +67,8 @@ python3 scripts/check-telnyx-mcp-catalog.py --self-test
 ./scripts/sync-skills.sh --check
 ```
 
-Validate the app implementation locally:
+Validate the separately reviewed hosted MCP Apps implementation at its own
+candidate commit:
 
 ```sh
 (
@@ -115,6 +128,9 @@ Complete every item immediately before submission:
     replace the recording.
 12. Select only countries where support, terms, privacy disclosures, and product
     availability are ready, then complete the policy attestations.
+13. In a final release-only change, switch the repository marketplace policy
+    from `NOT_AVAILABLE` to `AVAILABLE`. Do not make that change until the
+    deployed contract and production scans above pass.
 
 Do not store demo credentials, API keys, OAuth tokens, challenge tokens,
 recording secrets, phone numbers, or private account data in this repository.

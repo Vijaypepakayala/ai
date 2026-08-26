@@ -18,20 +18,12 @@ export const DEFAULT_MAX_PAGE_SIZE = 100;
 export const DEFAULT_MAX_DISCOVERY_CONNECTIONS = 10;
 export const DEFAULT_MAX_TIMELINE_WINDOW_HOURS = 168;
 export const DEFAULT_MAX_RECORDING_WINDOW_HOURS = 168;
-export const DEFAULT_MAX_AGGREGATE_OUTPUT_BYTES = 1024 * 1024;
-const MIN_AGGREGATE_OUTPUT_BYTES = 4096;
-const ACTIVE_CALL_OUTPUT_LIMIT_WARNING =
-  "The active-call response reached its output byte limit. Returned calls may be a subset of a queried response; later connections were not queried.";
 
 export function createVoiceMonitorService(client: VoiceMonitorClient, options: VoiceMonitorServiceOptions = {}) {
   const maxPageSize = options.maxPageSize ?? DEFAULT_MAX_PAGE_SIZE;
   const maxDiscoveryConnections = options.maxDiscoveryConnections ?? DEFAULT_MAX_DISCOVERY_CONNECTIONS;
   const maxTimelineWindowHours = options.maxTimelineWindowHours ?? DEFAULT_MAX_TIMELINE_WINDOW_HOURS;
   const maxRecordingWindowHours = options.maxRecordingWindowHours ?? DEFAULT_MAX_RECORDING_WINDOW_HOURS;
-  const maxAggregateOutputBytes = options.maxAggregateOutputBytes ?? DEFAULT_MAX_AGGREGATE_OUTPUT_BYTES;
-  if (!Number.isSafeInteger(maxAggregateOutputBytes) || maxAggregateOutputBytes < MIN_AGGREGATE_OUTPUT_BYTES) {
-    throw new Error(`Voice Monitor aggregate output byte limit must be at least ${MIN_AGGREGATE_OUTPUT_BYTES}.`);
-  }
   const now = options.now ?? (() => new Date());
 
   return {
@@ -48,9 +40,7 @@ export function createVoiceMonitorService(client: VoiceMonitorClient, options: V
       const connections = dataArray<ConnectionData>(connectionsEnvelope);
       const phoneNumbers = dataArray<VoiceNumberData>(phoneNumbersEnvelope);
       const numberCounts = countNumbersByConnection(phoneNumbers);
-      const connectionOptions = connections
-        .map((connection) => connectionOption(connection, numberCounts))
-        .filter(Boolean) as DiscoveryOption[];
+      const connectionOptions = connections.map((connection) => connectionOption(connection, numberCounts));
       const applicationOptions = dataArray<Record<string, unknown>>(applicationsEnvelope).map(applicationOption).filter(Boolean) as DiscoveryOption[];
       const voiceNumberOptions = phoneNumbers.map(voiceNumberOption).filter(Boolean) as DiscoveryOption[];
 
@@ -80,129 +70,28 @@ export function createVoiceMonitorService(client: VoiceMonitorClient, options: V
       const maxConnections = Math.min(normalizePositiveInt(input.maxConnections, maxDiscoveryConnections), maxDiscoveryConnections);
       const warnings: Array<{ source: string; message: string }> = [];
       const connections = requestedConnectionId ? [requestedConnectionId] : await discoverActiveCallTargetIds(client, page, maxConnections, warnings);
-      const connectionsConsulted: string[] = [];
       const allCalls: unknown[] = [];
-      const perConnection: Array<{ connection_id: string; active_call_count: number }> = [];
-      let truncatedOutput = false;
+      const perConnection: Array<{ connection_id: string; active_call_count: number; data: unknown[] }> = [];
 
       for (const connectionId of connections) {
-        if (
-          !activeCallsResultFits(
-            [...connectionsConsulted, connectionId],
-            allCalls,
-            perConnection,
-            warnings,
-            page,
-            maxConnections,
-            maxAggregateOutputBytes
-          )
-        ) {
-          truncatedOutput = true;
-          break;
-        }
-        connectionsConsulted.push(connectionId);
-
         try {
           const envelope = await client.listActiveCalls(connectionId, page);
-          const calls = sanitizeVoiceMonitorValue(
-            dataArray(envelope).map((call) => attachConnectionId(call, connectionId))
-          ) as unknown[];
-          let includedCallCount = 0;
-
-          if (
-            !activeCallsResultFits(
-              connectionsConsulted,
-              allCalls,
-              [...perConnection, { connection_id: connectionId, active_call_count: 0 }],
-              warnings,
-              page,
-              maxConnections,
-              maxAggregateOutputBytes
-            )
-          ) {
-            truncatedOutput = true;
-            break;
-          }
-
-          if (
-            activeCallsResultFits(
-              connectionsConsulted,
-              [...allCalls, ...calls],
-              [...perConnection, { connection_id: connectionId, active_call_count: calls.length }],
-              warnings,
-              page,
-              maxConnections,
-              maxAggregateOutputBytes
-            )
-          ) {
-            includedCallCount = calls.length;
-          } else {
-            truncatedOutput = true;
-            let low = 0;
-            let high = calls.length;
-            while (low < high) {
-              const midpoint = Math.ceil((low + high) / 2);
-              const prefix = calls.slice(0, midpoint);
-              if (
-                activeCallsResultFits(
-                  connectionsConsulted,
-                  [...allCalls, ...prefix],
-                  [...perConnection, { connection_id: connectionId, active_call_count: midpoint }],
-                  warnings,
-                  page,
-                  maxConnections,
-                  maxAggregateOutputBytes
-                )
-              ) {
-                low = midpoint;
-              } else {
-                high = midpoint - 1;
-              }
-            }
-            includedCallCount = low;
-          }
-
-          allCalls.push(...calls.slice(0, includedCallCount));
-          perConnection.push({ connection_id: connectionId, active_call_count: includedCallCount });
-          if (includedCallCount < calls.length) break;
+          const calls = dataArray(envelope).map((call) => attachConnectionId(call, connectionId));
+          allCalls.push(...calls);
+          perConnection.push({ connection_id: connectionId, active_call_count: calls.length, data: calls });
         } catch (error) {
-          if (isTelnyxAuthFailure(error)) throw error;
-          const warning = { source: `active_calls:${connectionId}`, message: errorMessage(error) };
-          if (
-            !activeCallsResultFits(
-              connectionsConsulted,
-              allCalls,
-              perConnection,
-              [...warnings, warning],
-              page,
-              maxConnections,
-              maxAggregateOutputBytes
-            )
-          ) {
-            truncatedOutput = true;
-            break;
-          }
-          warnings.push(warning);
+          warnings.push({ source: `active_calls:${connectionId}`, message: errorMessage(error) });
         }
-      }
-
-      if (truncatedOutput) {
-        warnings.push({ source: "active_calls", message: ACTIVE_CALL_OUTPUT_LIMIT_WARNING });
       }
 
       return sanitizeVoiceMonitorValue({
-        connections_consulted: connectionsConsulted,
+        connections_consulted: connections,
         truncated_connections: !requestedConnectionId && connections.length === maxConnections,
-        truncated_output: truncatedOutput,
         total_active_calls: allCalls.length,
         active_calls: allCalls,
         per_connection: perConnection,
         warnings,
-        limits: {
-          page_size: page.pageSize,
-          max_connections: maxConnections,
-          max_output_bytes: maxAggregateOutputBytes
-        }
+        limits: { page_size: page.pageSize, max_connections: maxConnections }
       });
     },
 
@@ -233,39 +122,6 @@ export function createVoiceMonitorService(client: VoiceMonitorClient, options: V
 
 export type VoiceMonitorService = ReturnType<typeof createVoiceMonitorService>;
 
-function activeCallsResultFits(
-  connectionsConsulted: string[],
-  activeCalls: unknown[],
-  perConnection: Array<{ connection_id: string; active_call_count: number }>,
-  warnings: Array<{ source: string; message: string }>,
-  page: Page,
-  maxConnections: number,
-  maxOutputBytes: number
-): boolean {
-  const candidate = sanitizeVoiceMonitorValue({
-    connections_consulted: connectionsConsulted,
-    truncated_connections: false,
-    truncated_output: true,
-    total_active_calls: activeCalls.length,
-    active_calls: activeCalls,
-    per_connection: perConnection,
-    warnings: [
-      ...warnings,
-      { source: "active_calls", message: ACTIVE_CALL_OUTPUT_LIMIT_WARNING }
-    ],
-    limits: {
-      page_size: page.pageSize,
-      max_connections: maxConnections,
-      max_output_bytes: maxOutputBytes
-    }
-  });
-  return serializedBytes(candidate) <= maxOutputBytes;
-}
-
-function serializedBytes(value: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
-}
-
 type Page = { pageNumber: number; pageSize: number };
 type TimelineClientInput = Parameters<VoiceMonitorClient["listCallEvents"]>[0] & { notice?: string; appliedFilters?: Record<string, unknown> };
 type RecordingsClientInput = Parameters<VoiceMonitorClient["listRecordings"]>[0] & { appliedFilters?: Record<string, unknown> };
@@ -274,16 +130,9 @@ async function safeRead<T>(source: string, read: () => Promise<T>, warnings: Arr
   try {
     return await read();
   } catch (error) {
-    if (isTelnyxAuthFailure(error)) throw error;
     warnings.push({ source, message: errorMessage(error) });
     return undefined;
   }
-}
-
-function isTelnyxAuthFailure(error: unknown): boolean {
-  if (!error || typeof error !== "object" || !("status" in error)) return false;
-  const status = (error as { status?: unknown }).status;
-  return status === 401 || status === 403;
 }
 
 async function discoverActiveCallTargetIds(
@@ -303,14 +152,11 @@ function normalizeTimelineInput(input: CallTimelineRequest, page: Page, now: () 
   const applicationSessionId = normalizeOptionalString(input.applicationSessionId ?? input.callSessionId);
   const callLegId = normalizeOptionalString(input.callLegId);
   const hasLegOrSession = Boolean(callLegId || applicationSessionId);
-  const occurredAtEq = normalizeOptionalString(input.occurredAtEq);
-  const occurredAtGt = normalizeOptionalString(input.occurredAtGt);
   let occurredAtGte = normalizeOptionalString(input.occurredAtGte);
-  const occurredAtLt = normalizeOptionalString(input.occurredAtLt);
   let occurredAtLte = normalizeOptionalString(input.occurredAtLte);
   let notice: string | undefined;
 
-  if (!hasLegOrSession && !occurredAtEq && !occurredAtGt && !occurredAtLt && !occurredAtGte && !occurredAtLte) {
+  if (!hasLegOrSession && !input.occurredAtEq && !input.occurredAtGt && !input.occurredAtLt && !occurredAtGte && !occurredAtLte) {
     const end = now();
     const start = new Date(end.getTime() - 24 * 3_600_000);
     occurredAtGte = start.toISOString();
@@ -318,27 +164,7 @@ function normalizeTimelineInput(input: CallTimelineRequest, page: Page, now: () 
     notice = "No call_leg_id or application_session_id was supplied; defaulted to the last 24 hours for Telnyx call_events filtering.";
   }
 
-  const timelineWindowHours = hasLegOrSession ? maxWindowHours : Math.min(24, maxWindowHours);
-  const boundedWindow = enforceBoundedWindow(
-    {
-      equal: occurredAtEq,
-      lowerExclusive: occurredAtGt,
-      lowerInclusive: occurredAtGte,
-      upperExclusive: occurredAtLt,
-      upperInclusive: occurredAtLte
-    },
-    timelineWindowHours,
-    "Call timeline"
-  );
-  if (!occurredAtGte && boundedWindow.synthesizedStart) {
-    occurredAtGte = boundedWindow.synthesizedStart;
-  }
-  if (!occurredAtLte && boundedWindow.synthesizedEnd) {
-    occurredAtLte = boundedWindow.synthesizedEnd;
-  }
-  if (!notice && (boundedWindow.synthesizedStart || boundedWindow.synthesizedEnd)) {
-    notice = `Added the missing time bound so the Call timeline query stays within ${timelineWindowHours} hours.`;
-  }
+  enforceWindow(occurredAtGte, occurredAtLte, hasLegOrSession ? maxWindowHours : Math.min(24, maxWindowHours), "Call timeline");
 
   const normalized: TimelineClientInput = {
     callLegId,
@@ -351,10 +177,10 @@ function normalizeTimelineInput(input: CallTimelineRequest, page: Page, now: () 
     name: normalizeOptionalString(input.name),
     type: normalizeOptionalString(input.type),
     status: normalizeOptionalString(input.status),
-    occurredAtEq,
-    occurredAtGt,
+    occurredAtEq: normalizeOptionalString(input.occurredAtEq),
+    occurredAtGt: normalizeOptionalString(input.occurredAtGt),
     occurredAtGte,
-    occurredAtLt,
+    occurredAtLt: normalizeOptionalString(input.occurredAtLt),
     occurredAtLte,
     pageNumber: page.pageNumber,
     pageSize: page.pageSize,
@@ -391,17 +217,7 @@ function normalizeRecordingsInput(input: RecordingsRequest, page: Page, now: () 
     createdAtLte = end.toISOString();
     createdAtGte = new Date(end.getTime() - 24 * 3_600_000).toISOString();
   }
-  const boundedWindow = enforceBoundedWindow(
-    { lowerInclusive: createdAtGte, upperInclusive: createdAtLte },
-    maxWindowHours,
-    "Recording search"
-  );
-  if (!createdAtGte && boundedWindow.synthesizedStart) {
-    createdAtGte = boundedWindow.synthesizedStart;
-  }
-  if (!createdAtLte && boundedWindow.synthesizedEnd) {
-    createdAtLte = boundedWindow.synthesizedEnd;
-  }
+  enforceWindow(createdAtGte, createdAtLte, maxWindowHours, "Recording search");
   const normalized: RecordingsClientInput = {
     callControlId: normalizeOptionalString(input.callControlId),
     callLegId: normalizeOptionalString(input.callLegId),
@@ -425,57 +241,15 @@ function normalizeRecordingsInput(input: RecordingsRequest, page: Page, now: () 
   return normalized;
 }
 
-interface TimeWindowInput {
-  equal?: string;
-  lowerExclusive?: string;
-  lowerInclusive?: string;
-  upperExclusive?: string;
-  upperInclusive?: string;
-}
-
-interface BoundedWindow {
-  synthesizedStart?: string;
-  synthesizedEnd?: string;
-}
-
-function enforceBoundedWindow(input: TimeWindowInput, maxHours: number, label: string): BoundedWindow {
-  const equality = input.equal ? parseIsoDateTime(input.equal, "equality time") : undefined;
-  const lowerBounds = [
-    equality,
-    input.lowerExclusive ? parseIsoDateTime(input.lowerExclusive, "exclusive start time") : undefined,
-    input.lowerInclusive ? parseIsoDateTime(input.lowerInclusive, "start time") : undefined
-  ].filter((value): value is Date => Boolean(value));
-  const upperBounds = [
-    equality,
-    input.upperExclusive ? parseIsoDateTime(input.upperExclusive, "exclusive end time") : undefined,
-    input.upperInclusive ? parseIsoDateTime(input.upperInclusive, "end time") : undefined
-  ].filter((value): value is Date => Boolean(value));
-
-  if (lowerBounds.length === 0 && upperBounds.length === 0) return {};
-
-  let synthesizedStart: string | undefined;
-  let synthesizedEnd: string | undefined;
-  if (lowerBounds.length === 0) {
-    const earliestUpper = new Date(Math.min(...upperBounds.map((value) => value.getTime())));
-    const start = new Date(earliestUpper.getTime() - maxHours * 3_600_000);
-    synthesizedStart = start.toISOString();
-    lowerBounds.push(start);
-  }
-  if (upperBounds.length === 0) {
-    const latestLower = new Date(Math.max(...lowerBounds.map((value) => value.getTime())));
-    const end = new Date(latestLower.getTime() + maxHours * 3_600_000);
-    synthesizedEnd = end.toISOString();
-    upperBounds.push(end);
-  }
-
-  const start = new Date(Math.max(...lowerBounds.map((value) => value.getTime())));
-  const end = new Date(Math.min(...upperBounds.map((value) => value.getTime())));
+function enforceWindow(startText: string | undefined, endText: string | undefined, maxHours: number, label: string): void {
+  if (!startText || !endText) return;
+  const start = parseIsoDateTime(startText, "start time");
+  const end = parseIsoDateTime(endText, "end time");
   if (end < start) throw new Error(`${label} end time must be on or after start time.`);
   const hours = (end.getTime() - start.getTime()) / 3_600_000;
   if (hours > maxHours) {
     throw new Error(`${label} windows are capped at ${maxHours} hours by this app.`);
   }
-  return { synthesizedStart, synthesizedEnd };
 }
 
 function parseIsoDateTime(value: string, label: string): Date {
@@ -484,12 +258,8 @@ function parseIsoDateTime(value: string, label: string): Date {
   return date;
 }
 
-function connectionOption(
-  connection: ConnectionData,
-  counts: Map<string, number>
-): DiscoveryOption | undefined {
+function connectionOption(connection: ConnectionData, counts: Map<string, number>): DiscoveryOption {
   const value = String(connection.id ?? connection.connection_id ?? "").trim();
-  if (!value) return undefined;
   const label = String(connection.connection_name ?? connection.name ?? (value || "Unnamed connection"));
   return {
     kind: "connection",
@@ -546,7 +316,7 @@ function dataArray<T = unknown>(envelope: TelnyxEnvelope<T[] | T> | undefined): 
 
 function attachConnectionId(call: unknown, connectionId: string): unknown {
   if (call && typeof call === "object" && !Array.isArray(call)) {
-    return { ...(call as Record<string, unknown>), connection_id: connectionId };
+    return { connection_id: connectionId, ...(call as Record<string, unknown>) };
   }
   return { connection_id: connectionId, value: call };
 }

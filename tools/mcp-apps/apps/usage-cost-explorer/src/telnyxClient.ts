@@ -13,10 +13,8 @@ import type {
   UsageQueryInput,
   UsageReportOptionsInput
 } from "./types.js";
-import { fetchBoundedJson } from "./boundedFetch.js";
 
 const DEFAULT_BASE_URL = "https://api.telnyx.com/v2";
-const MAX_SAFE_MESSAGE_CHARS = 4096;
 
 export class TelnyxBillingError extends Error {
   readonly status: number;
@@ -34,9 +32,6 @@ export class TelnyxBillingClient {
   private readonly apiKey: string;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
-  private readonly timeoutMs: number | undefined;
-  private readonly maxResponseBytes: number | undefined;
-  private readonly signal: AbortSignal | undefined;
 
   constructor(options: TelnyxClientOptions) {
     if (!options.apiKey) {
@@ -45,9 +40,6 @@ export class TelnyxBillingClient {
     this.apiKey = options.apiKey;
     this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
     this.fetchImpl = options.fetch ?? globalThis.fetch;
-    this.timeoutMs = options.timeoutMs;
-    this.maxResponseBytes = options.maxResponseBytes;
-    this.signal = options.signal;
     if (!this.fetchImpl) {
       throw new Error("A fetch implementation is required");
     }
@@ -138,16 +130,8 @@ export class TelnyxBillingClient {
       ...(init.headers as Record<string, string> | undefined)
     };
 
-    const { response, body } = await fetchBoundedJson(
-      this.fetchImpl,
-      url.toString(),
-      { ...init, headers },
-      {
-        timeoutMs: this.timeoutMs,
-        maxResponseBytes: this.maxResponseBytes,
-        signal: this.signal
-      }
-    );
+    const response = await this.fetchImpl(url.toString(), { ...init, headers });
+    const body = await parseJson(response);
 
     if (!response.ok) {
       const sanitizedDetails = sanitizeBillingValue(body);
@@ -166,6 +150,16 @@ export function sanitizeError(error: unknown): Error {
   return sanitized;
 }
 
+async function parseJson(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return { text };
+  }
+}
+
 function extractTelnyxErrorMessage(body: unknown): string | undefined {
   if (!body || typeof body !== "object") return undefined;
   const errors = (body as { errors?: unknown }).errors;
@@ -178,49 +172,13 @@ function extractTelnyxErrorMessage(body: unknown): string | undefined {
 }
 
 export function sanitizeBillingValue(value: unknown): unknown {
-  return sanitizeBillingValueInternal(value, "", 0, false);
-}
-
-export function sanitizeBillingToolOutput(value: unknown): unknown {
-  return sanitizeBillingValueInternal(value, "", 0, true);
-}
-
-function sanitizeBillingValueInternal(
-  value: unknown,
-  key: string,
-  depth: number,
-  allowRootConfirmationToken: boolean
-): unknown {
-  if (Array.isArray(value)) {
-    return value.map((nested) =>
-      sanitizeBillingValueInternal(
-        nested,
-        key,
-        depth + 1,
-        allowRootConfirmationToken
-      )
-    );
-  }
+  if (Array.isArray(value)) return value.map(sanitizeBillingValue);
   if (value && typeof value === "object") {
     const output: Record<string, unknown> = {};
     for (const [key, nested] of Object.entries(value)) {
-      if (isSafeAppTokenKey(key, depth + 1, allowRootConfirmationToken)) {
-        output[key] = sanitizeBillingValueInternal(
-          nested,
-          key,
-          depth + 1,
-          allowRootConfirmationToken
-        );
-      }
+      if (isSafeAppTokenKey(key)) output[key] = sanitizeBillingValue(nested);
       else if (isSecretKey(key)) output[key] = "[redacted-secret]";
-      else {
-        output[key] = sanitizeBillingValueInternal(
-          nested,
-          key,
-          depth + 1,
-          allowRootConfirmationToken
-        );
-      }
+      else output[key] = sanitizeBillingValue(nested);
     }
     return output;
   }
@@ -228,76 +186,19 @@ function sanitizeBillingValueInternal(
   return value;
 }
 
-function isSafeAppTokenKey(
-  key: string,
-  depth: number,
-  allowRootConfirmationToken: boolean
-): boolean {
-  return allowRootConfirmationToken && depth === 1 && key === "confirmation_token";
+function isSafeAppTokenKey(key: string): boolean {
+  return key === "confirmation_token";
 }
 
 function isSecretKey(key: string): boolean {
-  const tokens = keyTokens(key);
-  const joined = tokens.join("");
-  const sensitiveTokens = new Set([
-    "auth",
-    "authorization",
-    "apikey",
-    "secret",
-    "token",
-    "password",
-    "credential",
-    "privatekey",
-    "clientsecret",
-    "accesstoken",
-    "refreshtoken",
-    "card",
-    "bank",
-    "paymentmethod",
-    "paypal",
-    "ach",
-    "x402"
-  ]);
-  return (
-    sensitiveTokens.has(joined) ||
-    tokens.some((token) => sensitiveTokens.has(token)) ||
-    hasTokenPair(tokens, "api", "key") ||
-    hasTokenPair(tokens, "access", "token") ||
-    hasTokenPair(tokens, "refresh", "token") ||
-    hasTokenPair(tokens, "client", "secret") ||
-    hasTokenPair(tokens, "private", "key") ||
-    hasTokenPair(tokens, "payment", "method")
-  );
-}
-
-function keyTokens(key: string): string[] {
-  return key
-    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean);
-}
-
-function hasTokenPair(tokens: string[], left: string, right: string): boolean {
-  return tokens.some((token, index) => token === left && tokens[index + 1] === right);
+  return /(^|_)(auth|authorization|api_?key|secret|token|password|card|bank|payment_method|paypal|ach|x402)($|_)/i.test(key);
 }
 
 function sanitizeMessage(message: string): string {
-  const sanitized = message
+  return message
     .replace(/Authorization\s*:\s*Bearer\s+[^\s;,)]+/gi, "Authorization: Bearer [redacted-secret]")
     .replace(/Bearer\s+[^\s;,)]+/gi, "Bearer [redacted-secret]")
     .replace(/\b(?:sk|pk|key|api)[_-]?(?:live|test|secret)?_[A-Za-z0-9_\-]{6,}\b/gi, "[redacted-secret]")
-    .replace(
-      /(["']?(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key|secret|token|password)["']?\s*[:=]\s*)(["'])[^"'\r\n]*\2/gi,
-      "$1$2[redacted-secret]$2"
-    )
-    .replace(/\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key|secret|token|password)\s*(?:[=:]|\s)\s*[^\s;,)]+/gi, (match) => `${match.split(/[=:\s]/)[0]}=[redacted-secret]`)
+    .replace(/\b(?:api[_-]?key|secret|token|password)\s*(?:[=:]|\s)\s*[^\s;,)]+/gi, (match) => `${match.split(/[=:\s]/)[0]}=[redacted-secret]`)
     .replace(/\b(?:\d[ -]*?){13,19}\b/g, "[redacted-payment]");
-  return truncateSafeMessage(sanitized);
-}
-
-function truncateSafeMessage(message: string): string {
-  return message.length <= MAX_SAFE_MESSAGE_CHARS
-    ? message
-    : `${message.slice(0, MAX_SAFE_MESSAGE_CHARS)}…[truncated]`;
 }

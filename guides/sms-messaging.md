@@ -98,7 +98,7 @@ curl "https://api.telnyx.com/v2/messages/{message_id}" \
 **`GET /v2/messages`**
 
 ```bash
-curl --globoff "https://api.telnyx.com/v2/messages?filter[direction]=outbound&page[size]=20" \
+curl "https://api.telnyx.com/v2/messages?filter[direction]=outbound&page[size]=20" \
   -H "Authorization: Bearer $TELNYX_API_KEY"
 ```
 
@@ -286,19 +286,13 @@ Configure webhook URLs in your messaging profile to receive delivery reports and
 ```json
 {
   "data": {
-    "event_type": "message.finalized",
+    "event_type": "message.delivered",
     "id": "uuid",
     "occurred_at": "2024-01-15T12:00:00Z",
     "payload": {
-      "id": "msg-uuid",
-      "to": [
-        {
-          "phone_number": "+15559876543",
-          "status": "delivered"
-        }
-      ],
-      "from": {"phone_number": "+15551234567"},
-      "errors": []
+      "to": "+15559876543",
+      "from": "+15551234567",
+      "status": "delivered"
     }
   }
 }

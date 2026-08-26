@@ -60,6 +60,11 @@ Empowers agents to generate correct, production-ready code — and to manage the
 Install the Telnyx Developer Kit, which bundles four cross-product planning,
 architecture, guardrail, and debugging skills with the hosted Telnyx MCP server:
 
+> **Release candidate:** the repository marketplace intentionally marks this
+> plugin `NOT_AVAILABLE` until the hosted MCP deployment and production review
+> gates pass. The commands below apply only after the release-only policy change
+> makes it available.
+
 ```bash
 codex plugin marketplace add team-telnyx/ai
 codex plugin add telnyx-developer-kit@telnyx
@@ -251,11 +256,8 @@ See [MCP](/tools/mcp) for more details about the generic API MCP proxy.
 Current apps:
 
 - Number Intelligence (`tools/mcp-apps/apps/number-intelligence`)
+- Usage & Cost Explorer (`tools/mcp-apps/apps/usage-cost-explorer`)
 - Voice Monitor (`tools/mcp-apps/apps/voice-monitor`)
-
-The Usage & Cost Explorer implementation remains available under
-`tools/mcp-apps/apps/usage-cost-explorer` for internal/local stdio development,
-but it is excluded from the hosted public app catalog and federation.
 
 From `tools/mcp-apps`, use `npm install`, `npm run typecheck`, `npm run build`, and `npm test`.
 
