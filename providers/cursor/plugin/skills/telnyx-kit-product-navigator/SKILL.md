@@ -19,8 +19,8 @@ Answer three questions, then jump to the row that matches.
 
 ## Continue in your client
 
-- **Claude or Codex with the Telnyx Developer Kit installed**: Use the
-  installed `telnyx` hosted MCP: call
+- **Codex with the Telnyx Developer Kit installed**: Use the installed
+  `telnyx` hosted MCP: call
   `list_api_endpoints` to discover the relevant operation, then call
   `get_api_endpoint_schema` for the selected endpoint before writing a request.
   The public catalog is documentation-only and cannot execute account API
@@ -29,6 +29,15 @@ Answer three questions, then jump to the row that matches.
   is required. Do not ask for or accept a Telnyx API key in chat. Do not install
   another product plugin unless the user explicitly asks to add that separate
   package after reviewing its capabilities.
+- **Claude**: Use matching `telnyx-<product>-*` skills that are present in the
+  current Claude plugin installation. The generated `telnyx-platform` plugin
+  does not bundle or configure the hosted MCP, so use packaged skills rather
+  than assuming MCP tools are available unless the user has separately
+  configured that MCP. If a needed product skill is absent, name the companion
+  Telnyx plugin and ask before installing it; never issue a `/plugin install`
+  command automatically. Read the selected skill before writing code, and keep
+  API credentials in its environment/wrapper rather than asking the user to
+  paste them into chat.
 - **Cursor**: Matching canonical product skills are already bundled in the
   flat Telnyx Cursor plugin. Load the relevant `telnyx-<product>-*` skill or
   skills from the current installation; do not run Claude `/plugin install`
@@ -78,11 +87,14 @@ Answer three questions, then jump to the row that matches.
   policy is explicit.
 - **Coming from Twilio**: product names map non-obviously (Messaging Service
   → messaging profile, TwiML App → TeXML Application, Verify Service →
-  Verify profile). In the Telnyx Developer Kit, use `list_api_endpoints` for
-  the corresponding Messaging, TeXML, Verify, Numbers, or other Telnyx
-  operation, then inspect each selected operation with
-  `get_api_endpoint_schema`. Treat any separate
-  migration package as an explicit user choice, not an automatic dependency.
+  Verify profile). In Codex with the Telnyx Developer Kit, use
+  `list_api_endpoints` for the corresponding Messaging, TeXML, Verify, Numbers,
+  or other Telnyx operation, then inspect each selected operation with
+  `get_api_endpoint_schema`. In Claude or Cursor, use the matching installed
+  product skill and use `telnyx-twilio-migration` only when it is already
+  installed or the user explicitly chooses its companion package. Treat any
+  separate migration package as an explicit user choice, not an automatic
+  dependency.
 
 ## Anti-patterns
 

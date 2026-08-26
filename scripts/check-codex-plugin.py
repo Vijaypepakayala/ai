@@ -657,24 +657,27 @@ def validate_kit_skill_semantics(skill_texts: dict[str, str]) -> None:
     debugging = skill_texts["telnyx-kit-debugging"]
     navigator_flat = re.sub(r"\s+", " ", navigator)
 
-    codex_marker = "**Claude or Codex with the Telnyx Developer Kit installed**"
+    codex_marker = "**Codex with the Telnyx Developer Kit installed**"
     codex_position = navigator.find(codex_marker)
     list_position = navigator.find("`list_api_endpoints`", codex_position)
     schema_position = navigator.find("`get_api_endpoint_schema`", list_position)
     catalog_only_position = navigator.find("documentation-only", schema_position)
+    claude_position = navigator.find("**Claude**", catalog_only_position)
     codex_route_positions = (
         codex_position,
         list_position,
         schema_position,
         catalog_only_position,
+        claude_position,
     )
     require(
         all(position != -1 for position in codex_route_positions)
         and codex_position
         < list_position
         < schema_position
-        < catalog_only_position,
-        "product navigator must route Claude and Codex through list_api_endpoints, then "
+        < catalog_only_position
+        < claude_position,
+        "product navigator must route Codex through list_api_endpoints, then "
         "get_api_endpoint_schema, and identify the catalog as documentation-only",
     )
     require(
@@ -688,8 +691,25 @@ def validate_kit_skill_semantics(skill_texts: dict[str, str]) -> None:
         "product navigator must refuse chat credentials and automatic plugin installs",
     )
 
-    cursor_position = navigator.find("**Cursor**")
+    cursor_position = navigator.find("**Cursor**", claude_position)
     use_case_position = navigator.find("## Use case", cursor_position)
+    claude_route = navigator[claude_position:cursor_position]
+    claude_route_flat = re.sub(r"\s+", " ", claude_route)
+    require(
+        claude_position != -1
+        and cursor_position > claude_position
+        and "`telnyx-<product>-*` skills" in claude_route_flat
+        and "does not bundle or configure the hosted MCP" in claude_route_flat
+        and "unless the user has separately configured that MCP"
+        in claude_route_flat
+        and "`list_api_endpoints`" not in claude_route
+        and "`get_api_endpoint_schema`" not in claude_route
+        and "ask before installing it" in claude_route_flat
+        and "never issue a `/plugin install` command automatically"
+        in claude_route_flat,
+        "product navigator must route Claude through installed packaged skills, "
+        "not an unavailable hosted MCP or automatic plugin installation",
+    )
     require(
         cursor_position != -1
         and use_case_position > cursor_position
