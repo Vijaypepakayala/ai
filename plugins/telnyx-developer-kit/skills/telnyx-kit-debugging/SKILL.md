@@ -57,8 +57,8 @@ metadata:
   profile (not per-request); inspect Webhook Deliveries for the primary and
   configured failover URL, then check endpoint TLS and response time (slow
   200 = retry storm). For API v2 JSON events, trace `data.id`; for flat TeXML
-  callbacks, trace `(CallSid, SequenceNumber)` and confirm the route parses its
-  configured form/query method rather than expecting `data.*`.
+  callbacks, trace `(CallSid, SequenceNumber)` and confirm the route requires
+  POST, verifies the raw form body, rejects GET, and never expects `data.*`.
 - **Push notifications never arrive (WebRTC mobile)**: a push credential
   that exists but is not ATTACHED to the credential connection delivers
   nothing — set `ios_push_credential_id`/`android_push_credential_id` on
@@ -73,7 +73,8 @@ metadata:
 - Keep a replayable, access-controlled store of webhook envelopes (they are
   the ground truth for delivery disputes), with personal content redacted or
   encrypted and a defined retention/deletion policy.
-- Correlate event `data.id` (or TeXML `CallSid` + `SequenceNumber`),
-  `call_session_id`, `call_leg_id`, `command_id`, Telnyx request ID, and error
-  code. Monitor primary/failover delivery failures, queue age, and duplicates
-  instead of relying on unstructured logs.
+- Correlate identifiers by API family: event `data.id`, `call_session_id`,
+  `call_leg_id`, and `command_id` for API v2/Call Control; TeXML `CallSid`,
+  `SequenceNumber`, and `StreamSid` for TeXML. Include the Telnyx request ID
+  and error code. Monitor primary/failover delivery failures, queue age, and
+  duplicates instead of relying on unstructured logs.

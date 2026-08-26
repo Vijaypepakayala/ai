@@ -16,10 +16,12 @@ metadata:
 
 ## AI voice agent (the most requested build)
 
+### TeXML flow
+
 ```
 Caller → Telnyx number → TeXML app: <Connect><Stream url="wss://you"/></Connect>
        → your WebSocket: audio in → STT → LLM → TTS → audio out
-       → optional Call Control commands for transfer/hangup
+       → later call steps through TeXML responses and verbs such as <Dial>/<Hangup>
 ```
 
 - Answer + stream in one TeXML response; keep the webhook fast (<2s) —
@@ -28,8 +30,28 @@ Caller → Telnyx number → TeXML app: <Connect><Stream url="wss://you"/></Conn
   queued audio when the caller barges in.
 - For fully managed flows, `<Connect>` supports AI assistant nouns
   (AIAssistant, ConversationRelay) — no WebSocket server needed.
-- Scale unit = concurrent streams; keep per-call state keyed on
-  `call_control_id`, never in process globals.
+- Scale unit = concurrent streams; key TeXML call state on `CallSid` and
+  stream state on `StreamSid`, never on `call_control_id` or process globals.
+- Keep control in the TeXML model. Do not send Call Control commands against a
+  TeXML-managed call; return the next XML response or use the appropriate
+  TeXML verb for transfer and hangup behavior.
+
+### Call Control flow
+
+```
+Caller → Telnyx number → Call Control app → call.initiated webhook
+       → answer + streaming REST commands → your media/model pipeline
+       → transfer/hangup REST commands
+```
+
+- Use this flow when application code must make imperative mid-call decisions.
+  Key state on `call_control_id` and make commands idempotent with `command_id`;
+  do not introduce a TeXML response loop into the same call.
+- Keep webhook handling fast and perform media/model work outside the request
+  handler.
+
+For either flow:
+
 - If the flow records or transcribes, put an explicit notice/consent gate
   before the first recording command. Persist that consent state across
   workers and failover, and design recording retention, access, and deletion
@@ -65,11 +87,13 @@ For API v2 JSON event webhooks (including Messaging and Call Control):
 
 TeXML instruction requests and status callbacks are a separate wire format:
 
-- A configured POST carries flat, PascalCase form fields as
-  `application/x-www-form-urlencoded`; a configured GET carries the same
-  fields in the query string. Do not parse these as JSON or read `data.*`.
-- For signed callbacks, verify the raw request before decoding the form. Treat
-  retries as duplicates and dedupe status callbacks on the composite
+- Configure authenticated callbacks as POST. They carry flat, PascalCase form
+  fields as `application/x-www-form-urlencoded`; verify the exact raw body
+  before decoding the form. Do not parse these as JSON or read `data.*`.
+- Reject GET on authenticated callback routes. The signature covers
+  `timestamp|raw_body`, not the query string, so query fields are not bound to
+  an otherwise valid empty-body signature.
+- Treat retries as duplicates and dedupe status callbacks on the composite
   `(CallSid, SequenceNumber)` rather than `data.id`.
 - Keep API v2 JSON and TeXML routes separate so content-type, parsing,
   validation, and idempotency rules cannot be confused.
@@ -93,9 +117,11 @@ TeXML instruction requests and status callbacks are a separate wire format:
 - Configure distinct primary and failover webhook URLs for critical call
   paths. Exercise failover before launch; both endpoints must verify
   signatures, share the same durable dedupe store, and fast-ack before work.
-- Correlate `data.id`, `call_control_id`, `call_session_id`, `call_leg_id`,
-  `command_id`, Telnyx request IDs, and error codes across ingress, commands,
-  and workers. Alert on primary/failover delivery failures, queue age, and
+- Correlate identifiers within the selected API family: TeXML uses `CallSid`,
+  `SequenceNumber`, and `StreamSid`; Call Control uses `data.id`,
+  `call_control_id`, `call_session_id`, `call_leg_id`, and `command_id`.
+  Include Telnyx request IDs and error codes across ingress, commands, and
+  workers. Alert on primary/failover delivery failures, queue age, and
   duplicate suppression. Never log API keys or webhook secrets, recording
   URLs, recording media, or transcript content.
 - In every architecture response that includes observability or recording,

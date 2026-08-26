@@ -37,8 +37,10 @@ processing:
 - Verify over `timestamp|raw_body`, reject stale timestamps (>5 min) to
   block replays.
 - Parse only after verification and branch by API family: API v2 events are
-  JSON under `data.*`; TeXML POST callbacks use flat form-encoded PascalCase
-  fields (or query parameters for configured GET callbacks).
+  JSON under `data.*`; TeXML callbacks use flat, form-encoded PascalCase
+  fields. Configure authenticated TeXML callbacks as POST, verify the exact
+  raw form body, and reject GET before trusting any callback field: the
+  signature covers `timestamp|raw_body`, not query parameters.
 - Verification must be a runtime code path, not a code comment — a string
   match on "TELNYX_PUBLIC_KEY" in the repo proves nothing.
 
@@ -102,8 +104,9 @@ processing:
       tenant credential validated before that request's first Telnyx action;
       all credentials absent from logs
 - [ ] Every webhook route verifies Ed25519 + timestamp before side effects
-- [ ] API v2 JSON dedupes on `data.id`; TeXML callbacks parse their configured
-      form/query shape and dedupe on `(CallSid, SequenceNumber)`
+- [ ] API v2 JSON dedupes on `data.id`; authenticated TeXML callbacks require
+      POST, parse the verified form body, and dedupe on
+      `(CallSid, SequenceNumber)`
 - [ ] US SMS paths check sender-appropriate registration and treat STOP/40008
       as terminal
 - [ ] Recording/transcription starts only after applicable notice and consent;

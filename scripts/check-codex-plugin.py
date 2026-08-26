@@ -830,7 +830,31 @@ def validate_kit_skill_semantics(skill_texts: dict[str, str]) -> None:
         and "`(CallSid, SequenceNumber)`" in architecture
         and "Do not parse these as JSON or read `data.*`" in architecture,
         "architecture guidance must distinguish API v2 JSON event envelopes "
-        "from flat TeXML form/query callbacks and use the right dedupe key",
+        "from flat TeXML POST callbacks and use the right dedupe key",
+    )
+    require(
+        "signature covers `timestamp|raw_body`, not query parameters" in guardrails
+        and "reject GET before trusting any callback field" in guardrails
+        and "Reject GET on authenticated callback routes" in architecture
+        and "`timestamp|raw_body`, not the query string" in architecture
+        and "route requires" in debugging
+        and "POST, verifies the raw form body" in debugging
+        and "rejects GET" in debugging
+        and "query parameters for configured GET callbacks" not in guardrails
+        and "configured form/query" not in debugging,
+        "authenticated TeXML guidance must require POST and must not treat GET "
+        "query fields as covered by a raw-body signature",
+    )
+    require(
+        "### TeXML flow" in architecture
+        and "### Call Control flow" in architecture
+        and "key TeXML call state on `CallSid`" in architecture
+        and "stream state on `StreamSid`" in architecture
+        and "Do not send Call Control commands against a" in architecture
+        and "Key state on `call_control_id`" in architecture
+        and "optional Call Control commands for transfer/hangup" not in architecture,
+        "voice architecture guidance must keep TeXML and Call Control flows, "
+        "commands, and state identifiers separate",
     )
     require(
         "static single-tenant service with a process-wide key" in guardrails_lower
@@ -851,7 +875,8 @@ def validate_kit_skill_semantics(skill_texts: dict[str, str]) -> None:
         and "explicit notice/consent gate" in architecture_lower
         and "persist that consent state across" in architecture_lower
         and "distinct primary and failover webhook urls" in architecture_lower
-        and "correlate `data.id`" in architecture_lower
+        and "correlate identifiers within the selected api family"
+        in architecture_lower
         and "primary/failover delivery failures" in debugging_lower,
         "the kit must route P2 voice designs through recording consent, tested "
         "failover, and correlated observability guidance",
