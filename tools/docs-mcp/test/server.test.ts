@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 
 import { createServer, loadIndex } from "../src/server.js";
 import { SearchIndex } from "../src/search.js";
@@ -214,6 +216,69 @@ describe("tools", () => {
 });
 
 describe("two-source corpus (Twilio parity+)", () => {
+  it("indexes every table-listed API operation as an independent document", () => {
+    const repoRoot = resolve(process.cwd(), "../..");
+    const sdkReferenceRoot = join(
+      repoRoot,
+      "skills/telnyx-twilio-migration/sdk-reference"
+    );
+    const built = JSON.parse(
+      readFileSync(join(process.cwd(), "dist/docs-index.json"), "utf8")
+    ) as {
+      docs: Array<{
+        source: string;
+        language: string | null;
+        product: string | null;
+        title: string;
+        method: string | null;
+        path: string | null;
+        body: string;
+      }>;
+    };
+    const indexedDocs = new Map(
+      built.docs
+        .filter((doc) => doc.source === "api")
+        .map((doc) => [
+          [doc.language, doc.product, doc.title, doc.method, doc.path].join("\u0000"),
+          doc
+        ] as const)
+    );
+    const expectedKeys: string[] = [];
+
+    for (const language of readdirSync(sdkReferenceRoot)) {
+      const languageDir = join(sdkReferenceRoot, language);
+      if (!statSync(languageDir).isDirectory()) continue;
+      for (const filename of readdirSync(languageDir).filter((name) => name.endsWith(".md"))) {
+        const product = basename(filename, ".md");
+        const text = readFileSync(join(languageDir, filename), "utf8");
+        for (const match of text.matchAll(
+          /^\|\s*([^|\n]+?)\s*\|[^\n]*?`(GET|POST|PATCH|PUT|DELETE)\s+([^`]+)`[^\n]*$/gm
+        )) {
+          expectedKeys.push(
+            [language, product, match[1].trim(), match[2], match[3].trim()].join("\u0000")
+          );
+        }
+      }
+    }
+
+    expect(expectedKeys.length).toBeGreaterThan(100);
+    for (const key of expectedKeys) {
+      const indexed = indexedDocs.get(key);
+      expect(indexed, `missing independent API index entry: ${key}`).toBeDefined();
+      expect(indexed?.body).toContain("Before using any operation below");
+      expect(indexed?.body).toContain("response-schemas");
+      expect(indexed?.body).toContain("| Operation | SDK method | Endpoint |");
+    }
+    expect(
+      built.docs.some((doc) => doc.source === "api" && doc.title === "Additional Operations")
+    ).toBe(false);
+
+    const deleteBrand = built.docs.find((doc) =>
+      doc.language === "curl" && doc.product === "10dlc" && doc.title === "Delete Brand"
+    );
+    expect(deleteBrand).toMatchObject({ method: "DELETE", path: "/10dlc/brand/{brandId}" });
+  });
+
   it("api search finds the messages send operation with method/path", async () => {
     const client = await connected();
     const res = await client.callTool({

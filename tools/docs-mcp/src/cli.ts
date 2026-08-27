@@ -18,6 +18,7 @@ const CORS_ALLOW_HEADERS = [
   "content-type",
   "mcp-protocol-version"
 ] as const;
+const MINIMUM_HTTP_PROTOCOL_VERSION = "2025-06-18";
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
@@ -233,6 +234,50 @@ async function main(): Promise<void> {
           return;
         }
       }
+      const protocolHeaderValue = req.headers["mcp-protocol-version"];
+      const initializationVersion = initializeProtocolVersion(parsedBody);
+      // The initialize payload is authoritative during negotiation. The MCP
+      // header describes the already-negotiated version on later requests, so
+      // letting it override params.protocolVersion can either admit a legacy
+      // initialization or reject a current one when the two disagree.
+      const protocolVersion = initializationVersion ?? (
+        Array.isArray(protocolHeaderValue) ? undefined : protocolHeaderValue
+      );
+      if (protocolVersion && isOlderProtocolVersion(protocolVersion)) {
+        rejectRequest(
+          requestSocket,
+          res,
+          400,
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: {
+              code: -32000,
+              message:
+                `Unsupported protocol version: ${protocolVersion}; minimum supported version is ${MINIMUM_HTTP_PROTOCOL_VERSION}`
+            },
+            id: null
+          })
+        );
+        return;
+      }
+      // MCP protocol version 2025-06-18 removed JSON-RPC batching. Reject every
+      // array, including a one-item or empty batch, before creating a server or
+      // dispatching tools. Besides enforcing the negotiated protocol, this
+      // prevents one unauthenticated HTTP request from multiplying corpus scans
+      // and buffered retrieval responses behind a gateway's request-rate limit.
+      if (Array.isArray(parsedBody)) {
+        rejectRequest(
+          requestSocket,
+          res,
+          400,
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32600, message: "Invalid Request: JSON-RPC batches are not supported" },
+            id: null
+          })
+        );
+        return;
+      }
 
       // Stateless mode: a fresh server+transport per request, no sessions —
       // the right shape for a read-only public docs endpoint.
@@ -298,6 +343,20 @@ function positiveSafeIntegerEnv(name: string, fallback: number): number {
     throw new Error(`${name} must be a positive safe integer number of bytes`);
   }
   return parsed;
+}
+
+function initializeProtocolVersion(body: unknown): string | undefined {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return undefined;
+  const request = body as { method?: unknown; params?: unknown };
+  if (request.method !== "initialize" || !request.params || typeof request.params !== "object") {
+    return undefined;
+  }
+  const version = (request.params as { protocolVersion?: unknown }).protocolVersion;
+  return typeof version === "string" ? version : undefined;
+}
+
+function isOlderProtocolVersion(version: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(version) && version < MINIMUM_HTTP_PROTOCOL_VERSION;
 }
 
 function rejectRequest(

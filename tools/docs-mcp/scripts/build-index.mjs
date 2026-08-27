@@ -93,6 +93,43 @@ const docs = [];
 let skillDocCount = 0;
 let guideDocCount = 0;
 
+function operationsFromSection(section) {
+  const heading = section.match(/^##{1,2} (.+)$/m)?.[1]?.trim();
+  if (!heading) return [];
+
+  // Generated "Additional Operations" sections encode many independent API
+  // operations as Markdown table rows. Treat every row as its own searchable
+  // document; assigning the first row's method/path to the whole table makes
+  // every sibling operation undiscoverable or incorrectly attributed.
+  const tableMatches = [...section.matchAll(
+    /^\|\s*([^|\n]+?)\s*\|[^\n]*?`(GET|POST|PATCH|PUT|DELETE)\s+([^`]+)`[^\n]*$/gm
+  )];
+  const sharedTableContext = tableMatches.length > 0
+    ? section
+        .slice(0, tableMatches[0].index)
+        .replace(/^##{1,2} .+\n+/, "")
+        .trim()
+    : "";
+  const tableOperations = tableMatches.map((match) => ({
+    title: match[1].trim(),
+    method: match[2],
+    path: match[3].trim(),
+    // Keep the shared safety guidance, schema link, and table columns on every
+    // derived document so retrieval remains actionable after splitting rows.
+    body: `### ${match[1].trim()}\n\n${sharedTableContext}\n${match[0].trim()}`
+  }));
+  if (tableOperations.length > 0) return tableOperations;
+
+  const endpoint = section.match(/`(GET|POST|PATCH|PUT|DELETE)\s+([^`]+)`/);
+  if (!endpoint || section.length < 80) return [];
+  return [{
+    title: heading,
+    method: endpoint[1],
+    path: endpoint[2].trim(),
+    body: section
+  }];
+}
+
 // --- docs source ---
 for (const file of walk(SKILLS_DIR, ["node_modules", "dist", ".git", "sdk-reference"])) {
   const text = readFileSync(file, "utf8");
@@ -178,31 +215,27 @@ if (existsSync(SDK_REF_DIR)) {
       const sections = text.split(/^(?=##{1,2} )/m);
       const seen = new Set();
       for (const section of sections) {
-        const m = section.match(/^##{1,2} (.+)$/m);
-        if (!m) continue;
-        const title = m[1].trim();
-        const endpoint = section.match(/`(GET|POST|PATCH|PUT|DELETE)\s+([^`]+)`/);
-        if (!endpoint || section.length < 80) continue;
-        const endpointPath = endpoint[2].trim();
-        const productAliases = new Set(CROSS_FAMILY_PRODUCT_ALIASES.get(product) ?? []);
-        if (/^\/(?:v2\/)?number_lookup(?:\/|$)/.test(endpointPath)) {
-          productAliases.add("lookup");
+        for (const operation of operationsFromSection(section)) {
+          const productAliases = new Set(CROSS_FAMILY_PRODUCT_ALIASES.get(product) ?? []);
+          if (/^\/(?:v2\/)?number_lookup(?:\/|$)/.test(operation.path)) {
+            productAliases.add("lookup");
+          }
+          let slug = operation.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
+          while (seen.has(slug)) slug += "-x";
+          seen.add(slug);
+          docs.push({
+            id: `op::telnyx::${lang}::${product}::${slug}`,
+            source: "api",
+            product,
+            product_aliases: [...productAliases],
+            language: lang,
+            method: operation.method,
+            path: operation.path,
+            title: operation.title,
+            description: `${operation.method} ${operation.path}`,
+            body: operation.body
+          });
         }
-        let slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
-        while (seen.has(slug)) slug += "-x";
-        seen.add(slug);
-        docs.push({
-          id: `op::telnyx::${lang}::${product}::${slug}`,
-          source: "api",
-          product,
-          product_aliases: [...productAliases],
-          language: lang,
-          method: endpoint[1],
-          path: endpointPath,
-          title,
-          description: `${endpoint[1]} ${endpointPath}`,
-          body: section
-        });
       }
     }
   }

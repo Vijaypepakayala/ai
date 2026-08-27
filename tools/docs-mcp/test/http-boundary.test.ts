@@ -184,6 +184,90 @@ describe("unauthenticated HTTP boundary", () => {
     expect(res.status).toBe(200);
   });
 
+  it.each([
+    [
+      "during initialization",
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-03-26",
+          capabilities: {},
+          clientInfo: { name: "legacy", version: "0" }
+        }
+      }),
+      {}
+    ],
+    [
+      "on a post-initialization request",
+      JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+      { "Mcp-Protocol-Version": "2025-03-26" }
+    ]
+  ])("rejects a pre-batch-removal protocol %s", async (_caseName, body, headers) => {
+    const res = await fetch(BASE, {
+      method: "POST",
+      headers: { ...HEADERS, ...headers },
+      body
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      jsonrpc: "2.0",
+      error: { code: -32000 },
+      id: null
+    });
+  });
+
+  it.each([
+    ["a newer header", "2025-06-18", "2025-03-26", 400],
+    ["an older header", "2025-03-26", "2025-06-18", 200]
+  ])(
+    "uses the initialization body when it conflicts with %s",
+    async (_caseName, headerVersion, bodyVersion, expectedStatus) => {
+      const body = JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: bodyVersion,
+          capabilities: {},
+          clientInfo: { name: "mismatch", version: "0" }
+        }
+      });
+      const res = await fetch(BASE, {
+        method: "POST",
+        headers: { ...HEADERS, "Mcp-Protocol-Version": headerVersion },
+        body
+      });
+      expect(res.status).toBe(expectedStatus);
+      if (expectedStatus === 400) {
+        expect(await res.json()).toMatchObject({ error: { code: -32000 } });
+      }
+    }
+  );
+
+  it.each([
+    ["an empty batch", []],
+    ["a one-request batch", [{ jsonrpc: "2.0", id: 1, method: "ping" }]],
+    [
+      "a multi-request batch",
+      [
+        { jsonrpc: "2.0", id: 1, method: "ping" },
+        { jsonrpc: "2.0", id: 2, method: "ping" }
+      ]
+    ]
+  ])("rejects %s before MCP dispatch", async (_caseName, batch) => {
+    const body = JSON.stringify(batch);
+    expect(Buffer.byteLength(body)).toBeLessThanOrEqual(MAX_BODY_BYTES);
+    const res = await fetch(BASE, { method: "POST", headers: HEADERS, body });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      jsonrpc: "2.0",
+      error: { code: -32600 },
+      id: null
+    });
+  });
+
   it("rejects a mismatched Host header (DNS rebinding) with 403", async () => {
     // fetch() silently drops a custom Host header (forbidden header name), so
     // drive a raw request to actually exercise the host allowlist.
