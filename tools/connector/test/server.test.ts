@@ -38,7 +38,7 @@ async function connectedClient(fetchMock: FetchMock, options: { maxResponseBytes
 
 async function connectedClientWithElicitation(
   fetchMock: FetchMock,
-  approve: boolean | (() => boolean),
+  approve: boolean | (() => boolean | Promise<boolean>),
   onPrompt?: (message: string) => void
 ) {
   const telnyx = new TelnyxClient({ apiKey: "KEYTEST", fetch: fetchMock as unknown as typeof fetch });
@@ -53,7 +53,7 @@ async function connectedClientWithElicitation(
     onPrompt?.(request.params.message);
     return {
       action: "accept",
-      content: { approve: typeof approve === "function" ? approve() : approve }
+      content: { approve: typeof approve === "function" ? await approve() : approve }
     };
   });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -62,7 +62,7 @@ async function connectedClientWithElicitation(
 
 async function connectedMessagingClient(
   fetchMock: FetchMock,
-  approve: boolean | (() => boolean) = true,
+  approve: boolean | (() => boolean | Promise<boolean>) = true,
   onPrompt?: (message: string) => void,
   senderType: "long-code" | "longcode" = "long-code",
   campaignKind: "native" | "partner" = "native",
@@ -819,6 +819,144 @@ describe("send_message", () => {
     const text = (result.content as Array<{ text: string }>)[0].text;
     expect(text).toContain("40310");
     expect(text).toContain("HTTP 400");
+  });
+
+  it("keeps opt-out error 40300 terminal for the recipient across account senders", async () => {
+    process.env.TELNYX_CONNECTOR_MAX_SEND_MESSAGE = "1";
+    try {
+      const fetchMock = vi.fn().mockResolvedValue(
+        jsonResponse(400, {
+          errors: [{ code: "40300", title: "Blocked (STOP)", detail: "Recipient opted out" }]
+        })
+      );
+      const onPrompt = vi.fn();
+      const client = await connectedMessagingClient(fetchMock, true, onPrompt);
+      const args = { to: "+15550001111", from: "+15550002222", text: "hi" };
+
+      const stopped = await client.callTool({ name: "send_message", arguments: args });
+      expect(stopped.isError).toBe(true);
+      expect((stopped.content as Array<{ text: string }>)[0].text).toMatch(/stop\/opt-out.*terminal/i);
+
+      const retry = await client.callTool({ name: "send_message", arguments: args });
+      expect(retry.isError).toBe(true);
+      expect((retry.content as Array<{ text: string }>)[0].text).toMatch(
+        /refusing to retry.*stop\/opt-out/i
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(onPrompt).toHaveBeenCalledTimes(1);
+
+      const alternateSender = await client.callTool({
+        name: "send_message",
+        arguments: { ...args, from: "+15550004444" }
+      });
+      expect(alternateSender.isError).toBe(true);
+      expect((alternateSender.content as Array<{ text: string }>)[0].text).toMatch(
+        /recipient from any account sender.*stop\/opt-out/i
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(onPrompt).toHaveBeenCalledTimes(1);
+
+      const otherRecipient = await client.callTool({
+        name: "send_message",
+        arguments: { ...args, to: "+15550003333" }
+      });
+      expect(otherRecipient.isError).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(onPrompt).toHaveBeenCalledTimes(2);
+    } finally {
+      delete process.env.TELNYX_CONNECTOR_MAX_SEND_MESSAGE;
+    }
+  });
+
+  it("does not misclassify retriable undeliverable 40008 as a recipient opt-out", async () => {
+    process.env.TELNYX_CONNECTOR_MAX_SEND_MESSAGE = "1";
+    try {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse(403, { errors: [{ code: "40008", title: "Undeliverable" }] })
+        )
+        .mockResolvedValueOnce(jsonResponse(200, {
+          data: { id: "00000000-0000-4000-8000-000000000778" }
+        }));
+      const client = await connectedMessagingClient(fetchMock);
+      const args = { to: "+15550001111", from: "+15550002222", text: "hi" };
+      const rejected = await client.callTool({ name: "send_message", arguments: args });
+      expect(rejected.isError).toBe(true);
+      expect((rejected.content as Array<{ text: string }>)[0].text).toContain("40008");
+      const later = await client.callTool({ name: "send_message", arguments: args });
+      expect(later.isError ?? false).toBe(false);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      delete process.env.TELNYX_CONNECTOR_MAX_SEND_MESSAGE;
+    }
+  });
+
+  it.each([
+    ["40300", "Carrier rejected"],
+    ["40008", "Number opted out"],
+  ])("learns an asynchronous explicit opt-out %s from message status", async (code, title) => {
+    const messageId = "123e4567-e89b-42d3-a456-426614174abc";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { data: { id: messageId } }))
+      .mockResolvedValueOnce(jsonResponse(200, {
+        data: {
+          id: messageId,
+          to: [{ status: "delivery_failed", errors: [{ code, title }] }]
+        }
+      }));
+    const onPrompt = vi.fn();
+    const client = await connectedMessagingClient(fetchMock, true, onPrompt);
+    const args = { to: "+15550001111", from: "+15550002222", text: "hi" };
+
+    const accepted = await client.callTool({ name: "send_message", arguments: args });
+    expect(accepted.isError ?? false).toBe(false);
+    const status = await client.callTool({
+      name: "get_message_status",
+      arguments: { message_id: messageId.toUpperCase() }
+    });
+    expect(status.isError ?? false).toBe(false);
+    expect((status.content as Array<{ text: string }>)[0].text).toMatch(
+      /stop\/opt-out.*terminally blocked|terminally blocked.*stop\/opt-out/i
+    );
+
+    const retry = await client.callTool({ name: "send_message", arguments: args });
+    expect(retry.isError).toBe(true);
+    expect((retry.content as Array<{ text: string }>)[0].text).toMatch(/refusing to retry.*stop\/opt-out/i);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(onPrompt).toHaveBeenCalledTimes(1);
+  });
+
+  it("rechecks a newly learned synchronous 40300 before a concurrent dispatch", async () => {
+    let promptCount = 0;
+    let releaseSecondApproval!: () => void;
+    const secondApproval = new Promise<void>((resolve) => {
+      releaseSecondApproval = resolve;
+    });
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(403, { errors: [{ code: "40300", title: "Blocked (STOP)" }] })
+    );
+    const client = await connectedMessagingClient(fetchMock, async () => {
+      promptCount++;
+      if (promptCount === 2) await secondApproval;
+      return true;
+    });
+    const args = { to: "+15550001111", from: "+15550002222", text: "hi" };
+
+    const firstCall = client.callTool({ name: "send_message", arguments: args });
+    const secondCall = client.callTool({ name: "send_message", arguments: args });
+    await vi.waitFor(() => expect(promptCount).toBe(2));
+    const first = await firstCall;
+    expect(first.isError).toBe(true);
+    expect((first.content as Array<{ text: string }>)[0].text).toMatch(/stop\/opt-out.*terminal/i);
+    releaseSecondApproval();
+    const second = await secondCall;
+    expect(second.isError).toBe(true);
+    expect((second.content as Array<{ text: string }>)[0].text).toMatch(
+      /refusing to dispatch.*stop\/opt-out/i
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -2922,7 +3060,21 @@ describe("round-3 schema corrections", () => {
     });
   });
 
-  it.each(["0", "101", "forever", 0, 101, 1.5])(
+  it.each([
+    ["speak", { payload: "Hello", voice: "Polly.Joanna-Neural", loop: "infinity" }],
+    ["playback_start", { media_name: "greeting", loop: "infinity" }]
+  ])("%s rejects an infinite playback loop before transport", async (command, params) => {
+    const fetchMock = vi.fn();
+    const client = await connectedClient(fetchMock);
+    const result = await client.callTool({
+      name: "call_command",
+      arguments: { call_control_id: "cc1", command, params }
+    });
+    expect(result.isError).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["0", "101", "forever", "infinity", 0, 101, 1.5])(
     "playback_start rejects invalid loop value %j before transport",
     async (loop) => {
       const fetchMock = vi.fn();

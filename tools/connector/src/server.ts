@@ -13,6 +13,7 @@ import type { QueryValue } from "./telnyxClient.js";
 
 const SERVER_NAME = "telnyx-claude-connector";
 const SERVER_VERSION = "0.1.0";
+const MAX_TRACKED_MESSAGE_ROUTES = 1_000;
 
 // Call Control commands the connector will forward. Kept to an explicit
 // allowlist so a prompt-injected "command" cannot reach arbitrary actions.
@@ -38,16 +39,49 @@ const commonActionFields = {
   command_id: z.string().optional().describe("Idempotency key to avoid duplicate commands")
 };
 
-// The public API accepts a finite integer from 1 through 100 or the special
-// string "infinity". Generated SDKs expose the field as string | number, so
-// normalize documented numeric strings without forwarding arbitrary strings.
+// Although the public API also accepts the special string "infinity", the
+// public connector deliberately exposes only finite loops. One accepted MCP
+// call must not be able to keep a live, billable call playing indefinitely.
+// Generated SDKs expose the finite field as string | number, so normalize
+// documented numeric strings without forwarding arbitrary strings.
 const playbackLoopSchema = z.preprocess((value) => {
   if (typeof value !== "string") return value;
   const normalized = value.trim();
   return /^(?:[1-9]|[1-9][0-9]|100)$/.test(normalized)
     ? Number(normalized)
     : normalized;
-}, z.union([z.number().int().min(1).max(100), z.literal("infinity")]));
+}, z.number().int().min(1).max(100));
+
+function hasTelnyxErrorCode(value: unknown, target: string, depth = 0): boolean {
+  if (depth > 8 || value === null || value === undefined) return false;
+  if (Array.isArray(value)) {
+    return value.some((entry) => hasTelnyxErrorCode(entry, target, depth + 1));
+  }
+  if (typeof value !== "object") return false;
+  return Object.entries(value as Record<string, unknown>).some(([key, entry]) =>
+    (key.toLowerCase() === "code" && String(entry) === target) ||
+    hasTelnyxErrorCode(entry, target, depth + 1)
+  );
+}
+
+function hasExplicitOptOutError(value: unknown, depth = 0): boolean {
+  if (depth > 8 || value === null || value === undefined) return false;
+  if (Array.isArray(value)) {
+    return value.some((entry) => hasExplicitOptOutError(entry, depth + 1));
+  }
+  if (typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  const code = String(record.code ?? "");
+  if (code === "40008" || code === "40300") {
+    const description = [record.title, record.detail, record.message]
+      .filter((entry): entry is string => typeof entry === "string")
+      .join(" ");
+    if (/\b(?:stop|opt(?:ed)?[- ]?out|unsubscrib(?:e|ed))\b/i.test(description)) {
+      return true;
+    }
+  }
+  return Object.values(record).some((entry) => hasExplicitOptOutError(entry, depth + 1));
+}
 
 const httpUrlSchema = z.string().url().superRefine((value, context) => {
   let url: URL;
@@ -510,6 +544,40 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   // upstream may already own the DID. These markers are bounded by the order
   // cap because that reservation is retained for both outcome classes.
   const dispatchedNumberOrders = new Set<string>();
+  // A carrier compliance-stop rejection is terminal for the sender/recipient
+  // pair within this connector session. Retain the pair so prompt injection
+  // cannot repeatedly ask for approval and retry a prohibited message after
+  // Telnyx has returned the current synchronous STOP code 40300, or a legacy
+  // 40008/40300 payload that explicitly identifies STOP or opt-out. The set is
+  // bounded by the send-attempt cap and is cleared only by restarting.
+  const complianceStoppedRecipients = new Set<string>();
+  // Associate accepted message IDs with their recipient so a
+  // later read-only delivery-status check can apply an explicit asynchronous
+  // STOP/opt-out result to future sends. Refuse new sends at the fixed memory
+  // bound instead of evicting a known route and silently weakening the gate.
+  const messageRecipientsById = new Map<string, string>();
+  let pendingMessageTrackingSlots = 0;
+  const withMessageTrackingSlot = async <T>(
+    action: () => Promise<T>
+  ): Promise<T | ReturnType<typeof refuse>> => {
+    // Reserve synchronously before the first await. Even with elevated spend
+    // caps, concurrent sends cannot all pass a stale Map.size check and grow
+    // accepted-message tracking beyond this fixed boundary.
+    if (
+      messageRecipientsById.size + pendingMessageTrackingSlots >=
+      MAX_TRACKED_MESSAGE_ROUTES
+    ) {
+      return refuse(
+        `Refusing to send: this connector session already tracks or is dispatching ${MAX_TRACKED_MESSAGE_ROUTES} accepted-message recipients for asynchronous compliance-stop checks. Restart the connector before deliberately sending more. Nothing was sent.`
+      );
+    }
+    pendingMessageTrackingSlots++;
+    try {
+      return await action();
+    } finally {
+      pendingMessageTrackingSlots--;
+    }
+  };
   const rememberNumberSearch = (inventory: unknown, query: NumberSearchQuery): void => {
     if (!inventory || typeof inventory !== "object") return;
     const data = (inventory as { data?: unknown }).data;
@@ -1130,7 +1198,26 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       }
     },
     async ({ message_id }, extra) =>
-      run((c, signal) => c.request("GET", `/v2/messages/${encodeURIComponent(message_id)}`, { signal }), extra)
+      run(async (c, signal) => {
+        const result = await c.request(
+          "GET",
+          `/v2/messages/${encodeURIComponent(message_id)}`,
+          { signal }
+        );
+        const messageRecipient = messageRecipientsById.get(message_id.toLowerCase());
+        if (
+          messageRecipient &&
+          (hasTelnyxErrorCode(result, "40300") || hasExplicitOptOutError(result))
+        ) {
+          complianceStoppedRecipients.add(messageRecipient);
+          const notice =
+            "Telnyx reported an explicit STOP/opt-out error. This recipient is now terminally blocked across account senders for the connector session; do not retry or attempt to bypass the recipient's opt-out.";
+          return result && typeof result === "object" && !Array.isArray(result)
+            ? { ...result as Record<string, unknown>, connector_compliance_notice: notice }
+            : { data: result, connector_compliance_notice: notice };
+        }
+        return result;
+      }, extra)
   );
 
   // ------------------------------------------------------------------- writes
@@ -1153,6 +1240,13 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       if (!text && (!media_urls || media_urls.length === 0)) {
         return refuse("A message needs text, media_urls, or both.");
       }
+      const messageRecipient = to;
+      if (complianceStoppedRecipients.has(messageRecipient)) {
+        return refuse(
+          `Refusing to retry this recipient from any account sender: Telnyx previously returned an explicit STOP/opt-out error in this connector session. Do not retry or attempt to bypass the recipient's opt-out. Nothing was sent.`
+        );
+      }
+      return withMessageTrackingSlot(async () => {
       // Reserve atomically before the first await so concurrent injected calls
       // cannot amplify readiness reads or human prompts beyond the cap.
       const limited = reserve("send_message");
@@ -1214,20 +1308,57 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
         return run(async () => { throw error; }, extra);
       }
       return run(
-        (c, signal) =>
-          c.request("POST", "/v2/messages", {
-            body: {
-              to,
-              from,
-              ...(text ? { text } : {}),
-              ...(media_urls ? { media_urls } : {}),
-              messaging_profile_id: revalidatedSender.messagingProfileId
-            },
-            signal
-          }),
+        async (c, signal) => {
+          // This second check is deliberately adjacent to c.request with no
+          // intervening await. A concurrent send that learns a synchronous or
+          // asynchronous compliance stop while this flow awaits approval or
+          // revalidation therefore blocks this POST atomically.
+          if (complianceStoppedRecipients.has(messageRecipient)) {
+            throw new TelnyxRequestNotDispatchedError(
+              `Refusing to dispatch: Telnyx reported an explicit STOP/opt-out error for this recipient while approval or revalidation was in progress. This applies across account senders; do not retry or attempt to bypass the recipient's opt-out. Nothing was sent.`
+            );
+          }
+          try {
+            const result = await c.request("POST", "/v2/messages", {
+              body: {
+                to,
+                from,
+                ...(text ? { text } : {}),
+                ...(media_urls ? { media_urls } : {}),
+                messaging_profile_id: revalidatedSender.messagingProfileId
+              },
+              signal
+            });
+            const accepted = dataRecord(result);
+            if (typeof accepted?.id === "string" && accepted.id.length > 0) {
+              messageRecipientsById.set(accepted.id.toLowerCase(), messageRecipient);
+            }
+            return result;
+          } catch (error) {
+            if (
+              error instanceof TelnyxApiError &&
+              (hasTelnyxErrorCode(error.details, "40300") ||
+                hasExplicitOptOutError(error.details))
+            ) {
+              complianceStoppedRecipients.add(messageRecipient);
+              throw new TelnyxApiError(
+                `${error.message} STOP/opt-out errors are terminal for this recipient across account senders in this connector session. Do not retry or attempt to bypass the recipient's opt-out.`,
+                error.status,
+                error.details
+              );
+            }
+            throw error;
+          }
+        },
         extra,
-        "send_message"
+        undefined,
+        (outcome) => {
+          if (outcome === "definitive_failure") {
+            releaseReservation("send_message");
+          }
+        }
       );
+      });
     }
   );
 
