@@ -51,7 +51,8 @@ runtime change and the proxy/Node deployment satisfy the gates below.
   copy must disclose the broad OAuth grant until Telnyx ships granular scopes.
 - Readiness fails closed if a prohibited endpoint, incorrect tool contract,
   missing app service, missing resource, or missing service credential appears.
-- The local catalog is pinned to 795 endpoint name/operation pairs using a reviewed SHA-256 digest.
+- The local catalog is pinned to 795 endpoint name/operation/resource triples
+  using a reviewed SHA-256 digest.
 
 The public listing uses [Telnyx Support](https://support.telnyx.com), the
 [Telnyx Privacy Policy](https://telnyx.com/privacy-policy), and the
@@ -94,7 +95,8 @@ The package validator checks public metadata, skill resolution and canonical
 bytes, review-case coverage, annotation justifications, Markdown structure,
 credential patterns, and the official PNG asset. The catalog checker pins all
 four model-visible tools, eight app-only tools, two UI resources, 795 endpoint
-names, the 376/419 operation split, and explicit endpoint annotations.
+name/operation/resource triples, the 376/419 operation split, and explicit
+endpoint annotations.
 
 ## Release-owner gates
 

