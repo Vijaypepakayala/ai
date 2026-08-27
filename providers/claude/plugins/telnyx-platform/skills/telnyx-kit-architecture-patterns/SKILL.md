@@ -28,8 +28,13 @@ Caller → Telnyx number → TeXML app: <Connect><Stream url="wss://you"/></Conn
   heavy work happens on the WebSocket, never in the webhook handler.
 - Interruption handling: send `{"event":"clear","stream_id":...}` to flush
   queued audio when the caller barges in.
-- For fully managed flows, `<Connect>` supports AI assistant nouns
-  (AIAssistant, ConversationRelay) — no WebSocket server needed.
+- For a fully managed flow, `<Connect><AIAssistant>` connects the call to a
+  configured Telnyx AI Assistant; your application does not run a media
+  WebSocket server.
+- `<Connect><ConversationRelay>` is different: configure its `url` as a
+  reachable `wss://` application endpoint. Your server must accept the
+  ConversationRelay WebSocket protocol and exchange the structured text and
+  control messages that drive the conversation.
 - Scale unit = concurrent streams; key TeXML call state on `CallSid` and
   stream state on `StreamSid`, never on `call_control_id` or process globals.
 - Keep control in the TeXML model. Do not send Call Control commands against a

@@ -19,8 +19,8 @@ Answer three questions, then jump to the row that matches.
 
 ## Continue in your client
 
-- **Codex with the Telnyx Developer Kit installed**: Use the installed
-  `telnyx` hosted MCP: call
+- **ChatGPT or Codex with the Telnyx connector/Developer Kit installed**: Use
+  the installed `telnyx` hosted MCP: call
   `list_api_endpoints` to discover the relevant operation, then call
   `get_api_endpoint_schema` for the selected endpoint before writing a request.
   The public catalog is documentation-only and cannot execute account API

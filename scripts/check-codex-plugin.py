@@ -356,12 +356,16 @@ def load_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def unsupported_text_character(value: str, *, allow_line_breaks: bool) -> str | None:
+def unsupported_text_character(
+    value: str, *, allow_line_breaks: bool, allow_tabs: bool = False
+) -> str | None:
     """Return the first character rejected by the public-directory text rules."""
 
     for character in value:
         codepoint = ord(character)
         if allow_line_breaks and character in {"\n", "\r"}:
+            continue
+        if allow_tabs and character == "\t":
             continue
         if (
             unicodedata.category(character) in {"Cc", "Cf", "Cs"}
@@ -376,11 +380,12 @@ def validate_supported_text(
     label: str,
     *,
     allow_line_breaks: bool = False,
+    allow_tabs: bool = False,
 ) -> None:
     if not isinstance(value, str):
         return
     unsupported = unsupported_text_character(
-        value, allow_line_breaks=allow_line_breaks
+        value, allow_line_breaks=allow_line_breaks, allow_tabs=allow_tabs
     )
     if unsupported is not None:
         errors.append(
@@ -400,6 +405,40 @@ def validate_no_secrets(value: str, label: str) -> None:
         not contains_high_confidence_secret(value),
         f"{label} appears to contain a credential or private key",
     )
+
+
+def validate_packaged_file(path: Path, label: str) -> bytes | None:
+    """Validate every file copied into a packaged skill, not only SKILL.md."""
+
+    require(
+        path.is_file() and not path.is_symlink(),
+        f"{label} must be a regular file and must not be a symlink",
+    )
+    if not path.is_file() or path.is_symlink():
+        return None
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        errors.append(f"cannot read {label}: {exc}")
+        return None
+
+    require(len(data) <= 5 * 1024 * 1024, f"{label} must not exceed 5 MiB")
+    # Latin-1 is a lossless one-byte mapping, so credential syntax and local
+    # path fragments remain visible even when the support file is binary.
+    searchable = data.decode("latin-1")
+    validate_no_secrets(searchable, label)
+    require(
+        "/Users/" not in searchable
+        and "/private/" not in searchable
+        and "file://" not in searchable,
+        f"{label} must not contain developer-local filesystem references",
+    )
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    validate_supported_text(text, label, allow_line_breaks=True, allow_tabs=True)
+    return data
 
 
 def validate_secret_pattern_regressions() -> None:
@@ -657,7 +696,7 @@ def validate_kit_skill_semantics(skill_texts: dict[str, str]) -> None:
     debugging = skill_texts["telnyx-kit-debugging"]
     navigator_flat = re.sub(r"\s+", " ", navigator)
 
-    codex_marker = "**Codex with the Telnyx Developer Kit installed**"
+    codex_marker = "**ChatGPT or Codex with the Telnyx connector/Developer Kit installed**"
     codex_position = navigator.find(codex_marker)
     list_position = navigator.find("`list_api_endpoints`", codex_position)
     schema_position = navigator.find("`get_api_endpoint_schema`", list_position)
@@ -677,7 +716,7 @@ def validate_kit_skill_semantics(skill_texts: dict[str, str]) -> None:
         < schema_position
         < catalog_only_position
         < claude_position,
-        "product navigator must route Codex through list_api_endpoints, then "
+        "product navigator must route ChatGPT and Codex through list_api_endpoints, then "
         "get_api_endpoint_schema, and identify the catalog as documentation-only",
     )
     require(
@@ -2342,8 +2381,10 @@ else:
 
 canonical_skill_texts: dict[str, str] = {}
 for skill_name in sorted(EXPECTED_SKILLS.intersection(actual_skills)):
-    packaged_path = skills_root / skill_name / "SKILL.md"
-    canonical_path = REPO_ROOT / "skills" / skill_name / "SKILL.md"
+    packaged_root = skills_root / skill_name
+    canonical_root = REPO_ROOT / "skills" / skill_name
+    packaged_path = packaged_root / "SKILL.md"
+    canonical_path = canonical_root / "SKILL.md"
     require(packaged_path.is_file(), f"missing packaged skill: {skill_name}/SKILL.md")
     require(canonical_path.is_file(), f"missing canonical skill: {skill_name}/SKILL.md")
     if not packaged_path.is_file() or not canonical_path.is_file():
@@ -2386,19 +2427,51 @@ for skill_name in sorted(EXPECTED_SKILLS.intersection(actual_skills)):
         disable_model_invocation in (None, False),
         f"{skill_name} disable-model-invocation must be false when present",
     )
+    packaged_files = {
+        path.relative_to(packaged_root): path
+        for path in packaged_root.rglob("*")
+        if path.is_file() or path.is_symlink()
+    }
+    canonical_files = {
+        path.relative_to(canonical_root): path
+        for path in canonical_root.rglob("*")
+        if path.is_file() or path.is_symlink()
+    }
     require(
-        packaged_path.read_bytes() == canonical_path.read_bytes(),
-        f"packaged skill differs from canonical source: {skill_name}",
+        set(packaged_files) == set(canonical_files),
+        f"packaged skill file set differs from canonical source: {skill_name}",
     )
+    for relative_path, packaged_file in sorted(packaged_files.items()):
+        label = f"packaged skill {skill_name}/{relative_path.as_posix()}"
+        packaged_data = validate_packaged_file(packaged_file, label)
+        canonical_file = canonical_files.get(relative_path)
+        if packaged_data is not None and canonical_file is not None:
+            try:
+                canonical_data = canonical_file.read_bytes()
+            except OSError as exc:
+                errors.append(
+                    f"cannot read canonical skill {skill_name}/{relative_path}: {exc}"
+                )
+            else:
+                require(
+                    packaged_data == canonical_data,
+                    f"packaged skill file differs from canonical source: "
+                    f"{skill_name}/{relative_path.as_posix()}",
+                )
+                try:
+                    packaged_executable = bool(packaged_file.stat().st_mode & 0o111)
+                    canonical_executable = bool(canonical_file.stat().st_mode & 0o111)
+                except OSError as exc:
+                    errors.append(
+                        f"cannot inspect skill file mode {skill_name}/{relative_path}: {exc}"
+                    )
+                else:
+                    require(
+                        packaged_executable == canonical_executable,
+                        f"packaged skill executable bit differs from canonical source: "
+                        f"{skill_name}/{relative_path.as_posix()}",
+                    )
     canonical_skill_texts[skill_name] = canonical_path.read_text(encoding="utf-8")
-    packaged_text = packaged_path.read_text(encoding="utf-8")
-    validate_no_secrets(packaged_text, f"packaged skill {skill_name}")
-    require(
-        "/Users/" not in packaged_text
-        and "/private/" not in packaged_text
-        and "file://" not in packaged_text,
-        f"{skill_name} must not contain developer-local filesystem references",
-    )
 
 validate_kit_skill_semantics(canonical_skill_texts)
 validate_plugin_workflow()
