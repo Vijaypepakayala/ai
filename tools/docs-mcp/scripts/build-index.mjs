@@ -10,6 +10,10 @@ import {
   normalizeRelativePath,
   skillDirectoryFromRelativePath
 } from "./path-utils.mjs";
+import {
+  frontmatterDescription,
+  frontmatterMetadataValue
+} from "./frontmatter.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, "..", "..", "..");
@@ -32,20 +36,6 @@ function* walk(dir, skip) {
 }
 
 const firstHeading = (t) => t.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? null;
-function frontmatterDescription(text) {
-  const m = text.match(/^---\n([\s\S]*?)\n---/);
-  if (!m) return null;
-  const d = m[1].match(/description:\s*>?-?\s*\n?([\s\S]*?)(?:\n[a-z_]+:|$)/);
-  return d ? d[1].replace(/\s+/g, " ").trim().slice(0, 300) : null;
-}
-
-function frontmatterMetadataValue(text, key) {
-  const frontmatter = text.match(/^---\n([\s\S]*?)\n---/)?.[1];
-  if (!frontmatter) return null;
-  const value = frontmatter.match(new RegExp(`^ {2}${key}:\\s*([^#\\n]+?)\\s*$`, "m"))?.[1]?.trim();
-  if (!value) return null;
-  return value.replace(/^(?:"([\s\S]*)"|'([\s\S]*)')$/, "$1$2");
-}
 
 // telnyx-<capability...>-<language> taxonomy → product + language
 const LANGS = new Set(["curl", "go", "java", "javascript", "python", "ruby"]);

@@ -247,12 +247,6 @@ const ENDPOINT_DISPATCH_CASES: EndpointDispatchCase[] = [
     }
   },
   {
-    tool: "check_messaging_readiness",
-    arguments: { phone_number_id: "123/456" },
-    method: "GET",
-    path: "/v2/phone_numbers/123%2F456/messaging"
-  },
-  {
     tool: "get_message_status",
     arguments: { message_id: "00000000-0000-4000-8000-000000000001" },
     method: "GET",
@@ -316,11 +310,112 @@ describe("complete HTTP endpoint dispatch matrix", () => {
     const covered = [
       ...ENDPOINT_DISPATCH_CASES.map(({ tool }) => tool),
       // These multi-request/gated flows have dedicated direct tests below.
+      "check_messaging_readiness",
       "order_number",
       "call_command"
     ];
     expect([...new Set(covered)].sort()).toEqual(tools.map(({ name }) => name).sort());
   });
+});
+
+describe("messaging readiness parity", () => {
+  function readinessFetch(
+    campaignStatus = "MNO_PROVISIONED",
+    missingPath?: "number" | "messaging" | "assignment" | "campaign"
+  ) {
+    return vi.fn().mockImplementation(async (url: unknown) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname === "/v2/phone_numbers/pn%2Fsender") {
+        if (missingPath === "number") return jsonResponse(404, { error: "not found" });
+        return jsonResponse(200, {
+          data: { id: "pn/sender", phone_number: "+15550002222", status: "active" }
+        });
+      }
+      if (parsed.pathname === "/v2/phone_numbers") {
+        return jsonResponse(200, {
+          data: [{ id: "pn/sender", phone_number: "+15550002222", status: "active" }]
+        });
+      }
+      if (parsed.pathname === "/v2/phone_numbers/pn%2Fsender/messaging") {
+        if (missingPath === "messaging") return jsonResponse(404, { error: "not found" });
+        return jsonResponse(200, {
+          data: {
+            phone_number: "+15550002222",
+            messaging_profile_id: "profile-123",
+            type: "long-code"
+          }
+        });
+      }
+      if (parsed.pathname === "/v2/10dlc/phone_number_campaigns/%2B15550002222") {
+        if (missingPath === "assignment") return jsonResponse(404, { error: "not found" });
+        return jsonResponse(200, {
+          phoneNumber: "+15550002222",
+          assignmentStatus: "ASSIGNED",
+          telnyxCampaignId: "campaign-123"
+        });
+      }
+      if (parsed.pathname === "/v2/10dlc/campaign/campaign-123") {
+        if (missingPath === "campaign") return jsonResponse(404, { error: "not found" });
+        return jsonResponse(200, { campaignStatus });
+      }
+      return jsonResponse(404, { error: `unexpected path ${parsed.pathname}` });
+    });
+  }
+
+  it("uses the complete send gate and returns the verified campaign state", async () => {
+    const fetchMock = readinessFetch();
+    const client = await connectedClient(fetchMock);
+    const result = await client.callTool({
+      name: "check_messaging_readiness",
+      arguments: { phone_number_id: "pn/sender" }
+    });
+
+    expect(result.isError ?? false).toBe(false);
+    const { data: payload } = JSON.parse((result.content as Array<{ text: string }>)[0].text);
+    expect(payload).toMatchObject({
+      ready: true,
+      phone_number_id: "pn/sender",
+      phone_number: "+15550002222",
+      messaging_profile_id: "profile-123",
+      campaign_id: "campaign-123",
+      campaign_status: "MNO_PROVISIONED"
+    });
+    expect(fetchMock.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+      "/v2/phone_numbers/pn%2Fsender",
+      "/v2/phone_numbers",
+      "/v2/phone_numbers/pn%2Fsender/messaging",
+      "/v2/10dlc/phone_number_campaigns/%2B15550002222",
+      "/v2/10dlc/campaign/campaign-123"
+    ]);
+  });
+
+  it("reports not ready when the same sender would be blocked from sending", async () => {
+    const client = await connectedClient(readinessFetch("TCR_ACCEPTED"));
+    const result = await client.callTool({
+      name: "check_messaging_readiness",
+      arguments: { phone_number_id: "pn/sender" }
+    });
+
+    const { data: payload } = JSON.parse((result.content as Array<{ text: string }>)[0].text);
+    expect(payload.ready).toBe(false);
+    expect(payload.reason).toMatch(/not MNO_PROVISIONED.*TCR_ACCEPTED/i);
+  });
+
+  it.each(["number", "messaging", "assignment", "campaign"] as const)(
+    "returns a structured not-ready result when the %s resource is absent",
+    async (missingPath) => {
+      const client = await connectedClient(readinessFetch("MNO_PROVISIONED", missingPath));
+      const result = await client.callTool({
+        name: "check_messaging_readiness",
+        arguments: { phone_number_id: "pn/sender" }
+      });
+
+      expect(result.isError ?? false).toBe(false);
+      const { data } = JSON.parse((result.content as Array<{ text: string }>)[0].text);
+      expect(data.ready).toBe(false);
+      expect(data.reason).toMatch(/not found|no messaging|does not have|could not be found/i);
+    }
+  );
 });
 
 interface CallCommandDispatchCase {

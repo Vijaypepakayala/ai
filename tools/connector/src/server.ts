@@ -735,11 +735,19 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       };
     }
     const phoneNumberId = exactOwnedNumbers[0].id as string;
-    const readinessResponse = await client.request(
-      "GET",
-      `/v2/phone_numbers/${encodeURIComponent(phoneNumberId)}/messaging`,
-      { signal }
-    );
+    let readinessResponse: unknown;
+    try {
+      readinessResponse = await client.request(
+        "GET",
+        `/v2/phone_numbers/${encodeURIComponent(phoneNumberId)}/messaging`,
+        { signal }
+      );
+    } catch (error) {
+      if (error instanceof TelnyxApiError && error.status === 404) {
+        return { refusal: `${from} has no messaging assignment for this account.` };
+      }
+      throw error;
+    }
     const readiness = dataRecord(readinessResponse);
     if (
       readiness?.phone_number !== from ||
@@ -758,11 +766,19 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
           `${from} is a ${String(readiness.type ?? "unknown")} sender. This connector currently sends only from objectively verified 10DLC long-code senders; toll-free and short-code traffic is not dispatched.`
       };
     }
-    const assignmentResponse = await client.request(
-      "GET",
-      `/v2/10dlc/phone_number_campaigns/${encodeURIComponent(from)}`,
-      { signal }
-    );
+    let assignmentResponse: unknown;
+    try {
+      assignmentResponse = await client.request(
+        "GET",
+        `/v2/10dlc/phone_number_campaigns/${encodeURIComponent(from)}`,
+        { signal }
+      );
+    } catch (error) {
+      if (error instanceof TelnyxApiError && error.status === 404) {
+        return { refusal: `${from} does not have an ASSIGNED 10DLC phone-number campaign.` };
+      }
+      throw error;
+    }
     // 10DLC deployments and generated clients expose both the legacy direct
     // record and the API-v2 `data` envelope. Accept only those two object
     // shapes, then apply the same strict field validation below.
@@ -796,13 +812,21 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
         ? "partner"
         : "native";
     const campaignId = telnyxCampaignId ?? tcrCampaignId ?? legacyCampaignId!;
-    const campaignResponse = await client.request(
-      "GET",
-      campaignKind === "partner"
-        ? `/v2/10dlc/partner_campaigns/${encodeURIComponent(campaignId)}`
-        : `/v2/10dlc/campaign/${encodeURIComponent(campaignId)}`,
-      { signal }
-    );
+    let campaignResponse: unknown;
+    try {
+      campaignResponse = await client.request(
+        "GET",
+        campaignKind === "partner"
+          ? `/v2/10dlc/partner_campaigns/${encodeURIComponent(campaignId)}`
+          : `/v2/10dlc/campaign/${encodeURIComponent(campaignId)}`,
+        { signal }
+      );
+    } catch (error) {
+      if (error instanceof TelnyxApiError && error.status === 404) {
+        return { refusal: `${from}'s 10DLC campaign ${campaignId} could not be found.` };
+      }
+      throw error;
+    }
     const campaign = dataOrTopLevelRecord(campaignResponse);
     if (campaign?.campaignStatus !== "MNO_PROVISIONED") {
       return {
@@ -816,6 +840,71 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       campaignId,
       campaignKind
     };
+  };
+
+  const checkMessagingReadiness = async (
+    client: TelnyxClient,
+    phoneNumberId: string,
+    signal?: AbortSignal
+  ) => {
+    let ownedResponse: unknown;
+    try {
+      ownedResponse = await client.request(
+        "GET",
+        `/v2/phone_numbers/${encodeURIComponent(phoneNumberId)}`,
+        { signal }
+      );
+    } catch (error) {
+      if (error instanceof TelnyxApiError && error.status === 404) {
+        return {
+          data: {
+            ready: false,
+            phone_number_id: phoneNumberId,
+            reason: "The phone-number resource was not found on this account."
+          }
+        };
+      }
+      throw error;
+    }
+    const owned = dataRecord(ownedResponse);
+    if (
+      owned?.id !== phoneNumberId ||
+      owned.status !== "active" ||
+      typeof owned.phone_number !== "string" ||
+      owned.phone_number.length === 0
+    ) {
+      return { data: {
+        ready: false,
+        phone_number_id: phoneNumberId,
+        reason: "The id did not resolve to this account's exact active phone number."
+      } };
+    }
+    const verification = await verifyMessagingSender(client, owned.phone_number, signal);
+    if ("refusal" in verification) {
+      return { data: {
+        ready: false,
+        phone_number_id: phoneNumberId,
+        phone_number: owned.phone_number,
+        reason: verification.refusal
+      } };
+    }
+    if (verification.phoneNumberId !== phoneNumberId) {
+      return { data: {
+        ready: false,
+        phone_number_id: phoneNumberId,
+        phone_number: owned.phone_number,
+        reason: "The supplied id no longer matches the verified owned sender."
+      } };
+    }
+    return { data: {
+      ready: true,
+      phone_number_id: verification.phoneNumberId,
+      phone_number: owned.phone_number,
+      messaging_profile_id: verification.messagingProfileId,
+      campaign_id: verification.campaignId,
+      campaign_kind: verification.campaignKind,
+      campaign_status: "MNO_PROVISIONED"
+    } };
   };
 
   type HandlerExtra = { signal?: AbortSignal };
@@ -1007,7 +1096,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     {
       title: "Check a number's messaging readiness",
       description:
-        "Pre-flight for sending SMS from a number on this account: reports the number's messaging profile assignment and messaging feature status. For US A2P traffic the number's profile must also be linked to a 10DLC campaign — treat an unassigned profile as not-ready.",
+        "Run the same fail-closed pre-flight used by send_message. Ready=true requires an exact active owned long-code, messaging-profile assignment, ASSIGNED 10DLC phone-number campaign, and MNO_PROVISIONED campaign status.",
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -1021,7 +1110,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       }
     },
     async ({ phone_number_id }, extra) =>
-      run((c, signal) => c.request("GET", `/v2/phone_numbers/${encodeURIComponent(phone_number_id)}/messaging`, { signal }), extra)
+      run((c, signal) => checkMessagingReadiness(c, phone_number_id, signal), extra)
   );
 
   server.registerTool(
