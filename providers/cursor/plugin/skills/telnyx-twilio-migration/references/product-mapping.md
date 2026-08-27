@@ -20,6 +20,7 @@
 | **Phone Numbers** | **Number Management** | Low | Licensed carrier with direct inventory in 140+ countries. Numbers managed via API or portal. |
 | **Twilio Verify** | **Verify API** | Medium | 5 methods: SMS, vSMS (templated), Call, Flash Call, PSD2. Different API surface but same functionality. |
 | **Twilio Lookup** | **Number Lookup** | Low | Carrier lookup, line type detection, caller name. Direct API replacement. |
+| **Twilio Pay / `<Pay>`** | **Pay over Voice** | Medium | Configure a Payment Connector in test mode, then migrate the flow through TeXML `<Pay>`, Voice API, or an AI Assistant. Never collect or reconstruct payment digits in call application code. |
 | **Twilio Conversations** | No direct equivalent | N/A | Telnyx provides messaging primitives; no multi-channel conversation orchestration product. |
 | **Twilio Notify** | No direct equivalent | N/A | Use Telnyx Messaging API directly for push/SMS notifications. |
 | **10DLC Registration** | **10DLC Campaign Registry** | Low | Same underlying TCR system. Register brands and campaigns via Telnyx portal or API. |
@@ -32,6 +33,7 @@ Use this table to find the detailed migration guide for each product:
 | Product Area | Reference File | Scanner Identifiers |
 |---|---|---|
 | Voice (TwiML/TeXML) | `voice-migration.md`, `texml-verbs.md` | `voice`, `texml` |
+| Pay over Voice | `pay-over-voice.md`, `voice-migration.md`, `texml-verbs.md` | `pay` |
 | Voice (Call Control) | `voice-migration.md` | `voice` |
 | Messaging (SMS/MMS) | `messaging-migration.md` | `messaging` |
 | WebRTC | `webrtc-migration.md` | `webrtc` |
@@ -72,7 +74,6 @@ If you depend on these, you will need a third-party alternative or custom soluti
 | **SendGrid** (Email) | No equivalent. Telnyx does not offer email. Use SendGrid independently or alternatives (Postmark, Resend, SES). |
 | **TaskRouter** (Task Distribution) | No equivalent. Build custom routing with Call Control API queue management. |
 | **Frontline** (deprecated by Twilio) | N/A |
-| **Twilio Pay** | No equivalent. No `<Pay>` verb in TeXML. |
 | **Twilio Conversations** | No direct equivalent. Telnyx provides messaging primitives (SMS/MMS API) but no multi-channel conversation orchestration layer. Build custom or use a third-party conversation platform. |
 
 ## Deprecated Twilio Products Telnyx Still Supports

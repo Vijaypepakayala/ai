@@ -13,6 +13,7 @@ Step-by-step guide for migrating Twilio TwiML-based voice applications to Telnyx
 - [Step 6: Update Authentication](#step-6-update-authentication)
 - [Step 7: Update Webhook Signature Validation](#step-7-update-webhook-signature-validation)
 - [TeXML Bins](#texml-bins)
+- [Pay Migration](#pay-migration)
 - [Testing Your Migration](#testing-your-migration)
 - [Webhook Differences](#webhook-differences)
 - [REST API Mapping](#rest-api-mapping)
@@ -338,6 +339,23 @@ end
 Twilio has TwiML Bins — static TwiML documents hosted by Twilio. Telnyx has an equivalent: **TeXML Bins**.
 
 Create a TeXML Bin in the Mission Control Portal under **Voice** → **TeXML Applications** → **TeXML Bins**. Paste your static XML and get a hosted URL you can use as a Voice URL or waitUrl.
+
+## Pay Migration
+
+Twilio `<Pay>` flows migrate to Telnyx Pay over Voice; do not leave them on
+Twilio or replace them with application-side DTMF collection. Create a Telnyx
+Payment Connector in **test mode**, migrate the flow through TeXML `<Pay>`, the
+Voice API, or an AI Assistant, and validate both progress and completion
+callbacks before switching the connector to live mode. Keep payment digits out
+of application logs, webhook dumps, recordings, transcripts, and model context.
+
+For TeXML, set `paymentConnector` to the configured connector name and preserve
+the intended `charge` versus `tokenize` behavior. Run
+`validate-texml.sh` against the migrated document; `<Pay>` is a supported verb
+and the validator should return success with a connector-setup reminder.
+
+Follow the [Pay over Voice guide](https://developers.telnyx.com/docs/voice/programmable-voice/pay)
+for connector configuration, test values, events, and live-mode restrictions.
 
 ## Testing Your Migration
 

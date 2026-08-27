@@ -117,8 +117,9 @@ curl -s -X POST -H "Authorization: Bearer $TELNYX_API_KEY" \
   "https://api.telnyx.com/v2/messages"
 ```
 
-Then fetch the message by id: delivery truth is `data.to[0].status`, not the
-send response. `queued` or `sending` is not delivered — poll or use the
+Then fetch the message by id. This quickstart sends to exactly one recipient,
+so delivery truth is `data.to[0].status`, not the send response. `queued` or
+`sending` is not delivered — poll or use the
 `message.finalized` webhook.
 
 ## 5. Webhooks, if your product needs them

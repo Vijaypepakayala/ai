@@ -41,8 +41,11 @@ Caller → Telnyx number → TeXML app: <Connect><Stream url="wss://you"/></Conn
   senders need carrier approval/provisioning.
 - Queue sends (worker + retry with backoff on 429 reading `Retry-After`);
   never loop sends inline in a request handler.
-- Delivery truth: `message.finalized` webhook, outcome in
-  `data.payload.to[0].status`. Dedupe deliveries on the event `data.id` and
+- Delivery truth: the `message.finalized` webhook. Iterate every entry in
+  `data.payload.to` and correlate each recipient by `phone_number`; group MMS
+  can contain different outcomes for different destinations. Use
+  `data.payload.to[0].status` only when the originating request is guaranteed
+  to have exactly one recipient. Dedupe deliveries on the event `data.id` and
   correlate business state on `data.payload.id`; do not collapse distinct
   lifecycle events merely because they reference the same message.
 - Store conversation state server-side keyed on BOTH numbers (user × your

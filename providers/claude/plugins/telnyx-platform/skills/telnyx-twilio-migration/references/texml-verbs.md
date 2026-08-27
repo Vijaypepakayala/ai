@@ -6,11 +6,10 @@ Complete reference for all TeXML verbs and nouns. TeXML is Telnyx's TwiML-compat
 
 - [Document Structure](#document-structure)
 - [Nesting Rules](#nesting-rules)
-- [Verbs](#verbs): Say, Play, Gather, Dial, Record, Hangup, Pause, Redirect, Reject, Refer, Enqueue, Leave, Start, Stop, Connect
+- [Verbs](#verbs): Say, Play, Gather, Dial, Record, Hangup, Pause, Redirect, Reject, Refer, Enqueue, Leave, Start, Stop, Connect, Pay
 - [Nouns](#nouns): Number, Sip, Queue, Conference, Stream, Transcription, Suppression, Siprec
 - [Common Patterns](#common-patterns)
 - [Telnyx-Only Features](#telnyx-only-features)
-- [TwiML Verbs Not Supported](#twiml-verbs-not-supported)
 
 ## Document Structure
 
@@ -46,6 +45,7 @@ Every TeXML document is wrapped in a `<Response>` root element. Verbs execute se
   ├── <Record>                  top-level only
   ├── <Hangup>                  top-level only
   ├── <Pause>                   top-level only
+  ├── <Pay>                     top-level only; requires a Payment Connector
   ├── <Redirect>                top-level only (terminal)
   ├── <Reject>                  top-level only (terminal)
   ├── <Refer>                   top-level only
@@ -212,6 +212,61 @@ Waits silently for a specified duration.
 <Pause length="3"/>
 <Say>Connecting you now.</Say>
 ```
+
+### `<Pay>` — Collect or Tokenize Payment Details
+
+Runs Telnyx's secure Pay over Voice flow. Configure a Payment Connector first
+and keep it in test mode until the IVR, processor response, and callbacks have
+been exercised end to end. Telnyx masks payment input from recordings,
+transcriptions, AI assistants, DTMF webhooks, and platform logs; call
+application code must not attempt to collect or reconstruct those digits.
+
+| Attribute | Type | Default | Description |
+|---|---|---|---|
+| `action` | URL | — | TeXML instructions requested after Pay completes. |
+| `method` | string | `POST` | HTTP method for `action`: `GET` or `POST`. |
+| `statusCallback` | URL | — | Payment progress and completion callback. |
+| `statusCallbackMethod` | string | `POST` | HTTP method for `statusCallback`: `GET` or `POST`. |
+| `paymentConnector` | string | `Default` | Name of the configured Payment Connector. |
+| `chargeAmount` | decimal string | — | Amount to charge; required when `transactionType="charge"`. |
+| `currency` | string | `USD` | Only `USD` is currently supported. |
+| `paymentToken` | string | — | Existing token that skips payment-data collection. |
+| `paymentMethod` | string | `credit-card` | `credit-card` or `ach-debit`. |
+| `postalCode` | boolean or string | `true` | Collect a postal code, skip it with `false`, or supply a static value. |
+| `minPostalCodeLength` | integer | — | Minimum postal-code length when collection is enabled; at least 1. |
+| `validCardTypes` | token list | — | Space-delimited subset of `visa`, `mastercard`, `amex`, `maestro`, `discover`, `optima`, `jcb`, `diners-club`, and `enroute`. |
+| `transactionType` | string | inferred | `charge` or `tokenize`; inferred from `chargeAmount` when omitted. |
+| `description` | string | — | Payment description. |
+| `maxAttempts` | integer | `1` | Attempts per collection step, from 1 through 3. |
+| `timeout` | integer | `5` | Timeout for each DTMF step, from 1 through 600 seconds. |
+| `interDigitTimeout` | integer | `5` | Timeout between DTMF digits, from 1 through 600 seconds. |
+| `voice` | string | `female` | Voice used for payment prompts. |
+| `language` | string | `en-US` | Language used for payment prompts. |
+| `serviceLevel` | string | `premium` | Payment-processing service level. |
+| `parameters` | JSON object string | — | Additional connector parameters. |
+| `prompts` | JSON object string | — | Custom prompts; alternatively use nested `<Prompt>` elements. |
+| `metadata` | JSON object string | — | Metadata attached to the transaction. |
+
+Nested `<Parameter name="..." value="..."/>` elements add connector
+parameters. Nested `<Prompt for="..."><Say>...</Say></Prompt>` elements
+customize collection prompts.
+
+```xml
+<Pay paymentConnector="Default" chargeAmount="10.50" currency="USD"
+     paymentMethod="credit-card" transactionType="charge"
+     statusCallback="https://example.com/payment-events">
+  <Parameter name="order_id" value="12345"/>
+  <Prompt for="payment-card-number">
+    <Say>Enter your card number.</Say>
+  </Prompt>
+</Pay>
+```
+
+Progress and completion callbacks are sent to the TeXML application's webhook
+URL as `call_payment_progress` and `call_payment_completed` events.
+
+See the [Pay over Voice guide](https://developers.telnyx.com/docs/voice/programmable-voice/pay)
+for connector setup, test values, callbacks, and the complete attribute list.
 
 ### `<Redirect>` — Transfer to Another TeXML Document
 
@@ -573,9 +628,3 @@ These capabilities exist in TeXML but have no TwiML equivalent:
 | Country-specific ringback tones | `ringTone` attribute on `<Dial>` (37+ countries) |
 | Synchronous streaming | `<Connect>` verb (blocks until stream ends) |
 | Telnyx media storage | `mediaStorage="true"` on `<Play>` |
-
-## TwiML Verbs Not Supported
-
-| TwiML Verb | TeXML Status | Alternative |
-|---|---|---|
-| `<Pay>` | Not supported | No equivalent. Handle payments outside the call flow. |

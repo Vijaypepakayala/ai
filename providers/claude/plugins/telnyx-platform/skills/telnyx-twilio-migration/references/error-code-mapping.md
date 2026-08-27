@@ -73,7 +73,7 @@ These appear in `data.payload.errors[0].code` in `message.finalized` webhook eve
 | 30006 | Landline destination | 40001 | Not routable |
 | 21610 | Unsubscribed recipient | 40008 | Number opted out (STOP) |
 
-**Migration note**: Twilio sends `MessageStatus` callbacks with flat params. Telnyx sends `message.finalized` webhooks with nested JSON under `data.payload`. Check `data.payload.to[0].status` for delivery status (`delivered`, `sending_failed`, `delivery_failed`).
+**Migration note**: Twilio sends `MessageStatus` callbacks with flat params. Telnyx sends `message.finalized` webhooks with nested JSON under `data.payload`. Iterate every entry in `data.payload.to` and correlate by `phone_number` for delivery status (`delivered`, `sending_failed`, `delivery_failed`); use `data.payload.to[0].status` only when the originating send is guaranteed to have one recipient.
 
 ---
 

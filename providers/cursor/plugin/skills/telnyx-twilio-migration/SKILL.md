@@ -10,7 +10,7 @@ user_invocable: true
 metadata:
   author: telnyx
   product: migration
-  compatibility: "Requires bash 4+, jq, curl. macOS ships bash 3.2 — scripts auto-upgrade via Homebrew bash if available (brew install bash)."
+  compatibility: "Requires bash 4+, jq, curl; Pay migrations also require Python 3. macOS ships bash 3.2 — scripts auto-upgrade via Homebrew bash if available (brew install bash)."
 ---
 
 # Twilio to Telnyx Migration
@@ -19,7 +19,7 @@ metadata:
 
 You MUST follow these phases in order (0 → 1 → 2 → 3 → 4 → 5 → 6). Do NOT skip phases. Each phase has prerequisites and exit criteria — do not proceed until the exit criteria are met. You MUST run the scripts specified in each phase (do not substitute your own checks). You MUST modify the user's source files to complete the migration.
 
-**Interaction model**: Phase 0 collects ALL user input (API key, phone number, cost approval). Phases 1–6 run **fully autonomously** — do NOT ask the user any questions. Make all decisions deterministically using the rules in each phase. The only exception: if a failure persists after 3 fix attempts, present the issue to the user with error details and what you tried.
+**Interaction model**: Phase 0 collects the universal user input (API key, phone number, cost approval). Phases 1–6 run **fully autonomously** except for the explicit Pay Payment Connector setup gate below; processor credentials must be entered by the user in the Telnyx Portal and must never be requested in chat or exposed to the agent. The other exception is a failure that persists after 3 fix attempts, which must be presented with error details and what was tried.
 
 **Context recovery**: If you lose context (e.g. after compaction), IMMEDIATELY run `bash {baseDir}/scripts/migration-state.sh status <project-root>` and `bash {baseDir}/scripts/migration-state.sh show <project-root>` to recover your current phase and all resource IDs. Then resume from that phase.
 
@@ -59,7 +59,10 @@ Ask the user for these **three things** in a single message:
 
 **Total estimated cost for most migrations: under $1.20.** 10DLC adds ~$19 if applicable. Individual paid actions still have `--confirm` gates in the scripts.
 
-**Do not proceed until the user provides all three items.** This is the last time you will ask the user for input.
+**Do not proceed until the user provides all three items.** This is the last
+universal setup prompt. If discovery later finds Pay, the separate Payment
+Connector gate below is still mandatory; never collect processor credentials
+in chat.
 
 ### Step 0.2: Validate API Key & Initialize State
 
@@ -103,8 +106,8 @@ Review scan results and classify each match:
 
 **Do NOT ask the user to confirm scope.** Migrate ALL detected Twilio products. Apply these rules automatically:
 
-- **Supported products** (voice, messaging, verify, webrtc, sip, fax, video, lookup, numbers, porting): migrate
-- **Unsupported products** (Flex, Studio, TaskRouter, Conversations, Sync, Notify, Proxy, Pay, Autopilot): automatically keep on Twilio — record in state and continue:
+- **Supported products** (voice, messaging, verify, webrtc, sip, fax, video, lookup, numbers, porting, pay): migrate
+- **Unsupported products** (Flex, Studio, TaskRouter, Conversations, Sync, Notify, Proxy, Autopilot): automatically keep on Twilio — record in state and continue:
 
 ```bash
 # Automatically record each unsupported product as kept on Twilio:
@@ -112,6 +115,22 @@ bash {baseDir}/scripts/migration-state.sh set <project-root> kept_on_twilio.<pro
 ```
 
 See `{baseDir}/references/unsupported-products.md` for alternatives to note in the migration report.
+
+**Pay human setup gate:** when active Pay usage is detected, pause before Phase 2.
+Require `python3 --version` to succeed, then ask the user to configure a Telnyx
+Payment Connector in **test mode** in the Telnyx Portal, enter all
+processor-specific credentials there, and provide only the connector name plus
+confirmation that test mode is enabled. Never request or store processor
+credentials. Record the non-secret result with:
+
+```bash
+bash {baseDir}/scripts/migration-state.sh set <project-root> pay.connector_name "<connector-name>"
+bash {baseDir}/scripts/migration-state.sh set <project-root> pay.test_mode_confirmed true
+```
+
+Do not generate Pay code or claim the Pay migration is testable until both
+values are present. This is an intentional human provisioning gate, not an
+autonomous failure to retry.
 
 **Mobile platforms** (detected and guided): iOS native, Android native, React Native, Flutter. These require client-side SDK migration — see `{baseDir}/references/mobile-sdk-migration.md` for complete migration guides.
 
@@ -131,6 +150,7 @@ For each product detected in the scan, read the corresponding reference file:
 | Detected Product | Read This Reference |
 |---|---|
 | `voice`, `texml` | `{baseDir}/references/voice-migration.md` and `{baseDir}/references/texml-verbs.md` |
+| `pay` | `{baseDir}/references/pay-over-voice.md`, plus `{baseDir}/references/texml-verbs.md` for XML flows |
 | `messaging` | `{baseDir}/references/messaging-migration.md` |
 | `webrtc` | `{baseDir}/references/webrtc-migration.md` and `{baseDir}/references/mobile-sdk-migration.md` |
 | `verify` | `{baseDir}/references/verify-migration.md` |
@@ -177,7 +197,7 @@ Populate the plan based on the decisions above. Do not ask for user approval —
 ## Phase 3: Setup
 
 > **Prerequisites**: Phase 2 complete, `MIGRATION-PLAN.md` exists.
-> **Exit criteria**: Telnyx SDK installed, environment variables updated, setup committed to git.
+> **Exit criteria**: Telnyx SDK installed when the selected product path uses one (Pay/TeXML-only REST migrations keep the existing HTTP client), environment variables updated, setup committed to git.
 
 ### Step 3.1: Create Migration Branch
 
@@ -187,7 +207,7 @@ cd <project-root> && git checkout -b migrate/twilio-to-telnyx
 
 ### Step 3.2: Install Telnyx SDK (Keep Twilio Until Phase 6)
 
-Install Telnyx SDK **alongside** Twilio — do NOT remove Twilio from the package manifest yet (removal is Phase 6). Keep `twilio` in `requirements.txt`/`package.json`/`Gemfile`/`go.mod` until Phase 6 so you can revert if validation fails.
+Install the Telnyx SDK **alongside** Twilio when the selected migration path uses an SDK — do NOT remove Twilio from the package manifest yet (removal is Phase 6). Pay/TeXML-only REST migrations use the project's existing HTTP client and MUST NOT add an unused Telnyx SDK. Keep `twilio` in `requirements.txt`/`package.json`/`Gemfile`/`go.mod` until Phase 6 so you can revert if validation fails.
 
 **Server SDKs** — use these EXACT commands with version constraints (do NOT use `pip install telnyx` or `npm install telnyx` without a version range):
 - Python: `pip install 'telnyx>=4.0,<5.0'` — and write `telnyx>=4.0,<5.0` in `requirements.txt` (NOT just `telnyx`). Initialize with `from telnyx import Telnyx; client = Telnyx(api_key=os.environ.get("TELNYX_API_KEY"))`.
@@ -243,7 +263,7 @@ bash {baseDir}/scripts/migration-state.sh set-commit <project-root> 3
 
 ## Phase 4: Migration
 
-> **Prerequisites**: Phase 3 complete, Telnyx SDK installed, env vars updated, setup committed.
+> **Prerequisites**: Phase 3 complete, required Telnyx SDK installed or the documented Pay/TeXML-only REST exception recorded, env vars updated, setup committed.
 > **Exit criteria**: All source files transformed, per-product validation passes, all changes committed.
 
 Transform code file-by-file, grouped by product area. **You must actually modify the user's source files** — reading references alone is not sufficient.
@@ -251,6 +271,16 @@ Transform code file-by-file, grouped by product area. **You must actually modify
 ### Migration Loop
 
 Process each product area in priority order: **messaging → voice → verify → numbers → others**.
+
+Normalize scanner identifiers through this routing table before resolving
+references. Keep the original identifier in migration state and pass it to the
+validators, but use the routed reference and SDK family:
+
+| Scanner identifier | Migration path | Primary references | SDK reference |
+|---|---|---|---|
+| `pay` | Voice API or TeXML Pay over Voice | `pay-over-voice.md`; also `texml-verbs.md` for XML | No generated Pay SDK reference — use the exact REST contract in `pay-over-voice.md`; do not invent an SDK method |
+| `twiml`, `texml` | Voice/TeXML | `voice-migration.md`, `texml-verbs.md` | `sdk-reference/{language}/texml.md`; normalize either scanner spelling to validator product `voice` |
+| all other supported identifiers | same-name product path | `{product}-migration.md` | `sdk-reference/{language}/{product}.md` |
 
 **For each product area:**
 
@@ -311,6 +341,15 @@ If validation fails and you cannot fix the issue, document it and continue to th
 - **`speechModel` does NOT exist in TeXML** — remove it or replace with `transcriptionEngine` (e.g., `transcriptionEngine="Google"`). Using `speechModel` will be silently ignored.
 - **Polly voices**: TeXML supports `voice="Polly.{VoiceId}"` and `voice="Polly.{VoiceId}-Neural"`. Always prefer Neural variants (e.g., `Polly.Amy-Neural` instead of `Polly.Amy`) — non-Neural voices may silently fall back to the default voice. If a specific Polly voice is unavailable, use `voice="woman"` with the appropriate `language` attribute.
 - **Outbound calls**: Use the Telnyx SDK — do NOT use raw `fetch()` to the TeXML API. The SDK handles auth, retries, and response parsing. Pass the **TeXML Application ID** (from `TELNYX_CONNECTION_ID`, NOT a SIP connection ID) as the `connection_id` parameter. See `{baseDir}/sdk-reference/{language}/texml.md` for the exact method signature.
+
+**Pay over Voice (scanner identifier `pay`):**
+- Route through the Voice/TeXML path above; do not look for a nonexistent
+  `pay-migration.md` or `sdk-reference/{language}/pay.md`.
+- Configure the Payment Connector in test mode, preserve charge versus
+  tokenization behavior, and migrate TwiML `<Pay>` to TeXML `<Pay>`.
+- Run `validate-texml.sh` for every XML flow, then run both migration
+  validators with `--product pay`; that filter intentionally applies the
+  Voice/TeXML rule family.
 
 **Voice (Call Control path):**
 - Replace TwiML response generation with Call Control API commands

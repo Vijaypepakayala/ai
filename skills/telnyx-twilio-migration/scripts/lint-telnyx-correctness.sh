@@ -23,6 +23,8 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # --- Colors ---
 if [ -t 1 ]; then
   RED='\033[0;31m'
@@ -55,7 +57,7 @@ usage() {
   echo ""
   echo "Checks migrated Telnyx code for known anti-patterns and common mistakes."
   echo ""
-  echo "Products: voice, messaging, verify, webrtc"
+  echo "Products: all, voice, twiml, texml, messaging, verify, webrtc, sip, sip-integrations, fax, video, iot, lookup, numbers, numbers-config, porting-in, porting-out, pay, webhook-validation, conversations, sync, notify, proxy, autopilot, taskrouter, studio, flex"
   exit 2
 }
 
@@ -81,6 +83,41 @@ search_files() {
   done
   # shellcheck disable=SC2086
   grep -rn $GREP_EXCLUDES $include_args -E "$pattern" "$PROJECT_ROOT" 2>/dev/null || true
+}
+
+find_active_invalid_pay_endpoints() {
+  python3 - "$PROJECT_ROOT" "$SCRIPT_DIR/scan-twilio-deep.py" <<'PY'
+import importlib.util
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1])
+scanner_path = pathlib.Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location("telnyx_migration_scanner", scanner_path)
+if spec is None or spec.loader is None:
+    raise SystemExit("could not load migration comment masker")
+scanner = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = scanner
+spec.loader.exec_module(scanner)
+
+excluded = {"node_modules", ".git", "vendor", "__pycache__", "venv", ".venv", "dist", "build"}
+suffixes = {".py", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".rb", ".php", ".go", ".java", ".kt", ".kts", ".scala", ".cs", ".sh", ".bash", ".zsh"}
+pattern = re.compile(r'(?:/v2/calls/[^/\s"\'`]+/pay|api\.telnyx\.com/v2/calls/[^/\s"\'`]+/pay)', re.IGNORECASE)
+for path in root.rglob("*"):
+    relative_parts = path.relative_to(root).parts
+    if not path.is_file() or path.suffix.lower() not in suffixes or any(part in excluded for part in relative_parts):
+        continue
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        continue
+    masked = scanner.mask_comments(text)
+    for match in pattern.finditer(masked):
+        line_number = masked.count("\n", 0, match.start()) + 1
+        line = text.splitlines()[line_number - 1] if text.splitlines() else ""
+        print(f"{path}:{line_number}:{line}")
+PY
 }
 
 count_matches() {
@@ -166,7 +203,12 @@ product_applies() {
   if [ "$PRODUCT_FILTER" = "all" ] || [ "$check_products" = "all" ]; then
     return 0
   fi
-  echo "$check_products" | tr ',' '\n' | grep -qx "$PRODUCT_FILTER"
+  local effective_filter="$PRODUCT_FILTER"
+  # Scanner spellings twiml/texml and Pay share Voice/TeXML correctness rules.
+  case "$effective_filter" in
+    pay|twiml|texml) effective_filter="voice" ;;
+  esac
+  echo "$check_products" | tr ',' '\n' | grep -qx "$effective_filter"
 }
 
 section_header() {
@@ -186,6 +228,14 @@ while [ $# -gt 0 ]; do
     --product)
       if [ $# -lt 2 ]; then echo "Error: --product requires a value" >&2; usage; fi
       PRODUCT_FILTER="$2"
+      case "$PRODUCT_FILTER" in
+        all|voice|twiml|texml|messaging|verify|webrtc|sip|sip-integrations|fax|video|iot|lookup|numbers|numbers-config|porting-in|porting-out|pay|webhook-validation|conversations|sync|notify|proxy|autopilot|taskrouter|studio|flex) ;;
+        *)
+          echo "Error: Unknown product '$PRODUCT_FILTER'" >&2
+          echo "Valid products: all, voice, twiml, texml, messaging, verify, webrtc, sip, sip-integrations, fax, video, iot, lookup, numbers, numbers-config, porting-in, porting-out, pay, webhook-validation, conversations, sync, notify, proxy, autopilot, taskrouter, studio, flex" >&2
+          exit 2
+          ;;
+      esac
       shift 2
       ;;
     --json)
@@ -261,6 +311,30 @@ if [ "$JSON_MODE" = false ]; then
   echo "Product: $PRODUCT_FILTER"
 fi
 
+if product_applies "voice"; then
+  section_header "Pay Endpoint Correctness"
+  pay_endpoint_candidates=$(search_files '/v2/calls/[^/[:space:]"'\''`]+/pay|api\.telnyx\.com/v2/calls/[^/[:space:]"'\''`]+/pay' \
+    "*.py" "*.js" "*.ts" "*.jsx" "*.tsx" "*.mjs" "*.cjs" "*.rb" "*.php" "*.go" "*.java" "*.kt" "*.kts" "*.scala" "*.cs" "*.sh" "*.bash" "*.zsh")
+  if [ "$PRODUCT_FILTER" = "pay" ] || [ -n "$pay_endpoint_candidates" ]; then
+    if ! command -v python3 >/dev/null 2>&1; then
+      echo "Error: Pay correctness checks require python3 for comment-aware source validation" >&2
+      exit 2
+    fi
+    matches=$(find_active_invalid_pay_endpoints)
+  else
+    matches=""
+  fi
+  count=$(count_matches "$matches")
+  if [ "$count" -gt 0 ]; then
+    lint_issue "invalid_telnyx_pay_endpoint" \
+      "Invalid Telnyx Pay endpoint /v2/calls/{call_control_id}/pay found" \
+      "Use POST /v2/calls/{call_control_id}/actions/pay exactly" \
+      "$(matches_to_json "$matches")"
+  else
+    lint_pass "invalid_telnyx_pay_endpoint" "No invalid direct /pay endpoint found"
+  fi
+fi
+
 # ============================================================
 # MESSAGING ANTI-PATTERNS
 # ============================================================
@@ -268,7 +342,7 @@ if product_applies "messaging"; then
   section_header "Messaging Correctness"
 
   # Check 1: .messages.create( — Twilio pattern, Telnyx uses .send() or messages.create differently
-  matches=$(search_files '\.messages\.create\(' "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.php")
+  matches=$(search_files '\.messages\.create\(' "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.kt" "*.kts" "*.scala" "*.php")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
     lint_issue "twilio_messages_create" \
@@ -335,7 +409,7 @@ if product_applies "voice"; then
   section_header "Voice Correctness"
 
   # Check 5: VoiceResponse builder (Twilio TwiML — doesn't exist in Telnyx SDK)
-  matches=$(search_files 'VoiceResponse\(' "*.py" "*.js" "*.ts" "*.rb" "*.java" "*.php")
+  matches=$(search_files 'VoiceResponse\(' "*.py" "*.js" "*.ts" "*.rb" "*.java" "*.kt" "*.kts" "*.scala" "*.php")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
     lint_issue "voice_response_builder" \
@@ -347,7 +421,7 @@ if product_applies "voice"; then
   fi
 
   # Check 6: speechModel in TeXML/XML (not a valid Telnyx attribute)
-  matches=$(search_files 'speechModel' "*.xml" "*.py" "*.js" "*.ts" "*.rb" "*.java" "*.php")
+  matches=$(search_files 'speechModel' "*.xml" "*.py" "*.js" "*.ts" "*.rb" "*.java" "*.kt" "*.kts" "*.scala" "*.php")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
     lint_issue "speech_model_attr" \
@@ -361,7 +435,7 @@ if product_applies "voice"; then
   # Check 7: Recording URL stored without download logic (10-min expiry)
   # Skip if voice/recording not detected in scan
   if scan_has_product "voice"; then
-    matches=$(search_files '(recording.*url|RecordingUrl|recording_url)' "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java")
+    matches=$(search_files '(recording.*url|RecordingUrl|recording_url)' "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.kt" "*.kts" "*.scala")
     count=$(count_matches "$matches")
     if [ "$count" -gt 0 ]; then
       lint_warn "recording_url_expiry" \
@@ -381,7 +455,7 @@ if product_applies "verify"; then
   section_header "Verify Correctness"
 
   # Check 8: status === 'approved' (Twilio) — Telnyx uses response_code === 'accepted'
-  matches=$(search_files "(status.*[=!]=.*['\"]approved['\"]|['\"]approved['\"].*[=!]=.*status)" "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.php")
+  matches=$(search_files "(status.*[=!]=.*['\"]approved['\"]|['\"]approved['\"].*[=!]=.*status)" "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.kt" "*.kts" "*.scala" "*.php")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
     lint_issue "verify_status_approved" \
@@ -456,12 +530,12 @@ if product_applies "all"; then
   section_header "Webhook Signature Validation"
 
   # Check 12: Webhook handlers without Ed25519 signature verification
-  webhook_handlers=$(search_files "(app\.(post|put)|router\.(post|put)|@app\.route|@csrf_exempt|http\.HandleFunc|post.*do)" "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.php")
+  webhook_handlers=$(search_files "(app\.(post|put)|router\.(post|put)|@app\.route|@csrf_exempt|http\.HandleFunc|post.*do)" "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.kt" "*.kts" "*.scala" "*.php")
   webhook_count=$(count_matches "$webhook_handlers")
   if [ "$webhook_count" -gt 0 ]; then
-    ed25519_refs=$(search_files "(telnyx-signature-ed25519|ed25519|verify_signature|verifySignature|construct_event|webhooks\.unwrap|TELNYX_PUBLIC_KEY)" "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.php")
+    ed25519_refs=$(search_files "(telnyx-signature-ed25519|ed25519|verify_signature|verifySignature|construct_event|webhooks\.unwrap|TELNYX_PUBLIC_KEY)" "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.kt" "*.kts" "*.scala" "*.php")
     ed25519_count=$(count_matches "$ed25519_refs")
-    telnyx_webhook_parse=$(search_files "(data\.payload|data\[.payload.\]|data\.event_type|data\[.event_type.\])" "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.php")
+    telnyx_webhook_parse=$(search_files "(data\.payload|data\[.payload.\]|data\.event_type|data\[.event_type.\])" "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.kt" "*.kts" "*.scala" "*.php")
     telnyx_parse_count=$(count_matches "$telnyx_webhook_parse")
     if [ "$telnyx_parse_count" -gt 0 ] && [ "$ed25519_count" -eq 0 ]; then
       if [ "$ORIGINAL_HAD_WEBHOOK_VALIDATION" = "false" ]; then
@@ -500,7 +574,7 @@ if product_applies "voice"; then
   section_header "Polly Voice Compatibility"
 
   # Check 14: Non-Neural Polly voices (may fall back to default voice)
-  polly_refs=$(search_files "Polly\.[A-Z][a-z]+" "*.xml" "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.php")
+  polly_refs=$(search_files "Polly\.[A-Z][a-z]+" "*.xml" "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.kt" "*.kts" "*.scala" "*.php")
   polly_count=$(count_matches "$polly_refs")
   if [ "$polly_count" -gt 0 ]; then
     non_neural=$(echo "$polly_refs" | grep -v "\-Neural" || true)
@@ -550,7 +624,7 @@ fi
 section_header "Residual Twilio Patterns"
 
 # Check 10: Residual Twilio imports still present alongside Telnyx code
-matches=$(search_files '(from twilio|import twilio|require.*twilio|using Twilio)' "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.php" "*.cs")
+matches=$(search_files '(from twilio|import twilio|import[[:space:]]+com\.twilio\.|require.*twilio|using Twilio)' "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.kt" "*.kts" "*.scala" "*.php" "*.cs")
 count=$(count_matches "$matches")
 if [ "$count" -gt 0 ]; then
   lint_issue "residual_twilio_imports" \
@@ -562,7 +636,7 @@ else
 fi
 
 # Check 11: Twilio client instantiation patterns
-matches=$(search_files '(Client\(.*account_sid|Twilio\(|twilio\.Twilio\(|new Twilio\.)' "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.php")
+matches=$(search_files '(Client\(.*account_sid|Twilio\(|twilio\.Twilio\(|new Twilio\.)' "*.py" "*.js" "*.ts" "*.rb" "*.go" "*.java" "*.kt" "*.kts" "*.scala" "*.php")
 count=$(count_matches "$matches")
 if [ "$count" -gt 0 ]; then
   lint_issue "twilio_client_instantiation" \

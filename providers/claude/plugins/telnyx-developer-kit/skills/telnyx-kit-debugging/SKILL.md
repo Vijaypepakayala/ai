@@ -52,9 +52,12 @@ metadata:
   dead at runtime. Same for unknown verbs: silently dropped. Validate
   documents against the current TeXML Verbs & Nouns reference before
   deploying; do not rely on a fixed verb count.
-- **Messages "sent" but never delivered**: use `message.finalized`
-  (`data.payload.to[0].status`) as final delivery truth. Treat the synchronous
-  send response and intermediate events as acceptance/progress, not delivery.
+- **Messages "sent" but never delivered**: use `message.finalized` as final
+  delivery truth. Iterate every entry in `data.payload.to` and correlate by
+  `phone_number` for group or multi-recipient messages;
+  `data.payload.to[0].status` is sufficient only when the send is guaranteed to
+  target exactly one recipient. Treat the synchronous send response and
+  intermediate events as acceptance/progress, not delivery.
 - **US SMS delivered=false with no API error**: check sender-specific carrier
   readiness before blaming code — 10DLC for local long codes, toll-free
   verification for toll-free senders, and carrier approval for short codes.

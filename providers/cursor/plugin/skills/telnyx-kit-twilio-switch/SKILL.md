@@ -45,8 +45,10 @@ code fail **silently**, with a 200 response and nothing happening.
    channels, while `<Dial recordingChannels>` defaults to single. Set the
    channel mode explicitly after reviewing the migrated flow; do not assume a
    single Telnyx-wide default.
-3. **Delivery events differ.** Use `message.finalized` and
-   `data.payload.to[0].status` as final delivery truth. The synchronous send
+3. **Delivery events differ.** Use `message.finalized` as final delivery truth.
+   Iterate every entry in `data.payload.to` and correlate by `phone_number` for
+   group or multi-recipient messages; use `data.payload.to[0].status` only when
+   the send is guaranteed to target exactly one recipient. The synchronous
    response and intermediate events are not proof of delivery.
 4. **Webhook shape depends on the API family.** API v2 events are nested JSON
    under `data.*`; TeXML POST callbacks remain flat

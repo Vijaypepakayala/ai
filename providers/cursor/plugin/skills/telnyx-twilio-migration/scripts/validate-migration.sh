@@ -20,6 +20,7 @@
 #   2 — Usage error
 
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- Colors (disabled if not a terminal) ---
 # shellcheck disable=SC2034  # BLUE reserved for info lines; kept for palette consistency
@@ -58,7 +59,7 @@ usage() {
   echo "Usage: $(basename "$0") <project-root> [--product <name>] [--json] [--state-file <path>]"
   echo "       [--exclude-dir <dir>] [--scan-json <path>]"
   echo ""
-  echo "Products: voice, messaging, verify, webrtc, sip, fax, video, iot, lookup"
+  echo "Products: voice, messaging, verify, webrtc, sip, fax, video, iot, lookup, pay"
   echo ""
   echo "Options:"
   echo "  --state-file <path>   Path to migration-state.json for hybrid deployment awareness"
@@ -173,6 +174,24 @@ search_files() {
   grep -rn $GREP_EXCLUDES $include_args -E "$pattern" "$PROJECT_ROOT" 2>/dev/null || true
 }
 
+# Return one synthetic grep-style hit per XML/TwiML file that contains both a
+# Response root and a recognized verb. The tags may be on different lines.
+search_twiml_files() {
+  local verb_files
+  # shellcheck disable=SC2086
+  verb_files=$(grep -rl $GREP_EXCLUDES --include='*.xml' --include='*.twiml' -E \
+    '<(Say|Dial|Gather|Record|Message|Redirect|Reject|Pause|Enqueue|Play|Pay)([[:space:]/>]|$)' \
+    "$PROJECT_ROOT" 2>/dev/null || true)
+  while IFS= read -r filepath; do
+    [ -z "$filepath" ] && continue
+    if grep -Eq '<Response([[:space:]/>]|$)' "$filepath" 2>/dev/null; then
+      printf '%s:1:<Response + TwiML verb>\n' "$filepath"
+    fi
+  done <<EOF
+$verb_files
+EOF
+}
+
 # Search helper that excludes .md files and minified JS (for config/env var checks)
 # Avoids false positives from migration docs that reference old env var names
 search_source_files() {
@@ -186,19 +205,40 @@ search_source_files() {
   grep -rn $GREP_EXCLUDES --exclude='*.md' --exclude='*.min.js' $include_args -E "$pattern" "$PROJECT_ROOT" 2>/dev/null || true
 }
 
-# Search helper that filters out comment-only lines to reduce false positives.
-# Strips lines where the match is in a comment (# // /* -- %) before counting.
-search_code_only() {
-  local pattern="$1"
-  shift
-  local raw
-  raw=$(search_files "$pattern" "$@")
-  if [ -z "$raw" ]; then
-    echo ""
-    return
-  fi
-  # Filter out lines that are comments (leading # // /* -- % after optional whitespace)
-  echo "$raw" | grep -v '^\([^:]*:[0-9]*:\)\s*\(#\|//\|/\*\|\*\|--\|%\|<!--\)' || true
+find_active_invalid_pay_endpoints() {
+  python3 - "$PROJECT_ROOT" "$SCRIPT_DIR/scan-twilio-deep.py" <<'PY'
+import importlib.util
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1])
+scanner_path = pathlib.Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location("telnyx_migration_scanner", scanner_path)
+if spec is None or spec.loader is None:
+    raise SystemExit("could not load migration comment masker")
+scanner = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = scanner
+spec.loader.exec_module(scanner)
+
+excluded = {"node_modules", ".git", "vendor", "__pycache__", "venv", ".venv", "dist", "build"}
+suffixes = {".py", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".rb", ".php", ".go", ".java", ".kt", ".kts", ".scala", ".cs", ".sh", ".bash", ".zsh"}
+pattern = re.compile(r'(?:/v2/calls/[^/\s"\'`]+/pay|api\.telnyx\.com/v2/calls/[^/\s"\'`]+/pay)', re.IGNORECASE)
+for path in root.rglob("*"):
+    relative_parts = path.relative_to(root).parts
+    if not path.is_file() or path.suffix.lower() not in suffixes or any(part in excluded for part in relative_parts):
+        continue
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        continue
+    masked = scanner.mask_comments(text)
+    lines = text.splitlines()
+    for match in pattern.finditer(masked):
+        line_number = masked.count("\n", 0, match.start()) + 1
+        line = lines[line_number - 1] if lines else ""
+        print(f"{path}:{line_number}:{line}")
+PY
 }
 
 # Convert grep output lines to JSON files array
@@ -225,7 +265,12 @@ product_applies() {
   if [ "$PRODUCT_FILTER" = "all" ] || [ "$check_products" = "all" ]; then
     return 0
   fi
-  echo "$check_products" | tr ',' '\n' | grep -qx "$PRODUCT_FILTER"
+  local effective_filter="$PRODUCT_FILTER"
+  # Scanner spellings twiml/texml and Pay all use the Voice/TeXML contract.
+  case "$effective_filter" in
+    pay|twiml|texml) effective_filter="voice" ;;
+  esac
+  echo "$check_products" | tr ',' '\n' | grep -qx "$effective_filter"
 }
 
 # --- Argument parsing ---
@@ -242,10 +287,10 @@ while [ $# -gt 0 ]; do
       fi
       PRODUCT_FILTER="$2"
       case "$PRODUCT_FILTER" in
-        voice|messaging|verify|webrtc|sip|fax|video|iot|lookup) ;;
+        voice|twiml|texml|messaging|verify|webrtc|sip|fax|video|iot|lookup|pay) ;;
         *)
           echo "Error: Unknown product '$PRODUCT_FILTER'" >&2
-          echo "Valid products: voice, messaging, verify, webrtc, sip, fax, video, iot, lookup" >&2
+          echo "Valid products: voice, twiml, texml, messaging, verify, webrtc, sip, fax, video, iot, lookup, pay" >&2
           exit 2
           ;;
       esac
@@ -339,9 +384,11 @@ is_texml_only() {
   if [ -z "$SCAN_PRODUCTS" ]; then
     return 1  # no scan data, can't determine
   fi
-  # If products are only voice/texml (no messaging, verify, etc.), it's TeXML-only
+  # Pay migrations intentionally need no Telnyx SDK dependency: TeXML uses
+  # XML documents, while direct Pay uses the documented REST endpoint through
+  # the project's existing HTTP client.
   local non_voice
-  non_voice=$(echo "$SCAN_PRODUCTS" | tr ',' '\n' | grep -v -E '^(voice|texml|fax)$' | head -1)
+  non_voice=$(echo "$SCAN_PRODUCTS" | tr ',' '\n' | grep -v -E '^(voice|texml|fax|pay)$' | head -1)
   [ -z "$non_voice" ]
 }
 
@@ -362,6 +409,31 @@ fi
 # RESIDUAL TWILIO REFERENCES
 # ============================================================
 section_header "Residual Twilio References"
+
+# Pay is a Call Control action. The direct /calls/{id}/pay spelling is a
+# high-confidence migration error and would fail at runtime.
+if product_applies "voice"; then
+  pay_endpoint_candidates=$(search_files '/v2/calls/[^/[:space:]"'\''`]+/pay|api\.telnyx\.com/v2/calls/[^/[:space:]"'\''`]+/pay' \
+    "*.py" "*.js" "*.ts" "*.jsx" "*.tsx" "*.mjs" "*.cjs" "*.rb" "*.php" \
+    "*.go" "*.java" "*.kt" "*.kts" "*.scala" "*.cs" "*.sh" "*.bash" "*.zsh")
+  if [ -n "$pay_endpoint_candidates" ]; then
+    if ! command -v python3 >/dev/null 2>&1; then
+      echo "Error: Pay endpoint validation requires python3 for comment-aware source validation" >&2
+      exit 2
+    fi
+    matches=$(find_active_invalid_pay_endpoints)
+  else
+    matches=""
+  fi
+  count=$(count_matches "$matches")
+  if [ "$count" -gt 0 ]; then
+    check_fail "invalid_telnyx_pay_endpoint" \
+      "Invalid Telnyx Pay endpoint /v2/calls/{call_control_id}/pay found; use POST /v2/calls/{call_control_id}/actions/pay" \
+      "$(matches_to_json "$matches")"
+  else
+    check_pass "invalid_telnyx_pay_endpoint" "No invalid direct /pay endpoint found"
+  fi
+fi
 
 # --- Check 1: Twilio SDK imports ---
 # Python
@@ -410,7 +482,7 @@ fi
 
 # Java
 if product_applies "all"; then
-  matches=$(search_files "import com\.twilio\." "*.java" "*.kt" "*.scala")
+  matches=$(search_files "import com\.twilio\." "*.java" "*.kt" "*.kts" "*.scala")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
     check_fail_or_hybrid_warn "twilio_java_imports" "Twilio Java imports found in $count file(s):" "$(matches_to_json "$matches")"
@@ -476,7 +548,7 @@ fi
 
 # --- Check 5: TwiML files ---
 if product_applies "voice,messaging,fax"; then
-  matches=$(search_files "(<Response>.*<(Say|Dial|Gather|Record|Message|Redirect|Reject|Pause|Enqueue|Play)|TwiML|twiml)" "*.xml" "*.twiml")
+  matches=$(search_twiml_files)
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
     check_warn "twiml_files" "TwiML patterns found in $count file(s) (may be intentional TeXML):" "$(matches_to_json "$matches")"
