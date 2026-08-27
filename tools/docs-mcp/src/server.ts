@@ -41,7 +41,7 @@ export function createServer(index: SearchIndex): McpServer {
     {
       title: "Search Telnyx documentation",
       description:
-        "Natural-language search over Telnyx documentation. Use source=\"docs\" for guides/skills (setup, migration, concepts), source=\"api\" for specific API operations with full request/response schemas, or source=\"all\" (default). Filter by product (messaging, voice, verify, fax, numbers, webrtc, iot, video, lookup, texml, ...) and SDK language (curl, python, javascript, go, java, ruby). Read-only, no account access. Pass returned ids to telnyx__retrieve.",
+        "Natural-language search over Telnyx documentation. Use source=\"docs\" for guides/skills (setup, migration, concepts), source=\"api\" for specific API operations with full request/response schemas, or source=\"all\" (default). Filter by product (messaging, voice, verify, fax, numbers, webrtc, iot, video, lookup, texml, ...) and an indexed SDK language. Read-only, no account access. Pass returned ids to telnyx__retrieve.",
       annotations: {
         title: "Search Telnyx documentation",
         readOnlyHint: true,
@@ -55,7 +55,18 @@ export function createServer(index: SearchIndex): McpServer {
         source: z.enum(["docs", "api", "all"]).default("all"),
         product: z.string().max(MAX_PRODUCT_FILTER_CHARS).trim().min(1).toLowerCase().optional()
           .describe("Restrict to a parent product, e.g. messaging, voice, verify; includes hyphenated subproducts and documented cross-family aliases"),
-        language: z.enum(["curl", "python", "javascript", "go", "java", "ruby"]).optional(),
+        language: z.enum([
+          "curl",
+          "python",
+          "javascript",
+          "typescript",
+          "go",
+          "java",
+          "kotlin",
+          "ruby",
+          "dart",
+          "swift"
+        ]).optional(),
         limit: z.number().int().min(1).max(10).default(5)
       }
     },

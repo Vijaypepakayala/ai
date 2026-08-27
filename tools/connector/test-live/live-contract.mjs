@@ -17,6 +17,9 @@ const transport = new StdioClientTransport({
     ...process.env,
     TELNYX_API_KEY: apiKey,
     TELNYX_CONNECTOR_MAX_ORDER_NUMBER: "1",
+    // The bounded turnover loop tries at most five candidates; quote failures
+    // consume attempt budget even though the read-only launcher blocks orders.
+    TELNYX_CONNECTOR_MAX_ORDER_NUMBER_ATTEMPT: "5",
     TELNYX_CONNECTOR_MAX_SEND_MESSAGE: "0",
     TELNYX_CONNECTOR_MAX_PLACE_CALL: "0",
     TELNYX_CONNECTOR_MAX_CALL_COMMAND: "0"

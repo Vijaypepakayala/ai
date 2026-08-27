@@ -7,7 +7,7 @@ auth, no account access:
 
 | Tool | What it does |
 |---|---|
-| `telnyx__search` | BM25 search over TWO corpora: guides/skills (`source="docs"`) and 5,000+ per-operation API entries with method/path (`source="api"`), filterable by parent product (including hyphenated subproducts and cross-family aliases such as 10DLC under Numbers or Messaging) AND SDK language (curl/python/javascript/go/java/ruby — a filter Twilio's connector does not have) |
+| `telnyx__search` | BM25 search over TWO corpora: guides/skills (`source="docs"`) and 5,000+ per-operation API entries with method/path (`source="api"`), filterable by parent product (including hyphenated subproducts and cross-family aliases such as 10DLC under Numbers or Messaging) AND SDK language (curl/python/javascript/typescript/go/java/kotlin/ruby/dart/swift — a filter Twilio's connector does not have) |
 | `telnyx__retrieve` | Batch retrieve (up to 10 ids) with per-id errors; long docs paginate via offset |
 
 ## Run

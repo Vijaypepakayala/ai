@@ -370,6 +370,21 @@ describe("two-source corpus (Twilio parity+)", () => {
     for (const r of results) expect(r.language).toBe("python");
   });
 
+  it.each(["dart", "kotlin", "swift", "typescript"])(
+    "accepts indexed WebRTC language %s",
+    async (language) => {
+      const client = await connected();
+      const res = await client.callTool({
+        name: "telnyx__search",
+        arguments: { query: "WebRTC client calling", source: "docs", language, limit: 5 }
+      });
+      expect(res.isError ?? false).toBe(false);
+      const { results } = JSON.parse((res.content as Array<{ text: string }>)[0].text);
+      expect(results.length).toBeGreaterThan(0);
+      expect(results.every((result: { language: string }) => result.language === language)).toBe(true);
+    }
+  );
+
   it("batch retrieve returns per-id rows including per-id errors", async () => {
     const client = await connected();
     const search = await client.callTool({

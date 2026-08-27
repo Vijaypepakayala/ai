@@ -15,6 +15,20 @@ const SERVER_NAME = "telnyx-claude-connector";
 const SERVER_VERSION = "0.1.0";
 const MAX_TRACKED_MESSAGE_ROUTES = 1_000;
 
+function approvalLiteral(value: string): string {
+  // JSON string notation keeps model/API-controlled newlines, quotes, bidi
+  // controls, and other prompt-shaped text visibly inside one literal value.
+  return JSON.stringify(value).replace(
+    /[\p{Cc}\p{Cf}\u2028\u2029]/gu,
+    (character) => {
+      const codePoint = character.codePointAt(0)!;
+      return codePoint <= 0xffff
+        ? `\\u${codePoint.toString(16).padStart(4, "0")}`
+        : `\\u{${codePoint.toString(16)}}`;
+    }
+  );
+}
+
 // Call Control commands the connector will forward. Kept to an explicit
 // allowlist so a prompt-injected "command" cannot reach arbitrary actions.
 const CALL_COMMANDS = [
@@ -463,8 +477,10 @@ const DEFAULT_CAPS: Record<string, number> = {
   place_call: 5,
   place_call_attempt: 5,
   order_number: 2,
+  order_number_attempt: 2,
   billable_lookup: 20,
-  call_command: 50
+  call_command: 50,
+  call_command_attempt: 50
 };
 
 function capFromEnv(name: string, fallback: number): number {
@@ -1276,10 +1292,10 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       }
 
       const mediaSummary = media_urls?.length
-        ? `; media URLs: ${media_urls.map((url) => JSON.stringify(url)).join(", ")}`
+        ? `; media URLs: ${media_urls.map(approvalLiteral).join(", ")}`
         : "";
       const approval = await humanConfirm(
-        `Send a billable SMS/MMS from ${from} to ${to}${text ? ` with text ${JSON.stringify(text)}` : ""}${mediaSummary}? The server verified 10DLC campaign ${verifiedSender.campaignId} is MNO_PROVISIONED. Approve only after confirming that the recipient has consented to this message.`,
+        `Send a billable SMS/MMS from ${approvalLiteral(from)} to ${approvalLiteral(to)}${text ? ` with text ${approvalLiteral(text)}` : ""}${mediaSummary}? The server verified 10DLC campaign ${approvalLiteral(verifiedSender.campaignId)} is MNO_PROVISIONED. Approve only after confirming that the recipient has consented to this message.`,
         extra?.signal
       );
       if (!approval.ok) {
@@ -1386,6 +1402,8 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
             `${phone_number} was not returned by search_available_numbers in this connector session. Search for it first, then choose a number from those results; nothing was ordered.`
           );
         }
+        const attemptLimited = reserve("order_number_attempt");
+        if (attemptLimited) return refuse(attemptLimited);
 
         // Reserve the spend budget before either live quote lookup or human
         // elicitation. An exhausted (including zero) cap must not let injected
@@ -1420,18 +1438,18 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
           }
           if (!priced) {
             return refuse(
-              `${phone_number} is not currently available with valid current pricing (no exact live inventory match). Use search_available_numbers to pick an orderable number; nothing was ordered.`
+              `${approvalLiteral(phone_number)} is not currently available with valid current pricing (no exact live inventory match). Use search_available_numbers to pick an orderable number; nothing was ordered.`
             );
           }
           const quoted = quoteSummary(priced);
           if (quoted.length > MAX_QUOTE_SUMMARY_CHARS) {
             return refuse(
-              `The live quote for ${phone_number} contains too many charge fields to present completely (${quoted.length} characters). Refusing to truncate pricing or request approval; nothing was ordered.`
+              `The live quote for ${approvalLiteral(phone_number)} contains too many charge fields to present completely (${quoted.length} characters). Refusing to truncate pricing or request approval; nothing was ordered.`
             );
           }
           const quotedAt = new Date().toISOString();
           const approvalMessage =
-            `Buy ${phone_number}? Live quote from Telnyx (${quotedAt}): ${quoted}. This creates a recurring charge.`;
+            `Buy ${approvalLiteral(phone_number)}? Live quote from Telnyx (${quotedAt}): ${approvalLiteral(quoted)}. This creates a recurring charge.`;
 
           // A model-supplied boolean cannot prove that a human saw this exact
           // authoritative quote. Fail closed when the client cannot present the
@@ -1440,12 +1458,12 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
           // occurs.
           if (!server.server.getClientCapabilities()?.elicitation) {
             return refuse(
-              `Live authoritative quote for ${phone_number} (${quotedAt}): ${quoted}. This number was NOT ordered. Purchasing requires an MCP client with elicitation support so the human can approve this exact quote.`
+              `Live authoritative quote for ${approvalLiteral(phone_number)} (${quotedAt}): ${approvalLiteral(quoted)}. This number was NOT ordered. Purchasing requires an MCP client with elicitation support so the human can approve this exact quote.`
             );
           }
 
           const approved = await humanConfirm(approvalMessage, extra?.signal);
-          if (!approved.ok) return refuse(`order_number ${phone_number}: ${approved.refusal}`);
+          if (!approved.ok) return refuse(`order_number ${approvalLiteral(phone_number)}: ${approved.refusal}`);
 
           // Re-read inventory after the human answers and refuse any change we can
           // observe before ordering. This narrows the approval-to-order race, but
@@ -1456,12 +1474,12 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
             revalidated = await fetchLiveQuote();
           } catch (err) {
             return refuse(
-              `Could not revalidate ${phone_number} after approval (${err instanceof Error ? err.message : String(err)}). The number was NOT ordered; review a fresh quote and approve again.`
+              `Could not revalidate ${approvalLiteral(phone_number)} after approval (${err instanceof Error ? err.message : String(err)}). The number was NOT ordered; review a fresh quote and approve again.`
             );
           }
           if (!revalidated || !sameVerifiedQuote(priced, revalidated)) {
             return refuse(
-              `The live quote for ${phone_number} changed or disappeared after approval. The number was NOT ordered; review the fresh quote and approve again.`
+              `The live quote for ${approvalLiteral(phone_number)} changed or disappeared after approval. The number was NOT ordered; review the fresh quote and approve again.`
             );
           }
 
@@ -1519,7 +1537,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
         return refuse(attemptLimited);
       }
       const approval = await humanConfirm(
-        `Place a billable outbound call with caller ID ${JSON.stringify(from)}, destination ${JSON.stringify(to)}, and Call Control connection ${JSON.stringify(connection_id)}? Approve only after confirming that these exact literal values are intended and that this call is permitted.`,
+        `Place a billable outbound call with caller ID ${approvalLiteral(from)}, destination ${approvalLiteral(to)}, and Call Control connection ${approvalLiteral(connection_id)}? Approve only after confirming that these exact literal values are intended and that this call is permitted.`,
         extra?.signal
       );
       if (!approval.ok) {
@@ -1570,6 +1588,13 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
         const limited = reserve(capBucket);
         if (limited) return refuse(limited);
       }
+      if (CONFIRM_REQUIRED_COMMANDS.has(command)) {
+        const attemptLimited = reserve("call_command_attempt");
+        if (attemptLimited) {
+          if (capBucket) releaseReservation(capBucket);
+          return refuse(attemptLimited);
+        }
+      }
       const requestBody = (() => {
         const body = parsed.data as Record<string, unknown>;
         if (command !== "bridge") return body;
@@ -1602,8 +1627,12 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
                 ? `maximum ${recording.max_length} seconds`
                 : "no maximum duration";
               const transcriptionOptions = [
-                recording.transcription_engine,
-                recording.transcription_language,
+                recording.transcription_engine
+                  ? approvalLiteral(recording.transcription_engine)
+                  : undefined,
+                recording.transcription_language
+                  ? approvalLiteral(recording.transcription_language)
+                  : undefined,
                 recording.transcription_min_speaker_count !== undefined
                   ? `minimum ${recording.transcription_min_speaker_count} speakers`
                   : undefined,
@@ -1624,9 +1653,9 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
                 ? `silence timeout ${recording.timeout_secs} seconds (uses billable transcription)`
                 : "no silence timeout";
               const fileName = recording.custom_file_name
-                ? `file name ${recording.custom_file_name}`
+                ? `file name ${approvalLiteral(recording.custom_file_name)}`
                 : "default file name";
-              return `Start a ${recording.format}, ${recording.channels}-channel recording of live call ${call_control_id} (${duration}; ${fileName}; track ${recording.recording_track ?? "both"}; ${recording.play_beep ? "start beep enabled" : "start beep disabled"}; ${recording.trim ?? "no silence trimming"}; ${transcription}; ${silenceTimeout})? This captures call audio. Approve only after every participant has received the notice and provided the consent required for every applicable jurisdiction.`;
+              return `Start a ${approvalLiteral(recording.format)}, ${approvalLiteral(recording.channels)}-channel recording of live call ${approvalLiteral(call_control_id)} (${duration}; ${fileName}; track ${approvalLiteral(recording.recording_track ?? "both")}; ${recording.play_beep ? "start beep enabled" : "start beep disabled"}; ${approvalLiteral(recording.trim ?? "no silence trimming")}; ${transcription}; ${silenceTimeout})? This captures call audio. Approve only after every participant has received the notice and provided the consent required for every applicable jurisdiction.`;
             })()
           : command === "bridge"
             ? (() => {
@@ -1637,12 +1666,12 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
                   video_room_context?: string;
                 };
                 if (bridge.queue) {
-                  return `Bridge live call ${call_control_id} with the first call in queue ${bridge.queue}? Telnyx removes that call from the queue even if bridging fails.`;
+                  return `Bridge live call ${approvalLiteral(call_control_id)} with the first call in queue ${approvalLiteral(bridge.queue)}? Telnyx removes that call from the queue even if bridging fails.`;
                 }
                 if (bridge.video_room_id) {
-                  return `Bridge live call ${call_control_id} into video room ${bridge.video_room_id}${bridge.video_room_context ? ` with context ${bridge.video_room_context}` : ""}?`;
+                  return `Bridge live call ${approvalLiteral(call_control_id)} into video room ${approvalLiteral(bridge.video_room_id)}${bridge.video_room_context ? ` with context ${approvalLiteral(bridge.video_room_context)}` : ""}?`;
                 }
-                return `Bridge live call ${call_control_id} with live call ${bridge.call_control_id_to_bridge_with}?`;
+                return `Bridge live call ${approvalLiteral(call_control_id)} with live call ${approvalLiteral(bridge.call_control_id_to_bridge_with!)}?`;
               })()
             : (() => {
                 const transfer = parsed.data as {
@@ -1655,20 +1684,20 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
                   time_limit_secs?: number;
                 };
                 const transferControls = [
-                  transfer.from ? `use caller ID ${transfer.from}` : undefined,
+                  transfer.from ? `use caller ID ${approvalLiteral(transfer.from)}` : undefined,
                   transfer.timeout_secs !== undefined
                     ? `wait up to ${transfer.timeout_secs} seconds for an answer`
                     : undefined,
                   transfer.time_limit_secs !== undefined
                     ? `limit the transferred call to ${transfer.time_limit_secs} seconds`
                     : undefined,
-                  transfer.audio_url ? `play audio URL ${transfer.audio_url} after answer` : undefined,
-                  transfer.media_name ? `play uploaded media ${transfer.media_name} after answer` : undefined,
+                  transfer.audio_url ? `play audio URL ${approvalLiteral(transfer.audio_url)} after answer` : undefined,
+                  transfer.media_name ? `play uploaded media ${approvalLiteral(transfer.media_name)} after answer` : undefined,
                   transfer.send_digits_on_answer
-                    ? `send DTMF sequence ${transfer.send_digits_on_answer} after answer`
+                    ? `send DTMF sequence ${approvalLiteral(transfer.send_digits_on_answer)} after answer`
                     : undefined
                 ].filter((control): control is string => control !== undefined);
-                return `Transfer live call ${call_control_id} to ${transfer.to}${transferControls.length ? ` (${transferControls.join("; ")})` : ""}?`;
+                return `Transfer live call ${approvalLiteral(call_control_id)} to ${approvalLiteral(transfer.to)}${transferControls.length ? ` (${transferControls.join("; ")})` : ""}?`;
               })();
         const approved = await humanConfirm(message, extra?.signal);
         if (!approved.ok) {
