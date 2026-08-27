@@ -82,6 +82,10 @@ EXPECTED_UI_RESOURCE_MARKERS = {
         "voice_monitor_active_calls",
     ),
 }
+EXPECTED_UI_RESOURCE_SHA256 = {
+    "ui://number-intelligence/index.html": "5e9e759a495e3f3116e5272858edce8062778be8da79e574d1d83827a01ccdca",
+    "ui://voice-monitor/index.html": "861624b76ceae16716715f5843a47229302406f0b338d66c744de3953fb19bd9",
+}
 SUPPORTED_CSP_FIELDS = {
     "connectDomains",
     "resourceDomains",
@@ -171,6 +175,12 @@ CSS_URL_PATTERN = re.compile(
     re.IGNORECASE,
 )
 REQUESTED_PROTOCOL_VERSION = "2025-06-18"
+QUERY_OVERRIDE_PROTOCOL_VERSIONS = (
+    "2025-11-25",
+    REQUESTED_PROTOCOL_VERSION,
+    "2025-03-26",
+    "2024-11-05",
+)
 ANNOTATION_FIELDS = (
     "readOnlyHint",
     "destructiveHint",
@@ -178,6 +188,13 @@ ANNOTATION_FIELDS = (
     "openWorldHint",
 )
 EXPECTED_MODEL_VISIBLE_TOOL_COUNT = 4
+REQUIRED_BILLABLE_CONFIRMATION_TOOLS = frozenset(
+    {
+        "number_intelligence_analyze",
+        "number_intelligence_batch_analyze",
+    }
+)
+REJECTED_QUERY_OVERRIDE_STATUSES = frozenset({400, 404, 405})
 EXPECTED_MODEL_VISIBLE_TOOL_NAMES = {
     "list_api_endpoints",
     "get_api_endpoint_schema",
@@ -301,18 +318,20 @@ def parse_args() -> argparse.Namespace:
 
 
 def validate_mcp_config(payload: Any) -> str:
-    """Enforce this package's pinned direct-map form and production endpoint."""
+    """Enforce Codex's companion-file wrapper and production endpoint."""
 
     expected = {
-        "telnyx": {
-            "type": "http",
-            "url": EXPECTED_MCP_URL,
+        "mcp_servers": {
+            "telnyx": {
+                "type": "http",
+                "url": EXPECTED_MCP_URL,
+            }
         }
     }
     if payload != expected:
         raise AuditError(
-            "Telnyx MCP config must be a direct server map containing only "
-            "the production HTTP endpoint"
+            "Telnyx MCP config must contain only the production HTTP endpoint "
+            "under the mcp_servers companion-file wrapper"
         )
     return EXPECTED_MCP_URL
 
@@ -1084,6 +1103,476 @@ def post_json_rpc(
     return payload, response_session_id
 
 
+def query_override_probe_urls(mcp_url: str) -> tuple[str, ...]:
+    parsed = urlparse(mcp_url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    return (
+        f"{mcp_url}?tools=all",
+        f"{mcp_url}?no_tools=dynamic&tools=all",
+        f"{origin}/?tools=all",
+        f"{origin}/?no_tools=dynamic&tools=all",
+    )
+
+
+def validate_query_override_inventory(
+    actual: dict[str, dict[str, Any]],
+    expected: dict[str, dict[str, Any]],
+    *,
+    probe_url: str,
+) -> None:
+    if actual != expected:
+        unexpected = sorted(set(actual).difference(expected))
+        missing = sorted(set(expected).difference(actual))
+        raise AuditError(
+            f"query override route changed the reviewed tools/list contract: "
+            f"{probe_url}; unexpected={unexpected}, missing={missing}"
+        )
+
+
+def rejected_query_override_status(
+    error: AuditError, *, allow_not_initialized: bool = False
+) -> int | None:
+    # Only a rejection of the initial JSON-RPC request proves that the route
+    # itself is unavailable. A later notification or tools/list page can use
+    # the same HTTP status after already exposing tools, and must fail closed.
+    status_match = re.fullmatch(
+        r"MCP request failed with HTTP ([0-9]{3})",
+        str(error),
+    )
+    if status_match:
+        status = int(status_match.group(1))
+        return status if status in REJECTED_QUERY_OVERRIDE_STATUSES else None
+    # MCP uses -32002 for a request made before the initialize handshake.
+    # This is a safe route rejection only at the initial discovery call sites
+    # that invoke this classifier; later failures are deliberately not passed.
+    if allow_not_initialized and str(error) == "MCP JSON-RPC error -32002":
+        return -32002
+    return None
+
+
+def collect_federated_tool_pages(
+    *,
+    first_payload: dict[str, Any],
+    mcp_url: str,
+    api_key: str,
+    protocol_version: str | None,
+    session_id: str | None,
+    timeout: float,
+    retries: int,
+) -> dict[str, dict[str, Any]]:
+    indexed: dict[str, dict[str, Any]] = {}
+    seen_cursors: set[str] = set()
+    payload = first_payload
+    for page_number in range(100):
+        if page_number > 0:
+            payload, _ = post_json_rpc(
+                mcp_url=mcp_url,
+                api_key=api_key,
+                method="tools/list",
+                params={"cursor": cursor},
+                protocol_version=protocol_version,
+                session_id=session_id,
+                timeout=timeout,
+                retries=retries,
+            )
+        page = index_federated_tools(payload)
+        duplicates = sorted(set(indexed).intersection(page))
+        if duplicates:
+            raise AuditError(
+                f"tools/list pagination repeated tool names: {duplicates}"
+            )
+        indexed.update(page)
+        result = payload.get("result")
+        next_cursor = result.get("nextCursor") if isinstance(result, dict) else None
+        if next_cursor is None:
+            return indexed
+        if (
+            not isinstance(next_cursor, str)
+            or not next_cursor
+            or next_cursor in seen_cursors
+        ):
+            raise AuditError("tools/list returned an invalid or repeated nextCursor")
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+    raise AuditError("tools/list pagination exceeded 100 pages")
+
+
+def list_all_federated_tools(
+    *,
+    mcp_url: str,
+    api_key: str,
+    protocol_version: str,
+    session_id: str | None,
+    timeout: float,
+    retries: int,
+) -> dict[str, dict[str, Any]]:
+    first_payload, _ = post_json_rpc(
+        mcp_url=mcp_url,
+        api_key=api_key,
+        method="tools/list",
+        params={},
+        protocol_version=protocol_version,
+        session_id=session_id,
+        timeout=timeout,
+        retries=retries,
+    )
+    return collect_federated_tool_pages(
+        first_payload=first_payload,
+        mcp_url=mcp_url,
+        api_key=api_key,
+        protocol_version=protocol_version,
+        session_id=session_id,
+        timeout=timeout,
+        retries=retries,
+    )
+
+
+def collect_resource_pages(
+    *,
+    first_payload: dict[str, Any],
+    mcp_url: str,
+    api_key: str,
+    protocol_version: str | None,
+    session_id: str | None,
+    timeout: float,
+    retries: int,
+) -> dict[str, dict[str, Any]]:
+    indexed: dict[str, dict[str, Any]] = {}
+    seen_cursors: set[str] = set()
+    payload = first_payload
+    for page_number in range(100):
+        if page_number > 0:
+            payload, _ = post_json_rpc(
+                mcp_url=mcp_url,
+                api_key=api_key,
+                method="resources/list",
+                params={"cursor": cursor},
+                protocol_version=protocol_version,
+                session_id=session_id,
+                timeout=timeout,
+                retries=retries,
+            )
+        result = payload.get("result")
+        resources = result.get("resources") if isinstance(result, dict) else None
+        if not isinstance(resources, list):
+            raise AuditError("resources/list response must contain a resources array")
+        page: dict[str, dict[str, Any]] = {}
+        for resource in resources:
+            uri = resource.get("uri") if isinstance(resource, dict) else None
+            if not isinstance(uri, str) or not uri or uri in page:
+                raise AuditError("resources/list contains duplicate or invalid URIs")
+            page[uri] = resource
+        duplicates = sorted(set(indexed).intersection(page))
+        if duplicates:
+            raise AuditError(
+                f"resources/list pagination repeated resource URIs: {duplicates}"
+            )
+        indexed.update(page)
+        next_cursor = result.get("nextCursor")
+        if next_cursor is None:
+            return indexed
+        if (
+            not isinstance(next_cursor, str)
+            or not next_cursor
+            or next_cursor in seen_cursors
+        ):
+            raise AuditError("resources/list returned an invalid or repeated nextCursor")
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+    raise AuditError("resources/list pagination exceeded 100 pages")
+
+
+def list_all_resources(
+    *,
+    mcp_url: str,
+    api_key: str,
+    protocol_version: str | None,
+    session_id: str | None,
+    timeout: float,
+    retries: int,
+) -> dict[str, dict[str, Any]]:
+    first_payload, _ = post_json_rpc(
+        mcp_url=mcp_url,
+        api_key=api_key,
+        method="resources/list",
+        params={},
+        protocol_version=protocol_version,
+        session_id=session_id,
+        timeout=timeout,
+        retries=retries,
+    )
+    return collect_resource_pages(
+        first_payload=first_payload,
+        mcp_url=mcp_url,
+        api_key=api_key,
+        protocol_version=protocol_version,
+        session_id=session_id,
+        timeout=timeout,
+        retries=retries,
+    )
+
+
+def validate_query_override_resources(
+    actual: dict[str, dict[str, Any]],
+    expected: dict[str, dict[str, Any]],
+    *,
+    probe_url: str,
+) -> None:
+    if actual != expected:
+        unexpected = sorted(set(actual).difference(expected))
+        missing = sorted(set(expected).difference(actual))
+        raise AuditError(
+            f"query override route changed the reviewed resources/list contract: "
+            f"{probe_url}; unexpected={unexpected}, missing={missing}"
+        )
+
+
+def validate_uninitialized_query_override_routes(
+    *,
+    probe_url: str,
+    api_key: str,
+    expected_tools: dict[str, dict[str, Any]],
+    expected_resources: dict[str, dict[str, Any]],
+    timeout: float,
+    retries: int,
+) -> None:
+    for protocol_version in (None, *QUERY_OVERRIDE_PROTOCOL_VERSIONS):
+        tools_rejected = False
+        try:
+            first_payload, _ = post_json_rpc(
+                mcp_url=probe_url,
+                api_key=api_key,
+                method="tools/list",
+                params={},
+                protocol_version=protocol_version,
+                session_id=None,
+                timeout=timeout,
+                retries=retries,
+            )
+        except AuditError as exc:
+            if rejected_query_override_status(
+                exc, allow_not_initialized=True
+            ) is not None:
+                tools_rejected = True
+            else:
+                raise AuditError(
+                    f"uninitialized query override tool discovery failed ambiguously "
+                    f"for protocol {protocol_version or 'none'}: {exc}"
+                ) from exc
+        if not tools_rejected:
+            actual_tools = collect_federated_tool_pages(
+                first_payload=first_payload,
+                mcp_url=probe_url,
+                api_key=api_key,
+                protocol_version=protocol_version,
+                session_id=None,
+                timeout=timeout,
+                retries=retries,
+            )
+            validate_query_override_inventory(
+                actual_tools,
+                expected_tools,
+                probe_url=f"{probe_url} (uninitialized, protocol={protocol_version or 'none'})",
+            )
+        try:
+            actual_resources = list_all_resources(
+                mcp_url=probe_url,
+                api_key=api_key,
+                protocol_version=protocol_version,
+                session_id=None,
+                timeout=timeout,
+                retries=retries,
+            )
+        except AuditError as exc:
+            if rejected_query_override_status(
+                exc, allow_not_initialized=True
+            ) is None:
+                raise AuditError(
+                    f"uninitialized query override resource discovery failed ambiguously "
+                    f"for protocol {protocol_version or 'none'}: {exc}"
+                ) from exc
+        else:
+            validate_query_override_resources(
+                actual_resources,
+                expected_resources,
+                probe_url=f"{probe_url} (uninitialized, protocol={protocol_version or 'none'})",
+            )
+            validate_ui_resources(
+                mcp_url=probe_url,
+                api_key=api_key,
+                protocol_version=protocol_version,
+                session_id=None,
+                timeout=timeout,
+                retries=retries,
+                indexed=actual_resources,
+            )
+
+
+def validate_query_override_with_session(
+    *,
+    probe_url: str,
+    api_key: str,
+    expected_tools: dict[str, dict[str, Any]],
+    expected_resources: dict[str, dict[str, Any]],
+    protocol_version: str,
+    session_id: str | None,
+    timeout: float,
+    retries: int,
+) -> None:
+    tools_rejected = False
+    try:
+        first_payload, _ = post_json_rpc(
+            mcp_url=probe_url,
+            api_key=api_key,
+            method="tools/list",
+            params={},
+            protocol_version=protocol_version,
+            session_id=session_id,
+            timeout=timeout,
+            retries=retries,
+        )
+    except AuditError as exc:
+        if rejected_query_override_status(exc) is not None:
+            tools_rejected = True
+        else:
+            raise AuditError(
+                f"canonical-session query override tool discovery failed ambiguously: {exc}"
+            ) from exc
+    if not tools_rejected:
+        actual_tools = collect_federated_tool_pages(
+            first_payload=first_payload,
+            mcp_url=probe_url,
+            api_key=api_key,
+            protocol_version=protocol_version,
+            session_id=session_id,
+            timeout=timeout,
+            retries=retries,
+        )
+        validate_query_override_inventory(
+            actual_tools,
+            expected_tools,
+            probe_url=f"{probe_url} (canonical session)",
+        )
+    try:
+        actual_resources = list_all_resources(
+            mcp_url=probe_url,
+            api_key=api_key,
+            protocol_version=protocol_version,
+            session_id=session_id,
+            timeout=timeout,
+            retries=retries,
+        )
+    except AuditError as exc:
+        if rejected_query_override_status(exc) is None:
+            raise AuditError(
+                f"canonical-session query override resource discovery failed ambiguously: {exc}"
+            ) from exc
+    else:
+        validate_query_override_resources(
+            actual_resources,
+            expected_resources,
+            probe_url=f"{probe_url} (canonical session)",
+        )
+        validate_ui_resources(
+            mcp_url=probe_url,
+            api_key=api_key,
+            protocol_version=protocol_version,
+            session_id=session_id,
+            timeout=timeout,
+            retries=retries,
+            indexed=actual_resources,
+        )
+
+
+def validate_query_override_routes(
+    *,
+    mcp_url: str,
+    api_key: str,
+    expected_tools: dict[str, dict[str, Any]],
+    expected_resources: dict[str, dict[str, Any]],
+    canonical_protocol_version: str,
+    canonical_session_id: str | None,
+    timeout: float,
+    retries: int,
+) -> None:
+    for probe_url in query_override_probe_urls(mcp_url):
+        validate_query_override_with_session(
+            probe_url=probe_url,
+            api_key=api_key,
+            expected_tools=expected_tools,
+            expected_resources=expected_resources,
+            protocol_version=canonical_protocol_version,
+            session_id=canonical_session_id,
+            timeout=timeout,
+            retries=retries,
+        )
+        for requested_protocol in QUERY_OVERRIDE_PROTOCOL_VERSIONS:
+            try:
+                initialize_result, probe_session_id = initialize_client(
+                    mcp_url=probe_url,
+                    api_key=api_key,
+                    timeout=timeout,
+                    retries=retries,
+                    requested_protocol_version=requested_protocol,
+                )
+            except AuditError as exc:
+                if rejected_query_override_status(exc) is not None:
+                    continue
+                raise AuditError(
+                    f"query override probe could not prove rejection or an "
+                    f"identical restricted inventory: {probe_url}: {exc}"
+                ) from exc
+            try:
+                actual_tools = list_all_federated_tools(
+                    mcp_url=probe_url,
+                    api_key=api_key,
+                    protocol_version=initialize_result["protocolVersion"],
+                    session_id=probe_session_id,
+                    timeout=timeout,
+                    retries=retries,
+                )
+            except AuditError as exc:
+                raise AuditError(
+                    f"query override route initialized but its complete reviewed "
+                    f"inventory could not be proven: {probe_url}: {exc}"
+                ) from exc
+            validate_query_override_inventory(
+                actual_tools,
+                expected_tools,
+                probe_url=f"{probe_url} (protocol={requested_protocol})",
+            )
+            actual_resources = list_all_resources(
+                mcp_url=probe_url,
+                api_key=api_key,
+                protocol_version=initialize_result["protocolVersion"],
+                session_id=probe_session_id,
+                timeout=timeout,
+                retries=retries,
+            )
+            validate_query_override_resources(
+                actual_resources,
+                expected_resources,
+                probe_url=f"{probe_url} (protocol={requested_protocol})",
+            )
+            validate_ui_resources(
+                mcp_url=probe_url,
+                api_key=api_key,
+                protocol_version=initialize_result["protocolVersion"],
+                session_id=probe_session_id,
+                timeout=timeout,
+                retries=retries,
+                indexed=actual_resources,
+            )
+        validate_uninitialized_query_override_routes(
+            probe_url=probe_url,
+            api_key=api_key,
+            expected_tools=expected_tools,
+            expected_resources=expected_resources,
+            timeout=timeout,
+            retries=retries,
+        )
+
+
 def send_initialized_notification(
     *,
     mcp_url: str,
@@ -1143,13 +1632,14 @@ def initialize_client(
     api_key: str,
     timeout: float,
     retries: int,
+    requested_protocol_version: str = REQUESTED_PROTOCOL_VERSION,
 ) -> tuple[dict[str, Any], str | None]:
     payload, session_id = post_json_rpc(
         mcp_url=mcp_url,
         api_key=api_key,
         method="initialize",
         params={
-            "protocolVersion": REQUESTED_PROTOCOL_VERSION,
+            "protocolVersion": requested_protocol_version,
             "capabilities": {},
             "clientInfo": {
                 "name": "telnyx-codex-plugin-catalog-audit",
@@ -1552,6 +2042,83 @@ def validate_constrained_output_schema(
                 )
 
 
+def json_tree_contains_key(value: Any, target: str) -> bool:
+    if isinstance(value, dict):
+        return target in value or any(
+            json_tree_contains_key(child, target) for child in value.values()
+        )
+    if isinstance(value, list):
+        return any(json_tree_contains_key(child, target) for child in value)
+    return False
+
+
+def schema_dialect_supports_const(schema: dict[str, Any]) -> bool:
+    dialect = schema.get("$schema")
+    if dialect is None:
+        # MCP input schemas use JSON Schema semantics when they do not declare
+        # an older dialect explicitly.
+        return True
+    if not isinstance(dialect, str):
+        return False
+    normalized = dialect.lower().rstrip("#/")
+    return normalized in {
+        "http://json-schema.org/draft-06/schema",
+        "https://json-schema.org/draft-06/schema",
+        "http://json-schema.org/draft-07/schema",
+        "https://json-schema.org/draft-07/schema",
+        "https://json-schema.org/draft/2019-09/schema",
+        "https://json-schema.org/draft/2020-12/schema",
+    }
+
+
+def validate_billable_confirmation_schema(
+    tool: dict[str, Any],
+    *,
+    tool_name: str,
+) -> None:
+    input_schema = tool.get("inputSchema")
+    properties = (
+        input_schema.get("properties")
+        if isinstance(input_schema, dict)
+        else None
+    )
+    required = (
+        input_schema.get("required")
+        if isinstance(input_schema, dict)
+        else None
+    )
+    confirmation = (
+        properties.get("confirm_billable_lookup")
+        if isinstance(properties, dict)
+        else None
+    )
+    if (
+        not isinstance(confirmation, dict)
+        or not isinstance(input_schema, dict)
+        or not schema_dialect_supports_const(input_schema)
+        # Draft 6/7 treat $ref as replacing sibling constraints. Reject refs
+        # at both enforcement nodes so properties/required/type/const cannot
+        # become decorative under an otherwise eligible declared dialect.
+        or "$ref" in input_schema
+        or "$ref" in confirmation
+        or "$schema" in confirmation
+        or confirmation.get("type") != "boolean"
+        or confirmation.get("const") is not True
+        # A default at the property, root, or inside a composition can let a
+        # client synthesize approval without a deliberate user-supplied true.
+        # Billable app inputs are small, so reject defaults anywhere in their
+        # schema rather than trying to prove which composed branch applies.
+        or json_tree_contains_key(input_schema, "default")
+        or not isinstance(required, list)
+        or "confirm_billable_lookup" not in required
+    ):
+        raise AuditError(
+            f"billable app tool {tool_name} must require an explicit "
+            "confirm_billable_lookup property constrained to boolean const=true "
+            "without a default"
+        )
+
+
 def validate_app_tools(
     indexed: dict[str, dict[str, Any]],
     expected_tools: dict[str, dict[str, Any]],
@@ -1573,6 +2140,8 @@ def validate_app_tools(
             tool_name=tool_name,
             tool_class="app-only",
         )
+        if tool_name in REQUIRED_BILLABLE_CONFIRMATION_TOOLS:
+            validate_billable_confirmation_schema(tool, tool_name=tool_name)
         validate_constrained_output_schema(
             tool.get("outputSchema"),
             tool_name=tool_name,
@@ -1856,7 +2425,9 @@ def validate_ui_metadata(
             )
 
 
-def validate_ui_semantics(*, resource_uri: str, html: str) -> None:
+def validate_ui_semantics(
+    *, resource_uri: str, html: str, require_pinned_payload: bool = True
+) -> None:
     markers = EXPECTED_UI_RESOURCE_MARKERS.get(resource_uri)
     if markers is None:
         raise AuditError(f"UI resource has no reviewed semantic contract: {resource_uri}")
@@ -1866,6 +2437,14 @@ def validate_ui_semantics(*, resource_uri: str, html: str) -> None:
             f"UI resource is missing reviewed interactive markers {missing}: "
             f"{resource_uri}"
         )
+    if require_pinned_payload:
+        expected_digest = EXPECTED_UI_RESOURCE_SHA256.get(resource_uri)
+        actual_digest = hashlib.sha256(html.encode("utf-8")).hexdigest()
+        if expected_digest is None or actual_digest != expected_digest:
+            raise AuditError(
+                f"UI resource payload differs from the reviewed billable-interaction "
+                f"contract: {resource_uri}; actual sha256={actual_digest}"
+            )
 
 
 def validate_ui_resources(
@@ -1876,29 +2455,18 @@ def validate_ui_resources(
     session_id: str | None,
     timeout: float,
     retries: int,
+    indexed: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     expected_ui_resources = load_expected_ui_resources()
-    payload, _ = post_json_rpc(
-        mcp_url=mcp_url,
-        api_key=api_key,
-        method="resources/list",
-        params={},
-        protocol_version=protocol_version,
-        session_id=session_id,
-        timeout=timeout,
-        retries=retries,
-    )
-    result = payload.get("result")
-    resources = result.get("resources") if isinstance(result, dict) else None
-    if not isinstance(resources, list):
-        raise AuditError("resources/list response must contain a resources array")
-    indexed = {
-        resource.get("uri"): resource
-        for resource in resources
-        if isinstance(resource, dict) and isinstance(resource.get("uri"), str)
-    }
-    if len(indexed) != len(resources):
-        raise AuditError("resources/list contains duplicate or invalid URIs")
+    if indexed is None:
+        indexed = list_all_resources(
+            mcp_url=mcp_url,
+            api_key=api_key,
+            protocol_version=protocol_version,
+            session_id=session_id,
+            timeout=timeout,
+            retries=retries,
+        )
     expected_uris = set(EXPECTED_UI_RESOURCE_URIS)
     if set(indexed) != expected_uris:
         raise AuditError("live UI resource URIs differ from the reviewed set")
@@ -2511,50 +3079,61 @@ def run_self_tests() -> None:
     if load_mcp_url() != EXPECTED_MCP_URL:
         raise AuditError("self-test MCP config URL changed")
     valid_mcp_config = {
-        "telnyx": {
-            "type": "http",
-            "url": EXPECTED_MCP_URL,
+        "mcp_servers": {
+            "telnyx": {
+                "type": "http",
+                "url": EXPECTED_MCP_URL,
+            }
         }
     }
     if validate_mcp_config(valid_mcp_config) != EXPECTED_MCP_URL:
-        raise AuditError("self-test direct MCP config changed")
+        raise AuditError("self-test wrapped MCP config changed")
     for label, invalid_mcp_config in (
-        ("obsolete camel-case wrapper", {"mcpServers": valid_mcp_config}),
-        ("alternate snake-case wrapper", {"mcp_servers": valid_mcp_config}),
+        ("missing wrapper", valid_mcp_config["mcp_servers"]),
+        ("nested wrapper", {"mcp_servers": valid_mcp_config}),
+        ("alternate camel-case wrapper", {"mcpServers": valid_mcp_config["mcp_servers"]}),
         (
             "extra server",
             {
-                **valid_mcp_config,
-                "unexpected": {
-                    "type": "http",
-                    "url": "https://example.com/mcp",
+                "mcp_servers": {
+                    **valid_mcp_config["mcp_servers"],
+                    "unexpected": {
+                        "type": "http",
+                        "url": "https://example.com/mcp",
+                    },
                 },
             },
         ),
         (
             "extra server field",
             {
-                "telnyx": {
-                    **valid_mcp_config["telnyx"],
-                    "headers": {"X-Test": "value"},
+                "mcp_servers": {
+                    "telnyx": {
+                        **valid_mcp_config["mcp_servers"]["telnyx"],
+                        "headers": {"X-Test": "value"},
+                    }
                 }
             },
         ),
         (
             "wrong transport",
             {
-                "telnyx": {
-                    "type": "stdio",
-                    "url": EXPECTED_MCP_URL,
+                "mcp_servers": {
+                    "telnyx": {
+                        "type": "stdio",
+                        "url": EXPECTED_MCP_URL,
+                    }
                 }
             },
         ),
         (
             "query-string URL drift",
             {
-                "telnyx": {
-                    "type": "http",
-                    "url": f"{EXPECTED_MCP_URL}?tools=all",
+                "mcp_servers": {
+                    "telnyx": {
+                        "type": "http",
+                        "url": f"{EXPECTED_MCP_URL}?tools=all",
+                    }
                 }
             },
         ),
@@ -2578,6 +3157,8 @@ def run_self_tests() -> None:
         raise AuditError("self-test UI resource fixture set changed")
     if set(EXPECTED_UI_RESOURCE_MARKERS) != set(EXPECTED_UI_RESOURCE_URIS):
         raise AuditError("self-test UI resource semantic contract changed")
+    if set(EXPECTED_UI_RESOURCE_SHA256) != set(EXPECTED_UI_RESOURCE_URIS):
+        raise AuditError("self-test UI resource payload pins changed")
     synthetic_federated_tools = {
         name: {"name": name}
         for name in {
@@ -2948,12 +3529,14 @@ def run_self_tests() -> None:
             '"number_intelligence_analyze");'
             "</script>"
         ),
+        require_pinned_payload=False,
     )
     expect_audit_error(
         "placeholder UI resource",
         lambda: validate_ui_semantics(
             resource_uri="ui://number-intelligence/index.html",
             html="<main>Open the Number Intelligence app.</main>",
+            require_pinned_payload=False,
         ),
     )
 
@@ -3097,6 +3680,128 @@ def run_self_tests() -> None:
         {app_tool["name"]: expected_app_tool},
         {"admin"},
     )
+    billable_tool = {
+        **app_tool,
+        "name": "number_intelligence_analyze",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "phone_number": {"type": "string"},
+                "confirm_billable_lookup": {
+                    "type": "boolean",
+                    "const": True,
+                },
+            },
+            "required": ["phone_number", "confirm_billable_lookup"],
+            "additionalProperties": False,
+        },
+    }
+    expected_billable_tool = {
+        **expected_app_tool,
+        "name": billable_tool["name"],
+    }
+    validate_app_tools(
+        {billable_tool["name"]: billable_tool},
+        {billable_tool["name"]: expected_billable_tool},
+        {"admin"},
+    )
+    unsafe_confirmation_schemas = (
+        {
+            **billable_tool["inputSchema"],
+            "required": ["phone_number"],
+        },
+        {
+            **billable_tool["inputSchema"],
+            "properties": {
+                **billable_tool["inputSchema"]["properties"],
+                "confirm_billable_lookup": {"type": "boolean"},
+            },
+        },
+        {
+            **billable_tool["inputSchema"],
+            "properties": {
+                **billable_tool["inputSchema"]["properties"],
+                "confirm_billable_lookup": {
+                    "type": "boolean",
+                    "const": True,
+                    "default": True,
+                },
+            },
+        },
+        {
+            **billable_tool["inputSchema"],
+            "default": {"confirm_billable_lookup": True},
+        },
+        {
+            **billable_tool["inputSchema"],
+            "allOf": [{"default": {"confirm_billable_lookup": True}}],
+        },
+        {
+            **billable_tool["inputSchema"],
+            "$schema": "http://json-schema.org/draft-04/schema#",
+        },
+        {
+            **billable_tool["inputSchema"],
+            "$schema": "https://example.com/unknown-schema",
+        },
+        {
+            **billable_tool["inputSchema"],
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "$ref": "#/$defs/free",
+            "$defs": {"free": {}},
+        },
+        {
+            **billable_tool["inputSchema"],
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "$defs": {"free": {}},
+            "properties": {
+                **billable_tool["inputSchema"]["properties"],
+                "confirm_billable_lookup": {
+                    "type": "boolean",
+                    "const": True,
+                    "$ref": "#/$defs/free",
+                },
+            },
+        },
+        {
+            **billable_tool["inputSchema"],
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "properties": {
+                **billable_tool["inputSchema"]["properties"],
+                "confirm_billable_lookup": {
+                    "$id": "legacy-confirmation",
+                    "$schema": "http://json-schema.org/draft-04/schema#",
+                    "type": "boolean",
+                    "const": True,
+                },
+            },
+        },
+    )
+    for index, unsafe_schema in enumerate(unsafe_confirmation_schemas):
+        unsafe_billable_tool = {
+            **billable_tool,
+            "inputSchema": unsafe_schema,
+        }
+        expect_audit_error(
+            f"billable confirmation schema {index}",
+            lambda unsafe_billable_tool=unsafe_billable_tool: validate_app_tools(
+                {unsafe_billable_tool["name"]: unsafe_billable_tool},
+                {billable_tool["name"]: expected_billable_tool},
+                {"admin"},
+            ),
+        )
+    draft_seven_billable_tool = {
+        **billable_tool,
+        "inputSchema": {
+            **billable_tool["inputSchema"],
+            "$schema": "http://json-schema.org/draft-07/schema#",
+        },
+    }
+    validate_app_tools(
+        {draft_seven_billable_tool["name"]: draft_seven_billable_tool},
+        {billable_tool["name"]: expected_billable_tool},
+        {"admin"},
+    )
     app_tool_with_malformed_input = {
         **app_tool,
         "inputSchema": {
@@ -3184,6 +3889,65 @@ def run_self_tests() -> None:
             {app_tool["name"]: app_tool_with_title_drift},
             {app_tool["name"]: expected_app_tool},
             {"admin"},
+        ),
+    )
+    expected_probe_urls = (
+        f"{EXPECTED_MCP_URL}?tools=all",
+        f"{EXPECTED_MCP_URL}?no_tools=dynamic&tools=all",
+        "https://api.telnyx.com/?tools=all",
+        "https://api.telnyx.com/?no_tools=dynamic&tools=all",
+    )
+    if query_override_probe_urls(EXPECTED_MCP_URL) != expected_probe_urls:
+        raise AuditError("self-test query override probe URLs changed")
+    if rejected_query_override_status(
+        AuditError("MCP request failed with HTTP 404")
+    ) != 404:
+        raise AuditError("self-test initial query override rejection changed")
+    if rejected_query_override_status(
+        AuditError("MCP JSON-RPC error -32002"), allow_not_initialized=True
+    ) != -32002:
+        raise AuditError("self-test protocol-level query override rejection changed")
+    if rejected_query_override_status(
+        AuditError("MCP JSON-RPC error -32002")
+    ) is not None:
+        raise AuditError("self-test accepted protocol rejection after initialization")
+    for later_failure in (
+        "MCP initialized notification failed with HTTP 404",
+        "MCP request failed with HTTP 404 after 2 attempts",
+        "tools/list pagination failed with HTTP 404",
+    ):
+        if rejected_query_override_status(AuditError(later_failure)) is not None:
+            raise AuditError("self-test accepted a post-initialize route failure")
+    validate_query_override_inventory(
+        {"safe": {"name": "safe"}},
+        {"safe": {"name": "safe"}},
+        probe_url=expected_probe_urls[0],
+    )
+    expect_audit_error(
+        "query override exposed an extra tool",
+        lambda: validate_query_override_inventory(
+            {
+                "safe": {"name": "safe"},
+                "invoke_api_endpoint": {"name": "invoke_api_endpoint"},
+            },
+            {"safe": {"name": "safe"}},
+            probe_url=expected_probe_urls[0],
+        ),
+    )
+    validate_query_override_resources(
+        {"ui://safe": {"uri": "ui://safe"}},
+        {"ui://safe": {"uri": "ui://safe"}},
+        probe_url=expected_probe_urls[0],
+    )
+    expect_audit_error(
+        "query override exposed an extra resource",
+        lambda: validate_query_override_resources(
+            {
+                "ui://safe": {"uri": "ui://safe"},
+                "ui://billing": {"uri": "ui://billing"},
+            },
+            {"ui://safe": {"uri": "ui://safe"}},
+            probe_url=expected_probe_urls[0],
         ),
     )
     initialize_result = {
@@ -3349,19 +4113,37 @@ def main() -> None:
         retries=args.retries,
     )
     protocol_version = initialize_result["protocolVersion"]
-    federated_tools_payload, _ = post_json_rpc(
+    federated_tools = list_all_federated_tools(
         mcp_url=mcp_url,
         api_key=api_key,
-        method="tools/list",
-        params={},
         protocol_version=protocol_version,
         session_id=session_id,
         timeout=args.timeout,
         retries=args.retries,
     )
-    federated_tools = index_federated_tools(federated_tools_payload)
+    federated_resources = list_all_resources(
+        mcp_url=mcp_url,
+        api_key=api_key,
+        protocol_version=protocol_version,
+        session_id=session_id,
+        timeout=args.timeout,
+        retries=args.retries,
+    )
 
     review_failures: list[tuple[str, str]] = []
+    try:
+        validate_query_override_routes(
+            mcp_url=mcp_url,
+            api_key=api_key,
+            expected_tools=federated_tools,
+            expected_resources=federated_resources,
+            canonical_protocol_version=protocol_version,
+            canonical_session_id=session_id,
+            timeout=args.timeout,
+            retries=args.retries,
+        )
+    except AuditError as exc:
+        review_failures.append(("query override routes", str(exc)))
     model_visible_tools = {
         name: federated_tools[name]
         for name in expected_root_annotations

@@ -133,7 +133,7 @@ export const NUMBER_INTELLIGENCE_UI_HTML = String.raw`<!doctype html>
 
       <form class="toolbar" id="analyzeForm">
         <input id="phoneInput" name="phone" autocomplete="tel" aria-label="Phone number" placeholder="+13125550123" />
-        <button id="analyzeButton" type="submit">Analyze</button>
+        <button id="analyzeButton" type="submit">Run billable lookup</button>
       </form>
 
       <div class="source-options" aria-label="Source options">
@@ -411,7 +411,12 @@ export const NUMBER_INTELLIGENCE_UI_HTML = String.raw`<!doctype html>
         try {
           const result = await request("tools/call", {
             name: TOOL_NAME,
-            arguments: { phone_number: phoneNumber, include_raw: false, sources: selectedSources() }
+            arguments: {
+              phone_number: phoneNumber,
+              include_raw: false,
+              sources: selectedSources(),
+              confirm_billable_lookup: true
+            }
           });
           const payload = extractResult(result);
           if (!payload) throw new Error("Tool returned no structured analysis.");
@@ -420,7 +425,7 @@ export const NUMBER_INTELLIGENCE_UI_HTML = String.raw`<!doctype html>
           setError(error instanceof Error ? error.message : "Analysis failed.");
         } finally {
           els.button.disabled = false;
-          els.button.textContent = "Analyze";
+          els.button.textContent = "Run billable lookup";
         }
       }
 

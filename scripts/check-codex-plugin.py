@@ -2279,16 +2279,18 @@ if mark_path.is_file():
         "official Telnyx mark does not match its pinned developers.telnyx.com asset",
     )
 
-reject_unknown_fields(mcp_config, {"telnyx"}, ".mcp.json")
+reject_unknown_fields(mcp_config, {"mcp_servers"}, ".mcp.json")
 require(
     mcp_config == {
-        "telnyx": {
-            "type": "http",
-            "url": MCP_SERVER_URL,
+        "mcp_servers": {
+            "telnyx": {
+                "type": "http",
+                "url": MCP_SERVER_URL,
+            }
         }
     },
-    "MCP config must be a direct server map containing only the hosted Telnyx "
-    "HTTP endpoint",
+    "MCP config must contain only the hosted Telnyx HTTP endpoint under "
+    "mcp_servers",
 )
 
 reject_unknown_fields(marketplace, {"name", "interface", "plugins"}, "marketplace")
