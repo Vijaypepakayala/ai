@@ -286,7 +286,9 @@ describe("complete HTTP endpoint dispatch matrix", () => {
       const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { data: [] }));
       const client = tool === "send_message"
         ? await connectedMessagingClient(fetchMock)
-        : await connectedClient(fetchMock);
+        : tool === "place_call"
+          ? await connectedClientWithElicitation(fetchMock, true)
+          : await connectedClient(fetchMock);
       const result = await client.callTool({ name: tool, arguments: arguments_ });
 
       expect(result.isError ?? false).toBe(false);
@@ -1466,12 +1468,76 @@ describe("call_command strict per-command params (security)", () => {
   });
 });
 
-describe("place_call exposes no webhook override", () => {
+describe("place_call safety contract", () => {
   it("has no webhook_url in the input schema", async () => {
     const client = await connectedClient(vi.fn());
     const { tools } = await client.listTools();
     const placeCall = tools.find((t) => t.name === "place_call");
     expect(JSON.stringify(placeCall?.inputSchema)).not.toContain("webhook_url");
+  });
+
+  it("fails closed without human elicitation before dispatch", async () => {
+    const fetchMock = vi.fn();
+    const client = await connectedClient(fetchMock);
+    const result = await client.callTool({
+      name: "place_call",
+      arguments: {
+        to: "+15550001111",
+        from: "+15550002222",
+        connection_id: "conn-123"
+      }
+    });
+    expect(result.isError).toBe(true);
+    expect((result.content as Array<{ text: string }>)[0].text).toContain("elicitation support");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("binds human approval to the exact call parties and connection", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { data: { call_control_id: "cc1" } }));
+    const onPrompt = vi.fn();
+    const client = await connectedClientWithElicitation(fetchMock, true, onPrompt);
+    const result = await client.callTool({
+      name: "place_call",
+      arguments: {
+        to: "+15550001111",
+        from: "+15550002222",
+        connection_id: "conn-123"
+      }
+    });
+    expect(result.isError ?? false).toBe(false);
+    expect(onPrompt).toHaveBeenCalledWith(expect.stringContaining('caller ID "+15550002222"'));
+    expect(onPrompt).toHaveBeenCalledWith(expect.stringContaining('destination "+15550001111"'));
+    expect(onPrompt).toHaveBeenCalledWith(expect.stringContaining('connection "conn-123"'));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases declined spend reservations but caps approval attempts", async () => {
+    process.env.TELNYX_CONNECTOR_MAX_PLACE_CALL = "1";
+    process.env.TELNYX_CONNECTOR_MAX_PLACE_CALL_ATTEMPT = "2";
+    try {
+      const decisions = [false, true];
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { data: { call_control_id: "cc1" } }));
+      const onPrompt = vi.fn();
+      const client = await connectedClientWithElicitation(
+        fetchMock,
+        () => decisions.shift() ?? false,
+        onPrompt
+      );
+      const request = {
+        name: "place_call",
+        arguments: { to: "+15550001111", from: "+15550002222", connection_id: "conn-123" }
+      };
+      expect((await client.callTool(request)).isError).toBe(true);
+      expect((await client.callTool(request)).isError ?? false).toBe(false);
+      const capped = await client.callTool(request);
+      expect(capped.isError).toBe(true);
+      expect((capped.content as Array<{ text: string }>)[0].text).toContain("place_call");
+      expect(onPrompt).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      delete process.env.TELNYX_CONNECTOR_MAX_PLACE_CALL;
+      delete process.env.TELNYX_CONNECTOR_MAX_PLACE_CALL_ATTEMPT;
+    }
   });
 });
 

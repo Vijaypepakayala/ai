@@ -427,6 +427,7 @@ const DEFAULT_CAPS: Record<string, number> = {
   send_message: 10,
   send_message_attempt: 10,
   place_call: 5,
+  place_call_attempt: 5,
   order_number: 2,
   billable_lookup: 20,
   call_command: 50
@@ -1292,6 +1293,19 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     async ({ to, from, connection_id }, extra) => {
       const limited = reserve("place_call");
       if (limited) return refuse(limited);
+      const attemptLimited = reserve("place_call_attempt");
+      if (attemptLimited) {
+        releaseReservation("place_call");
+        return refuse(attemptLimited);
+      }
+      const approval = await humanConfirm(
+        `Place a billable outbound call with caller ID ${JSON.stringify(from)}, destination ${JSON.stringify(to)}, and Call Control connection ${JSON.stringify(connection_id)}? Approve only after confirming that these exact literal values are intended and that this call is permitted.`,
+        extra?.signal
+      );
+      if (!approval.ok) {
+        releaseReservation("place_call");
+        return refuse(`place_call: ${approval.refusal}`);
+      }
       return run(
         (c, signal) =>
           c.request("POST", "/v2/calls", {
