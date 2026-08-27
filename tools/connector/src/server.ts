@@ -395,11 +395,37 @@ function sanitizeToolError(value: string): string {
   );
 }
 
+function dataRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const data = (value as { data?: unknown }).data;
+  return data && typeof data === "object" && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : null;
+}
+
+function dataOrTopLevelRecord(value: unknown): Record<string, unknown> | null {
+  const enveloped = dataRecord(value);
+  if (enveloped) return enveloped;
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function dataRecords(value: unknown): Array<Record<string, unknown>> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const data = (value as { data?: unknown }).data;
+  return Array.isArray(data)
+    ? data.filter((entry): entry is Record<string, unknown> =>
+        Boolean(entry) && typeof entry === "object" && !Array.isArray(entry))
+    : [];
+}
+
 // Session-scoped velocity caps on billable / abuse-amplifiable tools. A prompt
 // injection that slips past the model still cannot loop these unbounded.
 // Overridable via env for legitimate heavy sessions (restart to reset).
 const DEFAULT_CAPS: Record<string, number> = {
   send_message: 10,
+  send_message_attempt: 10,
   place_call: 5,
   order_number: 2,
   billable_lookup: 20,
@@ -519,12 +545,17 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
   // have landed upstream, so the reservation is kept — the cap must never
   // under-count real billable actions.
   const used: Record<string, number> = {};
-  const reserve = (bucket: keyof typeof DEFAULT_CAPS, units = 1): string | null => {
+  const limitMessage = (bucket: keyof typeof DEFAULT_CAPS, units = 1): string | null => {
     const cap = capFromEnv(String(bucket), DEFAULT_CAPS[bucket]);
     const count = used[bucket] ?? 0;
-    if (count + units > cap) {
-      return `Session limit reached: ${String(bucket)} has used ${count}/${cap} of this session's budget and this request needs ${units} unit${units === 1 ? "" : "s"}. This is an abuse backstop. Ask the user to restart the connector (or raise TELNYX_CONNECTOR_MAX_${String(bucket).toUpperCase()}) if this is intentional.`;
-    }
+    return count + units > cap
+      ? `Session limit reached: ${String(bucket)} has used ${count}/${cap} of this session's budget and this request needs ${units} unit${units === 1 ? "" : "s"}. This is an abuse backstop. Ask the user to restart the connector (or raise TELNYX_CONNECTOR_MAX_${String(bucket).toUpperCase()}) if this is intentional.`
+      : null;
+  };
+  const reserve = (bucket: keyof typeof DEFAULT_CAPS, units = 1): string | null => {
+    const limited = limitMessage(bucket, units);
+    if (limited) return limited;
+    const count = used[bucket] ?? 0;
     used[bucket] = count + units;
     return null;
   };
@@ -669,6 +700,120 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       ok: false,
       refusal:
         "Refusing: this action requires an MCP client with elicitation support so the human can approve the exact action. Nothing was sent to Telnyx."
+    };
+  };
+
+  interface VerifiedMessagingSender {
+    phoneNumberId: string;
+    messagingProfileId: string;
+    campaignId: string;
+    campaignKind: "native" | "partner";
+  }
+  const verifyMessagingSender = async (
+    client: TelnyxClient,
+    from: string,
+    signal?: AbortSignal
+  ): Promise<VerifiedMessagingSender | { refusal: string }> => {
+    const ownedResponse = await client.request("GET", "/v2/phone_numbers", {
+      query: {
+        "page[size]": 2,
+        "page[number]": 1,
+        "filter[phone_number]": from
+      },
+      signal
+    });
+    const exactOwnedNumbers = dataRecords(ownedResponse).filter(
+      (entry) =>
+        entry.phone_number === from &&
+        entry.status === "active" &&
+        typeof entry.id === "string"
+    );
+    if (exactOwnedNumbers.length !== 1) {
+      return {
+        refusal: `${from} was not resolved to exactly one active owned Telnyx number.`
+      };
+    }
+    const phoneNumberId = exactOwnedNumbers[0].id as string;
+    const readinessResponse = await client.request(
+      "GET",
+      `/v2/phone_numbers/${encodeURIComponent(phoneNumberId)}/messaging`,
+      { signal }
+    );
+    const readiness = dataRecord(readinessResponse);
+    if (
+      readiness?.phone_number !== from ||
+      typeof readiness.messaging_profile_id !== "string" ||
+      readiness.messaging_profile_id.length === 0
+    ) {
+      return { refusal: `${from} is not assigned to a messaging profile for this account.` };
+    }
+    // Registration APIs differ by sender class. Public GA currently permits
+    // only the path whose complete state can be proven here; toll-free and
+    // short-code sends fail closed until their own verification gates exist.
+    const senderType = typeof readiness.type === "string" ? readiness.type.toLowerCase() : "";
+    if (senderType !== "long-code" && senderType !== "longcode") {
+      return {
+        refusal:
+          `${from} is a ${String(readiness.type ?? "unknown")} sender. This connector currently sends only from objectively verified 10DLC long-code senders; toll-free and short-code traffic is not dispatched.`
+      };
+    }
+    const assignmentResponse = await client.request(
+      "GET",
+      `/v2/10dlc/phone_number_campaigns/${encodeURIComponent(from)}`,
+      { signal }
+    );
+    // 10DLC deployments and generated clients expose both the legacy direct
+    // record and the API-v2 `data` envelope. Accept only those two object
+    // shapes, then apply the same strict field validation below.
+    const assignment = dataOrTopLevelRecord(assignmentResponse);
+    const legacyCampaignId =
+      typeof assignment?.campaignId === "string" && assignment.campaignId.length > 0
+        ? assignment.campaignId
+        : undefined;
+    const telnyxCampaignId =
+      typeof assignment?.telnyxCampaignId === "string" && assignment.telnyxCampaignId.length > 0
+        ? assignment.telnyxCampaignId
+        : undefined;
+    const tcrCampaignId =
+      typeof assignment?.tcrCampaignId === "string" && assignment.tcrCampaignId.length > 0
+        ? assignment.tcrCampaignId
+        : undefined;
+    if (
+      assignment?.phoneNumber !== from ||
+      assignment.assignmentStatus !== "ASSIGNED" ||
+      (!legacyCampaignId && !telnyxCampaignId && !tcrCampaignId)
+    ) {
+      return { refusal: `${from} does not have an ASSIGNED 10DLC phone-number campaign.` };
+    }
+    // Native and shared 10DLC assignments expose different stable IDs and
+    // must be read through different resources. Prefer the explicit Telnyx
+    // ID for native campaigns. A TCR-only assignment is a shared partner
+    // campaign. The legacy campaignId-only shape remains native-compatible.
+    const campaignKind: "native" | "partner" = telnyxCampaignId
+      ? "native"
+      : tcrCampaignId
+        ? "partner"
+        : "native";
+    const campaignId = telnyxCampaignId ?? tcrCampaignId ?? legacyCampaignId!;
+    const campaignResponse = await client.request(
+      "GET",
+      campaignKind === "partner"
+        ? `/v2/10dlc/partner_campaigns/${encodeURIComponent(campaignId)}`
+        : `/v2/10dlc/campaign/${encodeURIComponent(campaignId)}`,
+      { signal }
+    );
+    const campaign = dataOrTopLevelRecord(campaignResponse);
+    if (campaign?.campaignStatus !== "MNO_PROVISIONED") {
+      return {
+        refusal:
+          `${from}'s 10DLC campaign ${campaignId} is not MNO_PROVISIONED (current status: ${String(campaign?.campaignStatus ?? "unknown")}).`
+      };
+    }
+    return {
+      phoneNumberId,
+      messagingProfileId: readiness.messaging_profile_id,
+      campaignId,
+      campaignKind
     };
   };
 
@@ -905,26 +1050,79 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
     {
       title: "Send an SMS/MMS",
       description:
-        "Send an outbound message from a number on this account. Billable per message. The from number's assigned messaging profile is used automatically; pass messaging_profile_id only to override. US A2P traffic requires the profile to be 10DLC-registered — use check_messaging_readiness first if unsure.",
+        "Send an outbound message from an objectively verified 10DLC long-code sender on this account. Billable per message. The connector verifies active ownership, profile assignment, phone-number campaign assignment, and MNO_PROVISIONED campaign status, then requires client-supported MCP elicitation so the human confirms recipient consent. It revalidates the same sender state after approval. Toll-free/short-code and no-elicitation clients fail closed.",
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-      inputSchema: {
+      inputSchema: z.object({
         to: z.string().min(4).describe("Destination number, E.164"),
         from: z.string().min(4).describe("Source number on this Telnyx account, E.164"),
         text: z.string().max(3072).optional().describe("Message body (optional when media_urls present)"),
-        media_urls: z.array(httpUrlSchema).optional().describe("MMS media URLs"),
-        messaging_profile_id: z
-          .string()
-          .uuid()
-          .optional()
-          .describe("Optional override; omit to use the from number's assigned profile")
-      }
+        media_urls: z.array(httpUrlSchema).optional().describe("MMS media URLs")
+      }).strict()
     },
-    async ({ to, from, text, media_urls, messaging_profile_id }, extra) => {
+    async ({ to, from, text, media_urls }, extra) => {
       if (!text && (!media_urls || media_urls.length === 0)) {
         return refuse("A message needs text, media_urls, or both.");
       }
+      // Reserve atomically before the first await so concurrent injected calls
+      // cannot amplify readiness reads or human prompts beyond the cap.
       const limited = reserve("send_message");
       if (limited) return refuse(limited);
+      // Spend reservations are released for definite no-ops, but valid send
+      // attempts are never released. This separate ceiling prevents a caller
+      // from turning repeated preflight failures or declined prompts into an
+      // unbounded stream of account reads or human approval requests.
+      const attemptLimited = reserve("send_message_attempt");
+      if (attemptLimited) {
+        releaseReservation("send_message");
+        return refuse(attemptLimited);
+      }
+
+      let verifiedSender: VerifiedMessagingSender;
+      try {
+        const client = getClient();
+        const verification = await verifyMessagingSender(client, from, extra?.signal);
+        if ("refusal" in verification) {
+          releaseReservation("send_message");
+          return refuse(`Refusing to send: ${verification.refusal} Nothing was sent.`);
+        }
+        verifiedSender = verification;
+      } catch (error) {
+        releaseReservation("send_message");
+        return run(async () => { throw error; }, extra);
+      }
+
+      const mediaSummary = media_urls?.length
+        ? `; media URLs: ${media_urls.map((url) => JSON.stringify(url)).join(", ")}`
+        : "";
+      const approval = await humanConfirm(
+        `Send a billable SMS/MMS from ${from} to ${to}${text ? ` with text ${JSON.stringify(text)}` : ""}${mediaSummary}? The server verified 10DLC campaign ${verifiedSender.campaignId} is MNO_PROVISIONED. Approve only after confirming that the recipient has consented to this message.`,
+        extra?.signal
+      );
+      if (!approval.ok) {
+        releaseReservation("send_message");
+        return refuse(approval.refusal!);
+      }
+
+      let revalidatedSender: VerifiedMessagingSender;
+      try {
+        const revalidated = await verifyMessagingSender(getClient(), from, extra?.signal);
+        if (
+          "refusal" in revalidated ||
+          revalidated.phoneNumberId !== verifiedSender.phoneNumberId ||
+          revalidated.messagingProfileId !== verifiedSender.messagingProfileId ||
+          revalidated.campaignId !== verifiedSender.campaignId ||
+          revalidated.campaignKind !== verifiedSender.campaignKind
+        ) {
+          releaseReservation("send_message");
+          return refuse(
+            `Refusing to send: sender ownership, profile, or 10DLC registration changed or became unready while approval was pending. Nothing was sent.`
+          );
+        }
+        revalidatedSender = revalidated;
+      } catch (error) {
+        releaseReservation("send_message");
+        return run(async () => { throw error; }, extra);
+      }
       return run(
         (c, signal) =>
           c.request("POST", "/v2/messages", {
@@ -933,7 +1131,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
               from,
               ...(text ? { text } : {}),
               ...(media_urls ? { media_urls } : {}),
-              ...(messaging_profile_id ? { messaging_profile_id } : {})
+              messaging_profile_id: revalidatedSender.messagingProfileId
             },
             signal
           }),

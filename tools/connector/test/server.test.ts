@@ -60,6 +60,54 @@ async function connectedClientWithElicitation(
   return client;
 }
 
+async function connectedMessagingClient(
+  fetchMock: FetchMock,
+  approve: boolean | (() => boolean) = true,
+  onPrompt?: (message: string) => void,
+  senderType: "long-code" | "longcode" = "long-code",
+  campaignKind: "native" | "partner" = "native",
+  campaignEnvelope: "top-level" | "data" = "top-level"
+) {
+  const readinessFetch = vi.fn().mockImplementation(async (url: unknown, init?: RequestInit) => {
+    const parsed = new URL(String(url));
+    if (parsed.pathname === "/v2/phone_numbers") {
+      const phoneNumber = parsed.searchParams.get("filter[phone_number]");
+      return jsonResponse(200, { data: [{ id: "pn-sender", phone_number: phoneNumber, status: "active" }] });
+    }
+    if (parsed.pathname === "/v2/phone_numbers/pn-sender/messaging") {
+      return jsonResponse(200, {
+        data: {
+          phone_number: "+15550002222",
+          messaging_profile_id: "00000000-0000-4000-8000-000000000123",
+          type: senderType
+        }
+      });
+    }
+    if (parsed.pathname === "/v2/10dlc/phone_number_campaigns/%2B15550002222") {
+      const assignment = {
+        phoneNumber: "+15550002222",
+        assignmentStatus: "ASSIGNED",
+        campaignId: "campaign-123",
+        ...(campaignKind === "native"
+          ? { telnyxCampaignId: "campaign-123" }
+          : { tcrCampaignId: "campaign-123" })
+      };
+      return jsonResponse(200, campaignEnvelope === "data" ? { data: assignment } : assignment);
+    }
+    if (
+      parsed.pathname ===
+      (campaignKind === "native"
+        ? "/v2/10dlc/campaign/campaign-123"
+        : "/v2/10dlc/partner_campaigns/campaign-123")
+    ) {
+      const campaign = { campaignStatus: "MNO_PROVISIONED" };
+      return jsonResponse(200, campaignEnvelope === "data" ? { data: campaign } : campaign);
+    }
+    return fetchMock(url, init);
+  });
+  return connectedClientWithElicitation(readinessFetch, approve, onPrompt);
+}
+
 interface NumberSearchArgs {
   country_code: string;
   area_code?: string;
@@ -215,7 +263,12 @@ const ENDPOINT_DISPATCH_CASES: EndpointDispatchCase[] = [
     arguments: { to: "+15550001111", from: "+15550002222", text: "endpoint matrix" },
     method: "POST",
     path: "/v2/messages",
-    body: { to: "+15550001111", from: "+15550002222", text: "endpoint matrix" }
+    body: {
+      to: "+15550001111",
+      from: "+15550002222",
+      text: "endpoint matrix",
+      messaging_profile_id: "00000000-0000-4000-8000-000000000123"
+    }
   },
   {
     tool: "place_call",
@@ -231,7 +284,9 @@ describe("complete HTTP endpoint dispatch matrix", () => {
     "$tool dispatches the exact method, path, query, and body",
     async ({ tool, arguments: arguments_, method, path, query, body }) => {
       const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { data: [] }));
-      const client = await connectedClient(fetchMock);
+      const client = tool === "send_message"
+        ? await connectedMessagingClient(fetchMock)
+        : await connectedClient(fetchMock);
       const result = await client.callTool({ name: tool, arguments: arguments_ });
 
       expect(result.isError ?? false).toBe(false);
@@ -368,6 +423,7 @@ describe("live harness write safety", () => {
     expect(liveWriteHarness).toContain('TELNYX_TEST_TO_NUMBER');
     expect(liveWriteHarness).toContain('TELNYX_TEST_SENDER_COMPLIANCE_OK !== "yes"');
     expect(liveWriteHarness).toContain('TELNYX_CONNECTOR_MAX_SEND_MESSAGE: "1"');
+    expect(liveWriteHarness).toContain('TELNYX_CONNECTOR_MAX_SEND_MESSAGE_ATTEMPT: "1"');
     expect(liveWriteHarness).toContain('phone_number: from');
   });
 
@@ -413,9 +469,27 @@ describe("live harness write safety", () => {
 });
 
 describe("send_message", () => {
-  it("posts the exact body and omits messaging_profile_id unless given", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { data: { id: "m1" } }));
+  it("rejects the removed messaging profile override instead of silently changing profiles", async () => {
+    const fetchMock = vi.fn();
     const client = await connectedClient(fetchMock);
+    const result = await client.callTool({
+      name: "send_message",
+      arguments: {
+        to: "+15550001111",
+        from: "+15550002222",
+        text: "hi",
+        messaging_profile_id: "00000000-0000-4000-8000-000000000999"
+      }
+    });
+    expect(result.isError).toBe(true);
+    expect((result.content as Array<{ text: string }>)[0].text).toMatch(/messaging_profile_id|unrecognized/i);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("posts the exact body using the sender's verified assigned profile", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { data: { id: "m1" } }));
+    const onPrompt = vi.fn();
+    const client = await connectedMessagingClient(fetchMock, true, onPrompt);
     const result = await client.callTool({
       name: "send_message",
       arguments: { to: "+15550001111", from: "+15550002222", text: "hi" }
@@ -424,8 +498,213 @@ describe("send_message", () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toBe("https://api.telnyx.com/v2/messages");
     const body = JSON.parse((init as RequestInit).body as string);
-    expect(body).toEqual({ to: "+15550001111", from: "+15550002222", text: "hi" });
+    expect(body).toEqual({
+      to: "+15550001111",
+      from: "+15550002222",
+      text: "hi",
+      messaging_profile_id: "00000000-0000-4000-8000-000000000123"
+    });
     expect((init as RequestInit).headers).toMatchObject({ Authorization: "Bearer KEYTEST" });
+    expect(onPrompt).toHaveBeenCalledWith(expect.stringMatching(/recipient has consented/i));
+    expect(onPrompt).toHaveBeenCalledWith(expect.stringMatching(/10DLC campaign campaign-123 is MNO_PROVISIONED/i));
+  });
+
+  it.each(["long-code", "longcode"] as const)(
+    "accepts the documented %s spelling for a registered long-code sender",
+    async (senderType) => {
+      const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { data: { id: "m1" } }));
+      const client = await connectedMessagingClient(fetchMock, true, undefined, senderType);
+      const result = await client.callTool({
+        name: "send_message",
+        arguments: { to: "+15550001111", from: "+15550002222", text: "hi" }
+      });
+      expect(result.isError ?? false).toBe(false);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each([
+    ["native", "top-level"],
+    ["native", "data"],
+    ["partner", "top-level"],
+    ["partner", "data"]
+  ] as const)(
+    "verifies an MNO-provisioned %s campaign with a %s response contract",
+    async (campaignKind, campaignEnvelope) => {
+    const upstream = vi.fn().mockResolvedValue(jsonResponse(200, { data: { id: "m1" } }));
+    const client = await connectedMessagingClient(
+      upstream,
+      true,
+      undefined,
+      "long-code",
+      campaignKind,
+      campaignEnvelope
+    );
+    const result = await client.callTool({
+      name: "send_message",
+      arguments: { to: "+15550001111", from: "+15550002222", text: "hi" }
+    });
+    expect(result.isError ?? false).toBe(false);
+    expect(upstream).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it("fails closed without elicitation after verifying the exact owned sender and profile", async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url: unknown) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname === "/v2/phone_numbers") {
+        return jsonResponse(200, { data: [{ id: "pn-sender", phone_number: "+15550002222", status: "active" }] });
+      }
+      if (parsed.pathname === "/v2/phone_numbers/pn-sender/messaging") {
+        return jsonResponse(200, {
+          data: {
+            phone_number: "+15550002222",
+            messaging_profile_id: "00000000-0000-4000-8000-000000000123",
+            type: "long-code"
+          }
+        });
+      }
+      if (parsed.pathname === "/v2/10dlc/phone_number_campaigns/%2B15550002222") {
+        return jsonResponse(200, {
+          phoneNumber: "+15550002222",
+          assignmentStatus: "ASSIGNED",
+          campaignId: "campaign-123"
+        });
+      }
+      if (parsed.pathname === "/v2/10dlc/campaign/campaign-123") {
+        return jsonResponse(200, { campaignStatus: "MNO_PROVISIONED" });
+      }
+      return jsonResponse(200, { data: { id: "must-not-send" } });
+    });
+    const client = await connectedClient(fetchMock);
+    const result = await client.callTool({
+      name: "send_message",
+      arguments: { to: "+15550001111", from: "+15550002222", text: "hi" }
+    });
+    expect(result.isError).toBe(true);
+    expect((result.content as Array<{ text: string }>)[0].text).toContain("elicitation support");
+    expect(fetchMock.mock.calls.map(([url]) => (new URL(String(url))).pathname)).toEqual([
+      "/v2/phone_numbers",
+      "/v2/phone_numbers/pn-sender/messaging",
+      "/v2/10dlc/phone_number_campaigns/%2B15550002222",
+      "/v2/10dlc/campaign/campaign-123"
+    ]);
+  });
+
+  it("bounds declined approval attempts separately from the released spend budget", async () => {
+    process.env.TELNYX_CONNECTOR_MAX_SEND_MESSAGE_ATTEMPT = "1";
+    try {
+      const upstream = vi.fn();
+      const onPrompt = vi.fn();
+      const client = await connectedMessagingClient(upstream, false, onPrompt);
+      const args = { to: "+15550001111", from: "+15550002222", text: "hi" };
+      const declined = await client.callTool({ name: "send_message", arguments: args });
+      expect(declined.isError).toBe(true);
+      const capped = await client.callTool({ name: "send_message", arguments: args });
+      expect(capped.isError).toBe(true);
+      expect((capped.content as Array<{ text: string }>)[0].text).toContain("send_message_attempt");
+      expect(onPrompt).toHaveBeenCalledTimes(1);
+      expect(upstream).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.TELNYX_CONNECTOR_MAX_SEND_MESSAGE_ATTEMPT;
+    }
+  });
+
+  it("refuses an unassigned sender before prompting or dispatching", async () => {
+    const onPrompt = vi.fn();
+    const fetchMock = vi.fn().mockImplementation(async (url: unknown) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname === "/v2/phone_numbers") {
+        return jsonResponse(200, { data: [{ id: "pn-sender", phone_number: "+15550002222", status: "active" }] });
+      }
+      return jsonResponse(200, { data: { phone_number: "+15550002222", messaging_profile_id: null } });
+    });
+    const client = await connectedClientWithElicitation(fetchMock, true, onPrompt);
+    const result = await client.callTool({
+      name: "send_message",
+      arguments: { to: "+15550001111", from: "+15550002222", text: "hi" }
+    });
+    expect(result.isError).toBe(true);
+    expect((result.content as Array<{ text: string }>)[0].text).toContain("not assigned to a messaging profile");
+    expect(onPrompt).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["toll-free", "short-code", "unknown"])(
+    "fails closed for %s until its objective registration gate is implemented",
+    async (senderType) => {
+      const onPrompt = vi.fn();
+      const fetchMock = vi.fn().mockImplementation(async (url: unknown) => {
+        const path = new URL(String(url)).pathname;
+        if (path === "/v2/phone_numbers") {
+          return jsonResponse(200, {
+            data: [{ id: "pn-sender", phone_number: "+15550002222", status: "active" }]
+          });
+        }
+        return jsonResponse(200, {
+          data: {
+            phone_number: "+15550002222",
+            messaging_profile_id: "00000000-0000-4000-8000-000000000123",
+            type: senderType
+          }
+        });
+      });
+      const client = await connectedClientWithElicitation(fetchMock, true, onPrompt);
+      const result = await client.callTool({
+        name: "send_message",
+        arguments: { to: "+15550001111", from: "+15550002222", text: "hi" }
+      });
+      expect(result.isError).toBe(true);
+      expect((result.content as Array<{ text: string }>)[0].text).toContain(
+        "only from objectively verified 10DLC long-code senders"
+      );
+      expect(onPrompt).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it("revalidates and refuses when the assigned profile changes during approval", async () => {
+    let readinessReads = 0;
+    let posts = 0;
+    const fetchMock = vi.fn().mockImplementation(async (url: unknown) => {
+      const path = new URL(String(url)).pathname;
+      if (path === "/v2/phone_numbers") {
+        return jsonResponse(200, {
+          data: [{ id: "pn-sender", phone_number: "+15550002222", status: "active" }]
+        });
+      }
+      if (path === "/v2/phone_numbers/pn-sender/messaging") {
+        readinessReads++;
+        return jsonResponse(200, {
+          data: {
+            phone_number: "+15550002222",
+            messaging_profile_id: readinessReads === 1 ? "profile-a" : "profile-b",
+            type: "long-code"
+          }
+        });
+      }
+      if (path === "/v2/10dlc/phone_number_campaigns/%2B15550002222") {
+        return jsonResponse(200, {
+          phoneNumber: "+15550002222",
+          assignmentStatus: "ASSIGNED",
+          campaignId: "campaign-123"
+        });
+      }
+      if (path === "/v2/10dlc/campaign/campaign-123") {
+        return jsonResponse(200, { campaignStatus: "MNO_PROVISIONED" });
+      }
+      posts++;
+      return jsonResponse(200, { data: { id: "must-not-send" } });
+    });
+    const client = await connectedClientWithElicitation(fetchMock, true);
+    const result = await client.callTool({
+      name: "send_message",
+      arguments: { to: "+15550001111", from: "+15550002222", text: "hi" }
+    });
+    expect(result.isError).toBe(true);
+    expect((result.content as Array<{ text: string }>)[0].text).toContain("changed or became unready");
+    expect(readinessReads).toBe(2);
+    expect(posts).toBe(0);
   });
 
   it("surfaces Telnyx error codes instead of swallowing them", async () => {
@@ -434,7 +713,7 @@ describe("send_message", () => {
       .mockResolvedValue(
         jsonResponse(400, { errors: [{ code: "40310", title: "Invalid phone number" }] })
       );
-    const client = await connectedClient(fetchMock);
+    const client = await connectedMessagingClient(fetchMock);
     const result = await client.callTool({
       name: "send_message",
       arguments: { to: "+1555000", from: "+15550002222", text: "hi" }
@@ -1201,7 +1480,7 @@ describe("session velocity caps", () => {
     process.env.TELNYX_CONNECTOR_MAX_SEND_MESSAGE = "1";
     try {
       const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { data: { id: "m1" } }));
-      const client = await connectedClient(fetchMock);
+      const client = await connectedMessagingClient(fetchMock);
       const args = { to: "+15550001111", from: "+15550002222", text: "hi" };
       const first = await client.callTool({ name: "send_message", arguments: args });
       expect(first.isError ?? false).toBe(false);
@@ -1357,7 +1636,7 @@ describe("session velocity caps", () => {
 describe("robustness (code-review findings)", () => {
   it("sends media-only MMS without text", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { data: { id: "m1" } }));
-    const client = await connectedClient(fetchMock);
+    const client = await connectedMessagingClient(fetchMock);
     const result = await client.callTool({
       name: "send_message",
       arguments: { to: "+15550001111", from: "+15550002222", media_urls: ["https://ex.com/a.jpg"] }
@@ -2145,7 +2424,7 @@ describe("caps count successes only (round-3 HIGH)", () => {
           Promise.resolve(jsonResponse(400, { errors: [{ code: "40310", title: "Invalid phone number" }] }))
         )
         .mockImplementation(() => Promise.resolve(jsonResponse(200, { data: { id: "m1" } })));
-      const client = await connectedClient(fetchMock);
+      const client = await connectedMessagingClient(fetchMock);
       const args = { to: "+15550001111", from: "+15550002222", text: "hi" };
       const failed = await client.callTool({ name: "send_message", arguments: args });
       expect(failed.isError).toBe(true);
@@ -2601,7 +2880,7 @@ describe("cap reservation is atomic (Oliver P1)", () => {
         await new Promise((r) => setTimeout(r, 30));
         return jsonResponse(200, { data: { id: "m1" } });
       });
-      const client = await connectedClient(fetchMock);
+      const client = await connectedMessagingClient(fetchMock);
       const args = { to: "+15550001111", from: "+15550002222", text: "hi" };
       const results = await Promise.all(
         Array.from({ length: 8 }, () => client.callTool({ name: "send_message", arguments: args }))
@@ -2625,7 +2904,7 @@ describe("cap reservation is atomic (Oliver P1)", () => {
         .mockImplementationOnce(async () => jsonResponse(408, { errors: [] }))
         .mockImplementationOnce(async () => jsonResponse(503, { errors: [{ code: "10007" }] }))
         .mockImplementation(async () => jsonResponse(200, { data: { id: "m1" } }));
-      const client = await connectedClient(fetchMock);
+      const client = await connectedMessagingClient(fetchMock);
       const args = { to: "+15550001111", from: "+15550002222", text: "hi" };
       await client.callTool({ name: "send_message", arguments: args }); // 400 -> released
       await client.callTool({ name: "send_message", arguments: args }); // 408 -> released, retryable

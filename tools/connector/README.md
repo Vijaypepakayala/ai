@@ -16,7 +16,7 @@ number purchases have a spend-confirmation gate, and Call Control is mapped
 | `list_owned_numbers` | read-only | Numbers on the account |
 | `check_messaging_readiness` | read-only | Pre-flight: profile assignment / 10DLC linkage |
 | `get_message_status` | read-only | Delivery outcome from `data.to[0].status` |
-| `send_message` | **destructive**, billable | SMS/MMS; profile optional (number's assignment used) |
+| `send_message` | **destructive**, billable | SMS/MMS from verified 10DLC long codes only; objective registration preflight + revalidation and human elicitation for recipient consent |
 | `order_number` | **destructive** | Buys a number returned by this session's search — requires human approval through MCP elicitation; no-elicitation clients cannot purchase |
 | `place_call` | **destructive**, billable | Call Control dial; returns `call_control_id` |
 | `call_command` | **destructive** | Allowlisted live-call commands (speak, gather, bridge, transfer, ...) |
@@ -105,9 +105,10 @@ npm run build
   Ed25519 signatures over the timestamp and raw body, reject timestamps older
   than five minutes, and deduplicate API v2 events by `data.id` before acting.
 - **Session velocity caps** on billable or abuse-amplifying tools, taken as an
-  ATOMIC RESERVATION before dispatch (defaults: 10 sends, 5 calls, 2 orders, 20
-  billable lookups, 50 amplifying call commands; `TELNYX_CONNECTOR_MAX_*` env
-  vars override).
+  ATOMIC RESERVATION before dispatch (defaults: 10 sends, 10 valid send
+  attempts including failed preflights or declined prompts, 5 calls, 2 orders,
+  20 billable lookups, 50 amplifying call commands;
+  `TELNYX_CONNECTOR_MAX_*` env vars override).
   Protective stop/termination call commands are exempt so a cap cannot lock
   out emergency controls. Concurrent calls cannot all pass the same check — 8
   simultaneous sends against a cap of 1 produce exactly 1 upstream request. A

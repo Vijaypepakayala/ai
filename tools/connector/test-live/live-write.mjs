@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 // Explicitly gated: a real key, named sender and destination, compliance
 // acknowledgement, and a deliberate opt-in. Every successful run sends one
 // billed SMS and leaves a permanent message record.
@@ -24,12 +25,20 @@ const transport = new StdioClientTransport({
     ...process.env,
     TELNYX_API_KEY: apiKey,
     TELNYX_CONNECTOR_MAX_SEND_MESSAGE: "1",
+    TELNYX_CONNECTOR_MAX_SEND_MESSAGE_ATTEMPT: "1",
     TELNYX_CONNECTOR_MAX_ORDER_NUMBER: "0",
     TELNYX_CONNECTOR_MAX_PLACE_CALL: "0",
     TELNYX_CONNECTOR_MAX_CALL_COMMAND: "0"
   }
 });
-const client = new Client({ name: "live-write", version: "0" });
+const client = new Client(
+  { name: "live-write", version: "0" },
+  { capabilities: { elicitation: {} } }
+);
+client.setRequestHandler(ElicitRequestSchema, async (request) => {
+  console.log("Approving server safety prompt from the explicitly gated live-write harness:", request.params.message);
+  return { action: "accept", content: { approve: true } };
+});
 await client.connect(transport);
 
 const owned = await client.callTool({
