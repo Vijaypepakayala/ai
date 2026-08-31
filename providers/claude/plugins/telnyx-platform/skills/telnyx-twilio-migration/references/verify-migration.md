@@ -22,7 +22,7 @@ Telnyx Verify is not a drop-in replacement for Twilio Verify. The API surface is
 - Telnyx uses a **Verify Profile** (analogous to Twilio's Verify Service)
 - Different endpoint structure and parameter names
 - Telnyx supports flash calling (missed-call verification) which Twilio does not offer on Verify
-- PSD2 (Payment Services Directive 2) compliance built-in
+- Both platforms support WhatsApp verification; Telnyx selects it with the `/verifications/whatsapp` endpoint
 
 ## Verification Methods
 
@@ -30,16 +30,20 @@ Telnyx Verify is not a drop-in replacement for Twilio Verify. The API surface is
 |---|---|---|
 | SMS OTP | Yes | Yes |
 | Voice call OTP | Yes | Yes (`call` channel) |
+| WhatsApp OTP | Yes (`whatsapp` channel) | Yes (`/verifications/whatsapp`) |
 | Email OTP | Yes | No |
 | Push notification | Yes (Authy) | No |
 | TOTP | Yes (Authy) | No |
 | Flash calling | No | Yes — verification via missed call (caller ID matching) |
-| vSMS (templated) | No | Yes — SMS with pre-approved carrier templates |
-| PSD2 | No native support | Yes — built-in PSD2-compliant verification |
+| Custom SMS templates | Yes — `TemplateSid` / service `DefaultTemplateSid` | Yes — templates attached to a Verify Profile with `sms.messaging_template_id` |
 
 ## Setup
 
 ### Create a Verify Profile
+
+Configure every channel this migration will trigger. This profile is ready for
+SMS, voice call, and flash-call verification to US destinations; replace `US`
+with the actual ISO 3166-1 alpha-2 destinations before creating it.
 
 ```bash
 curl -X POST https://api.telnyx.com/v2/verify_profiles \
@@ -47,9 +51,23 @@ curl -X POST https://api.telnyx.com/v2/verify_profiles \
   -H "Content-Type: application/json" \
   -d '{
     "name": "My App Verification",
-    "messaging_enabled": true,
-    "rcs_enabled": false,
-    "default_timeout_secs": 300
+    "sms": {
+      "app_name": "My App",
+      "code_length": 6,
+      "whitelisted_destinations": ["US"],
+      "default_verification_timeout_secs": 300
+    },
+    "call": {
+      "app_name": "My App",
+      "code_length": 6,
+      "whitelisted_destinations": ["US"],
+      "default_verification_timeout_secs": 300
+    },
+    "flashcall": {
+      "app_name": "My App",
+      "whitelisted_destinations": ["US"],
+      "default_verification_timeout_secs": 300
+    }
   }'
 ```
 
@@ -108,13 +126,12 @@ curl -X POST "https://verify.twilio.com/v2/Services/$SERVICE_SID/Verifications" 
   -d "To=+15559876543" -d "Channel=sms"
 
 # Telnyx
-curl -X POST https://api.telnyx.com/v2/verifications \
+curl -X POST https://api.telnyx.com/v2/verifications/sms \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "phone_number": "+15559876543",
-    "verify_profile_id": "YOUR_PROFILE_ID",
-    "type": "sms"
+    "verify_profile_id": "YOUR_PROFILE_ID"
   }'
 ```
 
@@ -130,8 +147,8 @@ params.SetChannel("sms")
 resp, _ := client.VerifyV2.CreateVerification("VA...", params)
 
 // Go — Telnyx (REST API)
-// POST https://api.telnyx.com/v2/verifications
-// {"phone_number":"+15559876543","verify_profile_id":"...","type":"sms"}
+// POST https://api.telnyx.com/v2/verifications/sms
+// {"phone_number":"+15559876543","verify_profile_id":"..."}
 ```
 
 ```ruby
@@ -156,7 +173,8 @@ import com.twilio.rest.verify.v2.service.Verification;
 Verification verification = Verification.creator("VA...", "+15559876543", "sms").create();
 
 // Telnyx — use REST API
-// POST https://api.telnyx.com/v2/verifications with JSON body
+// POST https://api.telnyx.com/v2/verifications/sms with JSON body
+// {"phone_number":"+15559876543","verify_profile_id":"..."}
 ```
 
 ### Voice Call Verification
@@ -175,16 +193,64 @@ verification = client.verifications.trigger_call(
 )
 ```
 
+### WhatsApp Verification
+
+Twilio's `channel='whatsapp'` maps to Telnyx's WhatsApp-specific endpoint. Configure the profile's `whatsapp` settings (including the WABA, sender phone number, template, and allowed destinations) before triggering it.
+
+For a profile created in the setup step, explicitly approve updating that
+named profile, then attach its WhatsApp channel settings:
+
+```bash
+WHATSAPP_COUNTRY="US"
+WHATSAPP_WABA_ID="YOUR_WABA_ID"
+WHATSAPP_SENDER="+13035551234"
+WHATSAPP_TEMPLATE="YOUR_AUTHENTICATION_TEMPLATE_NAME"
+WHATSAPP_APPROVAL="$TELNYX_VERIFY_PROFILE_ID|countries:$WHATSAPP_COUNTRY|waba:$WHATSAPP_WABA_ID|sender:$WHATSAPP_SENDER|template:$WHATSAPP_TEMPLATE"
+printf 'Verify profile update approval token: %s\n' "$WHATSAPP_APPROVAL"
+test "${TELNYX_APPROVE_VERIFY_PROFILE_UPDATE:-}" = "$WHATSAPP_APPROVAL" || {
+  echo "Verify profile WhatsApp update not approved" >&2; exit 1;
+}
+
+curl -fsS -X PATCH "https://api.telnyx.com/v2/verify_profiles/$TELNYX_VERIFY_PROFILE_ID" \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  --data "$(jq -cn \
+    --arg country "$WHATSAPP_COUNTRY" \
+    --arg waba "$WHATSAPP_WABA_ID" \
+    --arg sender "$WHATSAPP_SENDER" \
+    --arg template "$WHATSAPP_TEMPLATE" \
+    '{"whatsapp": {whitelisted_destinations:[$country],default_verification_timeout_secs:300,waba_id:$waba,sender_phone_number:$sender,template_id:$template}}')" || exit 1
+```
+
+Replace `US`, the WABA ID, sender, and template with the resources approved for
+this migration. Do not patch an unrelated or pre-existing profile implicitly.
+
+```bash
+# Twilio
+curl -X POST "https://verify.twilio.com/v2/Services/$SERVICE_SID/Verifications" \
+  -u "$SID:$AUTH_TOKEN" \
+  -d "To=+15559876543" -d "Channel=whatsapp"
+
+# Telnyx
+curl -X POST https://api.telnyx.com/v2/verifications/whatsapp \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "phone_number": "+15559876543",
+    "verify_profile_id": "YOUR_PROFILE_ID"
+  }'
+```
+
 ### Parameter Mapping
 
 | Twilio | Telnyx | Notes |
 |---|---|---|
 | `to` | `phone_number` | E.164 format |
-| `channel` | `type` | `sms`, `call`, `flash_call`, `psd2` |
+| `channel` | endpoint (`/verifications/sms`, `/verifications/call`, `/verifications/flashcall`, `/verifications/whatsapp`) | Channel is chosen by the endpoint, not a body param; the `type` field is response-only |
 | Service SID (`VA...`) | `verify_profile_id` | Profile ID from setup |
+| `TemplateSid` / service `DefaultTemplateSid` | Profile `sms.messaging_template_id` | Telnyx template selection is profile-scoped, not a trigger parameter |
 | `locale` | Not specified | Language determined by phone number region |
 | `customCode` | `custom_code` | Use your own code (optional) |
-| `amount` + `payee` | `amount` + `payee` | For PSD2 verification |
 
 ## Checking Verification Codes
 
@@ -236,11 +302,15 @@ curl -X POST "https://api.telnyx.com/v2/verifications/by_phone_number/+155598765
 
 ### Status Mapping
 
-| Twilio Status | Telnyx Response Code | Meaning |
+The verify **action** (`.../actions/verify`) returns a `response_code` that is only ever `accepted` or `rejected`. This is distinct from a verification's `status` field, whose enum is `pending`, `accepted`, `invalid`, `expired`, `error`.
+
+| Twilio Status | Telnyx verify-action `response_code` | Meaning |
 |---|---|---|
 | `approved` | `accepted` | Code is correct |
-| `pending` | `rejected` | Code is incorrect or expired |
-| `canceled` | N/A | Verification was canceled |
+| `pending` | `rejected` | Submitted code is incorrect or expired |
+| `canceled` | N/A | No equivalent action response |
+
+Note: a freshly created verification has `status: "pending"` (still awaiting a code). Do not confuse the create-time `status` (`pending`) with the verify-action `response_code` (`rejected`).
 
 ## Flash Calling
 
@@ -257,55 +327,90 @@ The user sees an incoming call that auto-disconnects. Your app reads the caller 
 
 **Flash Call Configuration on Verify Profile:**
 
+The current profile-create schema accepts `flashcall`, but the profile-update schema does not. Configure flash calling when creating the profile rather than sending a `flashcall` field to `PATCH /verify_profiles/{id}`:
+
 ```bash
-curl -X PATCH https://api.telnyx.com/v2/verify_profiles/YOUR_PROFILE_ID \
+curl -X POST https://api.telnyx.com/v2/verify_profiles \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "flash_call_enabled": true,
-    "call_enabled": true
+    "name": "My App Verification",
+    "flashcall": {
+      "app_name": "My App",
+      "whitelisted_destinations": ["US"],
+      "default_verification_timeout_secs": 300
+    }
   }'
 ```
 
+Replace `US` with the actual ISO 3166-1 alpha-2 destinations before creating
+the profile.
+
 **How it works:**
-1. Your app calls `POST /v2/verifications` with `type: "flash_call"`
+1. Your app calls `POST /v2/verifications/flashcall` with `phone_number` and `verify_profile_id`
 2. Telnyx places a call to the user's phone that auto-disconnects after 1 ring
 3. The caller ID of that call contains the verification digits
 4. Your mobile app detects the incoming call's caller ID and extracts the code automatically
-5. Call `POST /v2/verifications/by_phone_number` with the extracted code to verify
+5. Call `POST /v2/verifications/by_phone_number/{phone_number}/actions/verify` with the extracted `code` and `verify_profile_id` to verify
 
 **Benefits over SMS OTP:** No SMS charges, faster delivery, works even with SMS delivery issues, harder to intercept.
 
-## vSMS (Verified SMS Templates)
+## Custom SMS Templates
 
-Telnyx vSMS uses carrier-verified message templates for OTP delivery. This provides:
-- Higher deliverability (carrier-approved, bypasses some spam filters)
-- Branded sender experience on supported carriers
-- Template-based formatting
+Both Twilio Verify and Telnyx Verify support custom verification templates, but they select them at different scopes:
+
+- A Twilio verification can pass `TemplateSid`, and a Twilio Verify Service can set `DefaultTemplateSid`.
+- Telnyx attaches a template to a Verify Profile through `sms.messaging_template_id`.
+
+Map a Twilio service default template to the equivalent Telnyx profile setting. If the Twilio application selects different `TemplateSid` values per verification, create/select Telnyx Verify Profiles with the corresponding templates; the Telnyx trigger request does not accept a per-request template ID.
+
+Message templates are a **separate resource** managed via `/verify_profiles/templates` — not a parameter you pass when triggering a verification. The trigger call itself (`POST /verifications/sms`) accepts only `custom_code` and `timeout_secs` as optional parameters; there is no `template_id` parameter at trigger time. Create/manage templates first, then trigger the SMS verification normally:
+
+```bash
+# Create the template and capture its ID (separate resource)
+if ! TEMPLATE_ID=$(curl -fsS -X POST https://api.telnyx.com/v2/verify_profiles/templates \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Your {{app_name}} verification code is: {{code}}."}' \
+  | jq -er '.data.id'); then
+  echo "Verify template creation failed; profile was not changed" >&2
+  exit 1
+fi
+
+# Read and preserve the profile's existing SMS settings, then select the new
+# template. Replacing the nested `sms` object with only one key can erase other
+# channel settings, so merge before PATCHing.
+CURRENT_SMS=$(curl -fsS \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  "https://api.telnyx.com/v2/verify_profiles/$TELNYX_VERIFY_PROFILE_ID" \
+  | jq -ec '.data.sms // {}') || exit 1
+CURRENT_TEMPLATE_ID=$(jq -r '.messaging_template_id // "unassigned"' \
+  <<<"$CURRENT_SMS") || exit 1
+
+TEMPLATE_UPDATE_APPROVAL="$TELNYX_VERIFY_PROFILE_ID|sms-template:$CURRENT_TEMPLATE_ID->$TEMPLATE_ID"
+printf 'Verify template update approval token: %s\n' "$TEMPLATE_UPDATE_APPROVAL"
+test "${TELNYX_APPROVE_VERIFY_TEMPLATE_UPDATE:-}" = "$TEMPLATE_UPDATE_APPROVAL" || {
+  echo "Verify profile template update not approved" >&2; exit 1;
+}
+
+PATCH_BODY=$(jq -cn \
+  --argjson sms "$CURRENT_SMS" \
+  --arg template "$TEMPLATE_ID" \
+  '{sms: ($sms + {messaging_template_id: $template})}')
+
+curl -fsS -X PATCH "https://api.telnyx.com/v2/verify_profiles/$TELNYX_VERIFY_PROFILE_ID" \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "$PATCH_BODY" || exit 1
+```
 
 ```python
+# Trigger SMS verification (optional params: custom_code, timeout_secs)
 verification = client.verifications.trigger_sms(
     phone_number="+15559876543",
-    verify_profile_id="YOUR_PROFILE_ID",
-    template_id="YOUR_TEMPLATE_ID"  # Pre-approved template
+    verify_profile_id="YOUR_PROFILE_ID"
 )
 ```
-
-## PSD2 (Payment Services Directive 2)
-
-For payment authorization in the EU, Telnyx Verify supports PSD2-compliant verification with amount and payee in the message:
-
-```python
-# Telnyx PSD2 verification
-verification = client.verifications.trigger_sms(
-    phone_number="+353851234567",
-    verify_profile_id="YOUR_PROFILE_ID",
-    amount="25.00",
-    payee="Acme Corp"
-)
-```
-
-The verification message includes the transaction amount and payee name, meeting Strong Customer Authentication (SCA) requirements.
 
 ## Concept Mapping
 
@@ -313,21 +418,22 @@ The verification message includes the transaction amount and payee name, meeting
 |---|---|
 | Verify Service (`VA...`) | Verify Profile |
 | Verification SID | Verification ID |
-| Channel (`sms`, `call`, `email`) | Type (`sms`, `call`, `flash_call`, `psd2`) |
+| Channel (`sms`, `call`, `whatsapp`, `email`) | Endpoint path: `POST /v2/verifications/{sms\|call\|flashcall\|whatsapp}` — the channel is chosen by the URL, not a request field (`type` is response-only); Telnyx Verify has no email channel |
 | `approved` / `pending` | `accepted` / `rejected` |
 | Rate limits (per Service) | Rate limits (per Profile) |
 | Fraud Guard | Built-in fraud detection |
 
 ## Webhook Differences
 
-Twilio Verify does not use webhooks for verification results — you poll with VerificationChecks.
+Twilio Verify does not use webhooks for the direct VerificationCheck result; the check request returns its result synchronously.
 
-Telnyx Verify also primarily uses a request/response pattern (create verification → check code). However, Telnyx sends webhook events for verification status changes if configured on your Verify Profile:
+Telnyx Verify likewise returns the direct code-check result synchronously as the verify action's `response_code`. If a webhook URL is configured on the Verify Profile, the currently documented delivery lifecycle notifications use these event names:
 
-- `verification.sent` — code was sent
-- `verification.accepted` — code was correctly verified
-- `verification.rejected` — incorrect code submitted
-- `verification.expired` — code expired without verification
+- `verify.sent` — the verification request was sent
+- `verify.delivered` — the verification reached the destination
+- `verify.failed` — delivery failed
+
+Those three events report delivery state; they are not the only possible Verify notification contract. Telnyx also documents real-time completion notifications, but the public receiving-webhooks page does not currently enumerate a stable completion event name and payload alongside the delivery events. Confirm the completion event contract exposed by the target Verify Profile/API version before implementing an event-driven acceptance handler; do not infer acceptance from `verify.delivered`. For a direct code check, determine acceptance from the synchronous verify action's `response_code` (`accepted` or `rejected`).
 
 ## Testing
 
@@ -342,8 +448,9 @@ When migrating verify tests, the key change is the response field names.
 # def test_verify(mock_client):
 #     mock_client.return_value.verify.v2.services('VA...').verification_checks.create.return_value.status = 'approved'
 
-# Telnyx mock (v4 SDK — client.verifications.actions.verify):
-@patch('your_module.client.verifications.actions.verify')  # patch where client is used
+# Telnyx mock (v4 SDK — client.verifications.by_phone_number.actions.verify,
+# mirroring POST /verifications/by_phone_number/{phone_number}/actions/verify):
+@patch('your_module.client.verifications.by_phone_number.actions.verify')  # patch where client is used
 def test_verify_code(mock_submit):
     mock_submit.return_value = type('obj', (object,), {
         'data': type('obj', (object,), {
@@ -361,15 +468,18 @@ def test_verify_code(mock_submit):
 jest.mock('telnyx', () => {
   return jest.fn().mockImplementation(() => ({
     verifications: {
-      byPhoneNumber: jest.fn().mockReturnValue({
-        submit: jest.fn().mockResolvedValue({
-          data: {
-            phone_number: '+15559876543',
-            verify_profile_id: 'uuid-here',
-            response_code: 'accepted',
-          }
-        })
-      })
+      // mirrors client.verifications.byPhoneNumber.actions.verify(...)
+      byPhoneNumber: {
+        actions: {
+          verify: jest.fn().mockResolvedValue({
+            data: {
+              phone_number: '+15559876543',
+              verify_profile_id: 'uuid-here',
+              response_code: 'accepted',
+            }
+          })
+        }
+      }
     }
   }));
 });

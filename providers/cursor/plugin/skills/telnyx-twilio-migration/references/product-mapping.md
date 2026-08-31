@@ -13,17 +13,18 @@
 | Twilio Product | Telnyx Equivalent | Migration Complexity | Notes |
 |---|---|---|---|
 | **Programmable Voice (TwiML)** | **TeXML** | Low | XML verb-compatible. Swap endpoints + auth. Most TwiML works as-is. |
-| **Programmable Voice (REST)** | **Call Control API** | Medium | Different paradigm: Telnyx uses event-driven WebSocket/webhook commands vs Twilio's REST calls. More granular control. |
+| **Programmable Voice (REST)** | **Call Control API** | Medium | Telnyx uses REST commands with event webhooks. WebSockets are used separately for media streaming and WebRTC. |
 | **Programmable Messaging** (SMS/MMS) | **Messaging API** | Medium | New SDK integration. Different payload structure. Same capabilities: SMS, MMS, long codes, toll-free, short codes. |
 | **Elastic SIP Trunking** | **SIP Trunking** | Low | Direct replacement. Telnyx owns its network (not resold). Configure in Mission Control Portal. |
-| **Voice SDK** (Client WebRTC) | **WebRTC SDKs** | Medium | SDKs for JS, iOS, Android, Flutter, React Native. Key difference: no mandatory backend server for tokens. |
+| **Voice SDK** (Client WebRTC) | **WebRTC SDKs** | Medium | SDKs for JS, iOS, Android, Flutter, React Native. Direct credentials are supported; production apps should mint short-lived JWTs on a trusted backend. |
 | **Phone Numbers** | **Number Management** | Low | Licensed carrier with direct inventory in 140+ countries. Numbers managed via API or portal. |
-| **Twilio Verify** | **Verify API** | Medium | 5 methods: SMS, vSMS (templated), Call, Flash Call, PSD2. Different API surface but same functionality. |
+| **Twilio Verify** | **Verify API** | Medium | Methods: SMS (custom templates supported), Call, Flash Call (missed-call verification), WhatsApp. Different API surface but same functionality. |
 | **Twilio Lookup** | **Number Lookup** | Low | Carrier lookup, line type detection, caller name. Direct API replacement. |
+| **Twilio Pay** (`<Pay>`) | **TeXML `<Pay>`** | Low | Supported by the TeXML runtime and documented as a dedicated TeXML verb — keep the verb and configure a payment connector in Mission Control. Attribute deltas are in `texml-verbs.md`. Do NOT replace in-call payment flows with an external processor. |
 | **Twilio Conversations** | No direct equivalent | N/A | Telnyx provides messaging primitives; no multi-channel conversation orchestration product. |
 | **Twilio Notify** | No direct equivalent | N/A | Use Telnyx Messaging API directly for push/SMS notifications. |
 | **10DLC Registration** | **10DLC Campaign Registry** | Low | Same underlying TCR system. Register brands and campaigns via Telnyx portal or API. |
-| **Short Codes** | **Short Codes** | Low | Telnyx supports shared and dedicated short codes. |
+| **Short Codes** | **Short Codes** | Low | Telnyx supports dedicated random and vanity short codes. |
 
 ## Product-to-Reference File Mapping
 
@@ -72,7 +73,6 @@ If you depend on these, you will need a third-party alternative or custom soluti
 | **SendGrid** (Email) | No equivalent. Telnyx does not offer email. Use SendGrid independently or alternatives (Postmark, Resend, SES). |
 | **TaskRouter** (Task Distribution) | No equivalent. Build custom routing with Call Control API queue management. |
 | **Frontline** (deprecated by Twilio) | N/A |
-| **Twilio Pay** | No equivalent. No `<Pay>` verb in TeXML. |
 | **Twilio Conversations** | No direct equivalent. Telnyx provides messaging primitives (SMS/MMS API) but no multi-channel conversation orchestration layer. Build custom or use a third-party conversation platform. |
 
 ## Deprecated Twilio Products Telnyx Still Supports

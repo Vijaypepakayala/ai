@@ -47,9 +47,9 @@ Telnyx Video Rooms consists of:
 | Access Token (JWT + Video Grant) | Client Join Token (JWT) | Generated via `POST /v2/rooms/{id}/actions/generate_join_client_token` |
 | N/A | Refresh Token | Provided with join token for session extension |
 | Participant SID | Participant `id` | Managed via Sessions API |
-| Room Session | Room Session | `POST /v2/rooms/{id}/sessions` to manage |
-| Composition | Composition | `POST /v2/rooms/compositions` |
-| Recording | Recording | Per-room recording management |
+| Room Session | Room Session | `GET /v2/rooms/{id}/sessions` to list |
+| Composition | Composition | `POST /v2/room_compositions` |
+| Recording | Recording | Top-level recording management (`GET /v2/room_recordings`) |
 | Track (Audio/Video/Data) | Media streams | Managed via Client SDK |
 | Room Status Callback | Webhook events on room | Configured via `webhook_event_url` |
 | Twilio Video JS SDK | `@telnyx/video` JS SDK | Different API surface |
@@ -106,7 +106,9 @@ room = client.rooms.create(
     enable_recording=True,
     webhook_event_url="https://example.com/video-events"
 )
-print(room.id)
+if room.data is None:
+    raise RuntimeError("Telnyx room creation returned no data")
+print(room.data.id)
 ```
 
 ### JavaScript
@@ -155,7 +157,7 @@ console.log(room.data.id);
 | `unique_name` | The name you assigned |
 | `max_participants` | Configured limit |
 | `enable_recording` | Recording status |
-| `video_codecs` | Supported codecs (e.g., `["h264", "vp8"]`) |
+| `active_session_id` | UUID of the currently active session, if any |
 | `created_at` | Creation timestamp |
 | `updated_at` | Last update timestamp |
 
@@ -238,59 +240,92 @@ room.on('participantConnected', participant => {
   console.log(`${participant.identity} joined`);
 });
 
-// Telnyx
-import { Room } from '@telnyx/video';
-const room = new Room(clientToken);
+// Telnyx (@telnyx/video 1.0.2)
+import { initialize } from '@telnyx/video';
+const room = await initialize({ roomId, clientToken });
+room.on('participant_joined', (participantId, state) => {
+  console.log(`${participantId} joined`);
+});
+room.on('participant_left', (participantId, state) => {
+  console.log(`${participantId} left`);
+});
 await room.connect();
-room.on('participantJoined', (participant) => {
-  console.log(`${participant.id} joined`);
-});
-room.on('participantLeft', (participant) => {
-  console.log(`${participant.id} left`);
-});
 ```
 
 **SDK event mapping:**
 
 | Twilio Video JS Event | Telnyx Video JS Event | Notes |
 |---|---|---|
-| `participantConnected` | `participantJoined` | Different event name |
-| `participantDisconnected` | `participantLeft` | Different event name |
-| `trackSubscribed` | `trackStarted` | Media track events |
-| `trackUnsubscribed` | `trackStopped` | Media track events |
+| `participantConnected` | `participant_joined` | Callback receives participant ID and room state |
+| `participantDisconnected` | `participant_left` | Callback receives participant ID and room state |
+| `trackSubscribed` | `subscription_started` | Callback receives participant ID, stream key, and room state |
+| `trackUnsubscribed` | `subscription_ended` | Callback receives participant ID, stream key, and room state |
 | `disconnected` | `disconnected` | Same event name |
-| `reconnecting` | `reconnecting` | Same event name |
-| `reconnected` | `reconnected` | Same event name |
+| `reconnecting` / `reconnected` | No direct event | Observe `state_changed` / `disconnected` and implement application reconnect handling |
 
 ## Step 4: Manage Participants
 
-Telnyx provides server-side REST API endpoints for participant management that Twilio offered through its Data Track API or REST API:
+Telnyx provides server-side REST API endpoints for participant management that Twilio offered through its Data Track API or REST API. These actions operate on a room **session**, not on individual participant URLs. Set `participants` to the string `"all"` or to an array of participant UUIDs; when targeting all participants, `exclude` can list UUIDs to skip.
 
-### Mute a Participant
+### Mute Participants
 
 ```bash
-curl -X POST "https://api.telnyx.com/v2/rooms/$ROOM_ID/sessions/$SESSION_ID/participants/$PARTICIPANT_ID/actions/mute" \
-  -H "Authorization: Bearer $TELNYX_API_KEY"
+MUTE_EXCLUDE_ID="participant_id_to_keep_unmuted"
+MUTE_APPROVAL="$SESSION_ID|mute|all|exclude:$MUTE_EXCLUDE_ID"
+test -n "$SESSION_ID" -a -n "$MUTE_EXCLUDE_ID" || exit 1
+printf 'Mute-all approval token: %s\n' "$MUTE_APPROVAL"
+test "${TELNYX_APPROVE_ROOM_MUTATION:-}" = "$MUTE_APPROVAL" || {
+  echo "Session-wide mute not approved" >&2; exit 1;
+}
+curl -fsS -X POST "https://api.telnyx.com/v2/room_sessions/$SESSION_ID/actions/mute" \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  --data "$(jq -cn --arg id "$MUTE_EXCLUDE_ID" \
+    '{participants: "all", exclude: [$id]}')" || exit 1
 ```
 
-### Unmute a Participant
+### Unmute Participants
 
 ```bash
-curl -X POST "https://api.telnyx.com/v2/rooms/$ROOM_ID/sessions/$SESSION_ID/participants/$PARTICIPANT_ID/actions/unmute" \
-  -H "Authorization: Bearer $TELNYX_API_KEY"
+UNMUTE_APPROVAL="$SESSION_ID|unmute|all|exclude:none"
+test -n "$SESSION_ID" || exit 1
+printf 'Unmute-all approval token: %s\n' "$UNMUTE_APPROVAL"
+test "${TELNYX_APPROVE_ROOM_MUTATION:-}" = "$UNMUTE_APPROVAL" || {
+  echo "Session-wide unmute not approved" >&2; exit 1;
+}
+curl -fsS -X POST "https://api.telnyx.com/v2/room_sessions/$SESSION_ID/actions/unmute" \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"participants": "all", "exclude": []}' || exit 1
 ```
 
-### Kick a Participant
+### Kick Participants
 
 ```bash
-curl -X POST "https://api.telnyx.com/v2/rooms/$ROOM_ID/sessions/$SESSION_ID/participants/$PARTICIPANT_ID/actions/kick" \
-  -H "Authorization: Bearer $TELNYX_API_KEY"
+PARTICIPANT_ID="participant-id-to-kick"
+KICK_APPROVAL="$SESSION_ID|$PARTICIPANT_ID"
+test -n "$SESSION_ID" -a -n "$PARTICIPANT_ID" || exit 1
+printf 'Kick participant %s from room session %s\n' "$PARTICIPANT_ID" "$SESSION_ID"
+test "${TELNYX_APPROVE_ROOM_KICK:-}" = "$KICK_APPROVAL" || {
+  echo "Participant kick not approved" >&2; exit 1;
+}
+jq -n --arg participant "$PARTICIPANT_ID" \
+  '{participants: [$participant], exclude: []}' |
+curl -fsS -X POST "https://api.telnyx.com/v2/room_sessions/$SESSION_ID/actions/kick" \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  --data-binary @-
 ```
 
-### Search Participants
+### List Participants
 
 ```bash
-curl -X GET "https://api.telnyx.com/v2/rooms/$ROOM_ID/participants?filter[session_id]=$SESSION_ID" \
+# All participants (filter by room via query params)
+curl -X GET "https://api.telnyx.com/v2/room_participants" \
+  -H "Authorization: Bearer $TELNYX_API_KEY"
+
+# Participants for a specific session
+curl -X GET "https://api.telnyx.com/v2/room_sessions/$SESSION_ID/participants" \
   -H "Authorization: Bearer $TELNYX_API_KEY"
 ```
 
@@ -298,29 +333,59 @@ curl -X GET "https://api.telnyx.com/v2/rooms/$ROOM_ID/participants?filter[sessio
 
 Telnyx Video supports room-level recording. Enable recording when creating the room or update an existing room.
 
+Recordings are exposed as a top-level resource. Filter the list by `room_id` to scope results to a specific room.
+
 ### List Recordings
 
 ```bash
-curl -X GET "https://api.telnyx.com/v2/rooms/$ROOM_ID/recordings" \
+curl -X GET -G --data-urlencode "filter[room_id]=$ROOM_ID" \
+  "https://api.telnyx.com/v2/room_recordings" \
   -H "Authorization: Bearer $TELNYX_API_KEY"
 ```
 
 ### View a Recording
 
 ```bash
-curl -X GET "https://api.telnyx.com/v2/rooms/recordings/$RECORDING_ID" \
+curl -X GET "https://api.telnyx.com/v2/room_recordings/$RECORDING_ID" \
   -H "Authorization: Bearer $TELNYX_API_KEY"
 ```
 
 ### Delete Recordings
 
 ```bash
-# Bulk delete
-curl -X DELETE "https://api.telnyx.com/v2/rooms/recordings" \
-  -H "Authorization: Bearer $TELNYX_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"recording_ids": ["rec_id_1", "rec_id_2"]}'
+# Enumerate the exact recording IDs for one room and review the final set.
+RECORDINGS=$(curl -fsS -G -H "Authorization: Bearer $TELNYX_API_KEY" \
+  --data-urlencode "filter[room_id]=$ROOM_ID" \
+  --data-urlencode "page[size]=250" \
+  "https://api.telnyx.com/v2/room_recordings") || exit 1
+RECORDING_IDS=$(jq -cer --arg room "$ROOM_ID" '
+  select(.meta.total_pages == 1)
+  | [.data[] | select(.room_id == $room) | .id]
+  | select(length > 0 and all(.[]; type == "string" and test("\\S")))
+  | unique | sort
+' <<<"$RECORDINGS") || exit 1
+: "${RECORDING_RECOVERY_PLAN:?Set to the reviewed backup location or irreversible-no-recovery}"
+RECORDING_APPROVAL="$ROOM_ID|delete-recordings|$(jq -r 'join(",")' <<<"$RECORDING_IDS")|recovery:$RECORDING_RECOVERY_PLAN"
+printf 'Recordings selected for irreversible deletion:\n%s\n' \
+  "$(jq -r '.[]' <<<"$RECORDING_IDS")"
+printf 'Reviewed recovery plan: %s\n' "$RECORDING_RECOVERY_PLAN"
+printf 'Recording deletion approval token: %s\n' "$RECORDING_APPROVAL"
+test "${TELNYX_APPROVE_RECORDING_DELETE:-}" = "$RECORDING_APPROVAL" || {
+  echo "Recording deletion not approved" >&2; exit 1;
+}
+
+# Delete only the reviewed IDs; never issue a collection DELETE.
+jq -r '.[]' <<<"$RECORDING_IDS" | while IFS= read -r recording_id; do
+  curl -fsS -X DELETE \
+    "https://api.telnyx.com/v2/room_recordings/$recording_id" \
+    -H "Authorization: Bearer $TELNYX_API_KEY" || exit 1
+done
+
 ```
+
+Do not issue an unfiltered collection DELETE. For broader cleanup, enumerate
+the exact recording IDs from a reviewed export and delete those IDs one at a
+time after explicit confirmation.
 
 **Recording comparison:**
 
@@ -342,11 +407,17 @@ curl -X GET "https://api.telnyx.com/v2/rooms/$ROOM_ID/sessions" \
   -H "Authorization: Bearer $TELNYX_API_KEY"
 
 # View a specific session
-curl -X GET "https://api.telnyx.com/v2/rooms/sessions/$SESSION_ID" \
+curl -X GET "https://api.telnyx.com/v2/room_sessions/$SESSION_ID" \
   -H "Authorization: Bearer $TELNYX_API_KEY"
 
 # End a session (disconnect all participants)
-curl -X POST "https://api.telnyx.com/v2/rooms/$ROOM_ID/sessions/$SESSION_ID/actions/end" \
+END_APPROVAL="$SESSION_ID|end|all-participants"
+test -n "$SESSION_ID" || exit 1
+printf 'End-session approval token: %s\n' "$END_APPROVAL"
+test "${TELNYX_APPROVE_ROOM_MUTATION:-}" = "$END_APPROVAL" || {
+  echo "Ending the room session not approved" >&2; exit 1;
+}
+curl -fsS -X POST "https://api.telnyx.com/v2/room_sessions/$SESSION_ID/actions/end" \
   -H "Authorization: Bearer $TELNYX_API_KEY"
 ```
 
@@ -375,16 +446,25 @@ Compositions combine individual participant recordings into a single media file.
 
 ```bash
 # Create a composition
-curl -X POST https://api.telnyx.com/v2/rooms/compositions \
+# session_id, format, resolution, and video_layout are all optional.
+# video_layout is an object describing named regions, not a preset string.
+curl -X POST https://api.telnyx.com/v2/room_compositions \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "room_session_id": "SESSION_ID",
-    "video_layout": "grid"
+    "session_id": "SESSION_ID",
+    "format": "mp4",
+    "resolution": "1280x720",
+    "video_layout": {
+      "main": {
+        "z_pos": 1,
+        "video_sources": ["*"]
+      }
+    }
   }'
 
 # List compositions
-curl -X GET "https://api.telnyx.com/v2/rooms/compositions" \
+curl -X GET "https://api.telnyx.com/v2/room_compositions" \
   -H "Authorization: Bearer $TELNYX_API_KEY"
 ```
 
@@ -398,15 +478,16 @@ curl -X GET "https://api.telnyx.com/v2/rooms/compositions" \
 | Update room | `POST /v1/Rooms/{SID}` | `PATCH /v2/rooms/{id}` |
 | Delete room | N/A | `DELETE /v2/rooms/{id}` |
 | Generate token | Server-side SDK (Access Token) | `POST /v2/rooms/{id}/actions/generate_join_client_token` |
-| List participants | `GET /v1/Rooms/{SID}/Participants` | `GET /v2/rooms/{id}/participants` |
-| Mute participant | Client-side only | `POST /v2/rooms/{id}/sessions/{sid}/participants/{pid}/actions/mute` |
-| Kick participant | `POST /Participants/{SID} (Status=disconnected)` | `POST /v2/rooms/{id}/sessions/{sid}/participants/{pid}/actions/kick` |
-| List sessions | N/A | `GET /v2/rooms/{id}/sessions` |
-| End session | `POST /Rooms/{SID} (Status=completed)` | `POST /v2/rooms/{id}/sessions/{sid}/actions/end` |
-| List recordings | `GET /v1/Rooms/{SID}/Recordings` | `GET /v2/rooms/{id}/recordings` |
-| Get recording | `GET /v1/Recordings/{SID}` | `GET /v2/rooms/recordings/{id}` |
-| Delete recordings | `DELETE /v1/Recordings/{SID}` | `DELETE /v2/rooms/recordings` (bulk) |
-| Create composition | `POST /v1/Compositions` | `POST /v2/rooms/compositions` |
+| List participants | `GET /v1/Rooms/{SID}/Participants` | `GET /v2/room_participants` or `GET /v2/room_sessions/{session_id}/participants` |
+| Mute participants | Client-side only | `POST /v2/room_sessions/{session_id}/actions/mute` |
+| Kick participants | `POST /Participants/{SID} (Status=disconnected)` | `POST /v2/room_sessions/{session_id}/actions/kick` |
+| List sessions | N/A | `GET /v2/rooms/{id}/sessions` or `GET /v2/room_sessions` |
+| Get session | N/A | `GET /v2/room_sessions/{session_id}` |
+| End session | `POST /Rooms/{SID} (Status=completed)` | `POST /v2/room_sessions/{session_id}/actions/end` |
+| List recordings | `GET /v1/Rooms/{SID}/Recordings` | `GET /v2/room_recordings` |
+| Get recording | `GET /v1/Recordings/{SID}` | `GET /v2/room_recordings/{id}` |
+| Delete recording | `DELETE /v1/Recordings/{SID}` | `DELETE /v2/room_recordings/{id}` (single) or `DELETE /v2/room_recordings` (bulk) |
+| Create composition | `POST /v1/Compositions` | `POST /v2/room_compositions` |
 
 ## Common Pitfalls
 
@@ -414,7 +495,7 @@ curl -X GET "https://api.telnyx.com/v2/rooms/compositions" \
 
 2. **Room type does not exist** — Twilio had Group, Peer-to-Peer, and Go room types. Telnyx uses a single room model. Set `max_participants` to control room capacity. For 1:1 calls, set `max_participants: 2`.
 
-3. **Client SDK event names differ** — `participantConnected` becomes `participantJoined`, `participantDisconnected` becomes `participantLeft`. Update all event listeners.
+3. **Client SDK event names differ** — `participantConnected` becomes `participant_joined`, `participantDisconnected` becomes `participant_left`. Update all event listeners.
 
 4. **Sessions vs rooms** — Telnyx rooms are persistent and reusable. A single room can host multiple sessions. If your Twilio code creates a new room per meeting, you may want to reuse Telnyx rooms and track sessions instead.
 
@@ -424,4 +505,4 @@ curl -X GET "https://api.telnyx.com/v2/rooms/compositions" \
 
 7. **Webhook payload structure** — Telnyx webhooks use the standard nested structure (`event.data.event_type`, `event.data.payload`). This differs from Twilio's Status Callback format.
 
-8. **Video codec configuration** — Telnyx rooms support H.264 and VP8 codecs. The `video_codecs` field in the room response shows which codecs are available. Ensure your client SDK is configured for a compatible codec.
+8. **Sub-resources are not nested under `/rooms/{id}/...` (with one exception) — but they ARE session-scoped where that is the natural parent.** Recordings and compositions are top-level only (`/room_recordings`, `/room_compositions`); scope them to a room by filtering on `room_id`. Participants are listed either account-wide (`GET /v2/room_participants`) **or session-scoped (`GET /v2/room_sessions/{session_id}/participants`) — use the session-scoped route when you want the participants of one session**, since participants carry `session_id`, not `room_id`. Under `/rooms/{room_id}/...` the only valid nested route is `GET /v2/rooms/{room_id}/sessions`; per-session actions (get, end, mute, kick) live at `/room_sessions/{session_id}`.
