@@ -4,7 +4,9 @@ description: >-
   Pick the right Telnyx product and API for a job before writing code. Use at
   the START of any Telnyx build: maps use cases (notifications, 2FA, voice
   agents, contact centers, email, IoT, video, fax, Twilio migration) to the correct
-  product, API surface, and companion skill.
+  product, API surface, and companion skill. Do not use for a fixed-design
+  compliance review, a runtime incident diagnosis, or a task where the Telnyx
+  product has already been selected.
 metadata:
   author: telnyx
   product: platform
@@ -13,17 +15,34 @@ metadata:
 
 # Telnyx Product Navigator
 
-Answer three questions, then jump to the row that matches. The Deep-dive column
-names Claude Code plugins: in Claude Code, install one with
-`/plugin install telnyx-<product>@telnyx`. In Cursor, do not run that command;
-the product skills are already bundled, so load the matching `telnyx-<product>-*`
-skill from the current Telnyx plugin instead.
+Answer three questions, then jump to the row that matches.
+
+## Continue in your client
+
+- **Codex or Claude with the Telnyx Developer Kit installed**: Use the
+  installed OAuth-authenticated `telnyx` MCP connector. Call
+  `list_api_endpoints` to discover the relevant operation, then call
+  `get_api_endpoint_schema` for the selected endpoint before writing a request.
+  Those two catalog tools cannot execute the represented endpoints. Account
+  access is limited to `get_call_status`, `list_call_events`,
+  `search_recordings`, and the explicitly confirmed billable
+  `lookup_phone_number`; there is no catch-all executor or MCP App. Do not ask
+  for or accept a Telnyx API key in chat.
+- **Claude with only a product plugin installed**: Use matching
+  `telnyx-<product>-*` skills from that installation. Product plugins do not
+  imply that the separate Developer Kit MCP is installed. If a needed skill is
+  absent, name the companion plugin and ask before installing it; never issue
+  a `/plugin install` command automatically.
+- **Cursor**: Matching canonical product skills are already bundled in the
+  flat Telnyx Cursor plugin. Load the relevant `telnyx-<product>-*` skill or
+  skills from the current installation; do not run Claude `/plugin install`
+  commands.
 
 ## Use case → product
 
-| You want to… | Product | API surface | Deep-dive |
+| You want to… | Product | API surface | Optional reference pack |
 |---|---|---|---|
-| Send SMS/MMS notifications | Messaging | `POST /v2/messages` | telnyx-messaging plugin |
+| Send SMS/MMS notifications or alerts | Messaging | `POST /v2/messages` | telnyx-messaging plugin |
 | Verify users by OTP (SMS, call, flash call) | Verify | `POST /v2/verifications/{sms\|call\|flashcall}` | telnyx-verify plugin |
 | Send WhatsApp messages | WhatsApp Business | WhatsApp API | telnyx-whatsapp plugin |
 | Send or receive email | Email | `/v2/email_messages` + inbox/domain APIs | telnyx-email plugin |
@@ -33,7 +52,7 @@ skill from the current Telnyx plugin instead.
 | Real-time media into your AI model | Media Streaming | `<Connect><Stream>` or Call Control streaming | telnyx-voice plugin |
 | Speech-to-text / text-to-speech | STT / TTS | OpenAI-compatible + TTS API | telnyx-stt / telnyx-tts plugins |
 | Buy, configure, port numbers | Numbers | `/v2/available_phone_numbers`, `/v2/number_orders`, porting | telnyx-numbers plugin |
-| Look up carrier/caller data for a number | Number Lookup | `GET /v2/number_lookup/{number}` | telnyx-numbers plugin |
+| Look up carrier/caller data for a number | Number Lookup | `GET /v2/number_lookup/{number}` | `lookup_phone_number` in the hosted Developer Kit connector |
 | Send/receive fax | Programmable Fax | Send: `POST /v2/faxes` with `connection_id`; receive: create with `POST /v2/fax_applications`, then assign the number using `PATCH /v2/phone_numbers/{id}` with the Fax Application ID as `connection_id` | telnyx-platform plugin |
 | Connect a PBX/SIP system | SIP Trunking | credential or IP connections | telnyx-platform plugin |
 | Cellular connectivity for devices | IoT SIM | `/v2/sim_cards` (eSIM buys use `amount`) | telnyx-platform plugin |
@@ -58,10 +77,20 @@ skill from the current Telnyx plugin instead.
 - **Voice AI stack shortcut**: inbound number → TeXML `<Connect><Stream>` or
   Call Control streaming → your model → TTS back. Do not build a webhook
   server just to answer calls if `<Connect>` to an AI Assistant fits.
+- **Any voice flow that records or transcribes**: route through
+  telnyx-kit-guardrails before implementation so recording starts only after
+  applicable notice/consent and the retention, access, deletion, and failover
+  policy is explicit.
 - **Coming from Twilio**: product names map non-obviously (Messaging Service
   → messaging profile, TwiML App → TeXML Application, Verify Service →
-  Verify profile). The telnyx-twilio-migration skill has the complete
-  mapping plus automated scanners.
+  Verify profile). In Codex with the Telnyx Developer Kit, use
+  `list_api_endpoints` for the corresponding Messaging, TeXML, Verify, Numbers,
+  or other Telnyx operation, then inspect each selected operation with
+  `get_api_endpoint_schema`. In Claude or Cursor, use the matching installed
+  product skill and use `telnyx-twilio-migration` only when it is already
+  installed or the user explicitly chooses its companion package. Treat any
+  separate migration package as an explicit user choice, not an automatic
+  dependency.
 
 ## Anti-patterns
 

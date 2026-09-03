@@ -3,7 +3,9 @@ name: telnyx-kit-architecture-patterns
 description: >-
   Reference architectures for Telnyx builds: AI voice agents, high-volume
   messaging, webhook processing, and multi-product apps. Use when DESIGNING a
-  system (before code) to pick components, data flow, and failure handling.
+  system (before code) to pick components, data flow, and failure handling. Do
+  not use for a fixed-design guardrail review, a runtime incident diagnosis,
+  or a channel/product comparison that does not request system architecture.
 metadata:
   author: telnyx
   product: platform
@@ -14,10 +16,12 @@ metadata:
 
 ## AI voice agent (the most requested build)
 
+### TeXML flow
+
 ```
 Caller → Telnyx number → TeXML app: <Connect><Stream url="wss://you"/></Connect>
        → your WebSocket: audio in → STT → LLM → TTS → audio out
-       → optional Call Control commands for transfer/hangup
+       → later call steps through TeXML responses and verbs such as <Dial>/<Hangup>
 ```
 
 - Answer + stream in one TeXML response; keep the webhook fast (<2s) —
@@ -25,20 +29,49 @@ Caller → Telnyx number → TeXML app: <Connect><Stream url="wss://you"/></Conn
 - Interruption handling: send `{"event":"clear"}` to flush queued audio when
   the caller barges in. `stream_id` appears on server-to-client events but is
   not part of the client clear frame.
-- For fully managed flows, `<Connect>` supports AI assistant nouns
-  (AIAssistant, ConversationRelay) — no WebSocket server needed.
-- Scale unit = concurrent streams; keep per-call state keyed on
-  `call_control_id`, never in process globals.
+- For a fully managed flow, `<Connect><AIAssistant>` connects the call to a
+  configured Telnyx AI Assistant; your application does not run a media
+  WebSocket server.
+- `<Connect><ConversationRelay>` is different: configure its `url` as a
+  reachable `wss://` application endpoint. Your server must accept the
+  ConversationRelay WebSocket protocol and exchange the structured text and
+  control messages that drive the conversation.
+- Scale unit = concurrent streams; key TeXML call state on `CallSid` and
+  stream state on `StreamSid`, never on `call_control_id` or process globals.
+- Keep control in the TeXML model. Do not send Call Control commands against a
+  TeXML-managed call; return the next XML response or use the appropriate
+  TeXML verb for transfer and hangup behavior.
+
+### Call Control flow
+
+```
+Caller → Telnyx number → Call Control app → call.initiated webhook
+       → answer + streaming REST commands → your media/model pipeline
+       → transfer/hangup REST commands
+```
+
+- Use this flow when application code must make imperative mid-call decisions.
+  Key state on `call_control_id` and make commands idempotent with `command_id`;
+  do not introduce a TeXML response loop into the same call.
+- Keep webhook handling fast and perform media/model work outside the request
+  handler.
+
+For either flow:
+
+- If the flow records or transcribes, put an explicit notice/consent gate
+  before the first recording command. Persist that consent state across
+  workers and failover, and design recording retention, access, and deletion
+  before enabling capture — see telnyx-kit-guardrails.
 
 ## High-volume messaging
 
 - One messaging profile per raw Messaging traffic class (for example,
   marketing vs transactional) — profiles carry throughput and webhook config.
   Route OTP and 2FA through the Verify API with a Verify profile instead of
-  hand-rolling codes over raw Messaging. For US A2P, local
-  10-digit long-code senders use a messaging profile linked to a 10DLC
-  campaign; toll-free senders need toll-free verification, while short-code
-  senders need carrier approval/provisioning.
+  hand-rolling codes over raw Messaging. For US A2P, a local 10-digit
+  long-code sender uses a messaging profile linked to its 10DLC campaign; a
+  toll-free sender needs toll-free verification, while a short-code sender
+  needs carrier approval/provisioning.
 - Queue sends (worker + retry with backoff on 429 reading `Retry-After`);
   never loop sends inline in a request handler.
 - Delivery truth: the `message.finalized` webhook. Iterate every entry in
@@ -46,8 +79,7 @@ Caller → Telnyx number → TeXML app: <Connect><Stream url="wss://you"/></Conn
   can contain different outcomes for different destinations. Use
   `data.payload.to[0].status` only when the originating request is guaranteed
   to have exactly one recipient. Dedupe deliveries on the event `data.id` and
-  correlate business state on `data.payload.id`; do not collapse distinct
-  lifecycle events merely because they reference the same message.
+  correlate business state on `data.payload.id`.
 - Store conversation state server-side keyed on BOTH numbers (user × your
   number), with a TTL.
 
@@ -55,30 +87,27 @@ Caller → Telnyx number → TeXML app: <Connect><Stream url="wss://you"/></Conn
 
 For API v2 JSON event webhooks (including Messaging and Call Control):
 
-- Verify the raw request before parsing using the
-  `telnyx-signature-ed25519` and `telnyx-timestamp` request headers; load the
-  public key from portal/configuration (for example, `TELNYX_PUBLIC_KEY`) — see
+- Verify the raw request bytes before parsing using the
+  `telnyx-signature-ed25519` and `telnyx-timestamp` request headers plus the
+  public key from Mission Control Portal (`TELNYX_PUBLIC_KEY`) — see
   telnyx-kit-guardrails.
 - Return 200 fast; enqueue work. Telnyx retries on timeout — dedupe on the
   event `data.id` before side effects.
-- The event envelope is nested: `data.event_type`, `data.payload.*`. Never
-  apply Twilio's flat form parser to this route.
-- For critical applications, configure distinct primary and failover webhook
-  URLs. Both endpoints must verify signatures, fast-ack, and enqueue into the
-  same durable deduplication store; route internally on `data.event_type` with
-  an explicit allowlist and a logged default arm.
+- The event envelope is nested: `data.event_type`, `data.payload.*`. Route on
+  `data.event_type` with an explicit allowlist and a logged default arm.
 
-TeXML instruction requests and status callbacks use a different wire format:
+TeXML instruction requests and status callbacks are a separate wire format:
 
-- A configured POST carries flat PascalCase form fields as
-  `application/x-www-form-urlencoded`; a configured GET carries them in the
-  query string. Verify the raw request before decoding it, then parse the
-  configured method rather than looking for `data.*`.
-- Instruction requests must return TeXML promptly. Status callbacks should
-  fast-ack after durable enqueue and dedupe on their TeXML identifiers (for
-  example, `CallSid` plus `SequenceNumber` when present), not `data.id`.
-- Keep API v2 JSON and TeXML routes separate so parsing, validation, response,
-  and idempotency rules cannot be confused.
+- Configure authenticated callbacks as POST. They carry flat, PascalCase form
+  fields as `application/x-www-form-urlencoded`; verify the exact raw body
+  before decoding the form. Do not parse these as JSON or read `data.*`.
+- Reject GET on authenticated callback routes. The signature covers
+  `timestamp|raw_body`, not the query string, so query fields are not bound to
+  an otherwise valid empty-body signature.
+- Treat retries as duplicates and dedupe status callbacks on the composite
+  `(CallSid, SequenceNumber)` rather than `data.id`.
+- Keep API v2 JSON and TeXML routes separate so content-type, parsing,
+  validation, and idempotency rules cannot be confused.
 
 ## Multi-product apps (e.g. contact center)
 
@@ -92,15 +121,29 @@ TeXML instruction requests and status callbacks use a different wire format:
 
 ## Failure design defaults
 
-- Every Telnyx client call: timeout + surfaced error code (codes are precise —
-  see telnyx-kit-debugging). Retry 429 only after `Retry-After`. Treat 5xx and
-  timeouts as an unknown outcome for mutations: automatically retry only when
-  the operation has documented idempotency. For Call Control, resend the
-  identical command with the same `command_id`; otherwise reconcile account
-  state before reissuing a billable mutation.
-- Idempotency: assign `command_id` before the first Call Control attempt and
-  reuse it for an identical retry. Dedupe API v2 webhooks on the event
-  `data.id`; use a Messaging `data.payload.id` only to correlate lifecycle
-  events for the same message, never to suppress distinct events.
-- Config validation at startup: fail fast if the API key, profile ids, or
-  connection ids are absent — not on first traffic.
+- Every Telnyx client call: timeout + surfaced error code (codes are
+  precise — see telnyx-kit-debugging) + no retry on 4xx except 429.
+- Automatic retries are limited to reads and operations protected by an
+  endpoint-supported idempotency mechanism. Reconcile an ambiguous write by
+  resource ID, status/list endpoint, or webhook before another attempt; require
+  renewed human approval before repeating an unreconciled billable action.
+- Idempotency: `command_id` on Call Control commands; message `id` dedupe
+  on webhooks.
+- Configure distinct primary and failover webhook URLs for critical call
+  paths. Exercise failover before launch; both endpoints must verify
+  signatures, share the same durable dedupe store, and fast-ack before work.
+- Correlate identifiers within the selected API family: TeXML uses `CallSid`,
+  `SequenceNumber`, and `StreamSid`; Call Control uses `data.id`,
+  `call_control_id`, `call_session_id`, `call_leg_id`, and `command_id`.
+  Include Telnyx request IDs and error codes across ingress, commands, and
+  workers. Alert on primary/failover delivery failures, queue age, and
+  duplicate suppression. Never log API keys or webhook secrets, recording
+  URLs, recording media, or transcript content.
+- In every architecture response that includes observability or recording,
+  state that logging must exclude API keys, webhook secrets, recording URLs,
+  recording media, and transcript content; do not leave this boundary implied.
+- For a static single-tenant service, validate its process-wide API key,
+  profile IDs, and connection IDs at startup. In a delegated multi-tenant
+  service, validate the current tenant's credential and resource IDs before
+  that request's first outbound Telnyx action; a tenant credential cannot be
+  validated globally at process boot.

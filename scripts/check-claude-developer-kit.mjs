@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { lstat, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,8 +17,15 @@ const pluginRoot = path.join(
 const manifestPath = path.join(pluginRoot, ".claude-plugin", "plugin.json");
 const marketplacePath = path.join(repoRoot, ".claude-plugin", "marketplace.json");
 const builderPath = path.join(pluginRoot, "agents", "telnyx-builder.md");
+const contractPath = path.join(
+  repoRoot,
+  "submission",
+  "telnyx-developer-kit",
+  "connector-contract.json",
+);
 
 const connectorUrl = "https://api.telnyx.com/v2/ai/mcp";
+const contractSha256 = "ddc7552661c281da0625686170f923504737a1ab7c56bac355c031adbab849aa";
 const expectedSkills = [
   "telnyx-kit-architecture-patterns",
   "telnyx-kit-debugging",
@@ -75,6 +83,17 @@ async function main() {
   assert.doesNotMatch(builder, /\binvoke_api_endpoint\b/);
   assert.match(builder, /explicit user approval/i);
   assert.match(builder, /confirm_billable_lookup:\s*true/);
+
+  const contractBytes = await readFile(contractPath);
+  assert.equal(createHash("sha256").update(contractBytes).digest("hex"), contractSha256);
+  const contract = JSON.parse(contractBytes);
+  assert.equal(contract.id, "telnyx-ai-connector");
+  assert.equal(contract.version, "1.0.0-preview.4");
+  assert.deepEqual(contract.hosts, ["claude", "codex"]);
+  assert.deepEqual(contract.tools.map(({ name }) => name).sort(), [...expectedTools].sort());
+  const lookup = contract.endpoints.find(({ name }) => name === "number_lookup");
+  assert.deepEqual(lookup.inputSchema.properties.confirm_billable_lookup, { const: true });
+  assert.ok(lookup.inputSchema.required.includes("confirm_billable_lookup"));
 
   const pluginText = await readFile(manifestPath, "utf8");
   assert.doesNotMatch(pluginText, /telnyx_api_key|user_config|authorization/i);
