@@ -11,7 +11,7 @@ stays `NOT_AVAILABLE` until every external gate below has dated evidence.
 
 The embedded `connector-contract.json` is byte-identical to
 `team-telnyx/telnyx-ai-connector` contract `1.0.0-preview.4` at source candidate
-`1bcda4a04c0d7f2a31a0da471edd022a8bfcd367`. Its SHA-256 is
+`c6ecbd1245557a4019eb24b79b6c3fe157993291`. Its SHA-256 is
 `ddc7552661c281da0625686170f923504737a1ab7c56bac355c031adbab849aa`.
 After the source PR merges, update this pin to the merged commit if the contract
 bytes change.
