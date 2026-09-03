@@ -78,8 +78,17 @@ product plugins (`telnyx-messaging`, `telnyx-voice`, `telnyx-numbers`,
 skills across curl, Python, JavaScript, Go, Java, and Ruby. Migrate existing
 Twilio apps with the `telnyx-twilio-migration` skill in `telnyx-platform`.
 
-For live API work, use the hosted Telnyx MCP server's discovery flow:
-`list_api_endpoints`, then `get_api_endpoint_schema`, then
-`invoke_api_endpoint` with arguments that match the returned schema. Never
-invent endpoints or fields. If a signature is uncertain, read the product skill
-or the bundled `sdk-reference` rather than guessing.
+For focused live API work, use the OAuth-authenticated Telnyx MCP connector:
+
+- `list_api_endpoints` and `get_api_endpoint_schema` discover the reviewed
+  endpoint schemas.
+- `get_call_status`, `list_call_events`, and `search_recordings` perform the
+  connector's account-scoped, read-only operations.
+- `lookup_phone_number` is billable. Name the lookup type, explain that the
+  request can incur a charge, and obtain explicit user approval before passing
+  `confirm_billable_lookup: true`.
+
+The connector intentionally has no catch-all API executor. For other Telnyx
+operations, use the appropriate product skill or SDK and apply its approval and
+safety rules. Never invent endpoints or fields; if a signature is uncertain,
+read the product skill or bundled `sdk-reference`.

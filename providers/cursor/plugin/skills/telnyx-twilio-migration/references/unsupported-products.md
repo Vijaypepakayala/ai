@@ -19,6 +19,11 @@ These Twilio products have no direct Telnyx replacement. When the scanner detect
 | **Proxy** (Phone Masking) | No equivalent | Build custom number masking with Telnyx Messaging API + number pool |
 | **Segment** (CDP) | No equivalent | Consider Segment independently, or alternatives (Rudderstack, mParticle) |
 
+> **Pay is supported:** TeXML implements the `<Pay>` verb and documents it in
+> the dedicated Pay reference. Migrate `<Pay>` flows as TeXML (see
+> `texml-verbs.md`) rather than treating Pay as an unsupported product. Do not
+> replace an in-call payment flow with an external processor.
+
 ## Multi-Service Architecture
 
 If the scanner detects Twilio usage across multiple independent services (microservices, separate repos):
@@ -42,7 +47,7 @@ If the scanner detects Twilio references in infrastructure files:
 
 ## How to Present This to the User
 
-In Phase 1 (Discovery), after scanning:
+In the single scoped Phase 1 decision point after scanning:
 
 ```
 The following detected products/platforms are OUT OF SCOPE for automated migration:

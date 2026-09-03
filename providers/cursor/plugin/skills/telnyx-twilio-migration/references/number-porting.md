@@ -57,16 +57,18 @@ Response includes per-number results:
 {
   "data": [
     {
+      "record_type": "portability_check_result",
       "phone_number": "+15551234567",
       "portable": true,
-      "fast_port_eligible": true,
-      "messaging_capable": true
+      "fast_portable": true,
+      "not_portable_reason": null
     },
     {
+      "record_type": "portability_check_result",
       "phone_number": "+15559876543",
       "portable": true,
-      "fast_port_eligible": false,
-      "messaging_capable": true
+      "fast_portable": false,
+      "not_portable_reason": null
     }
   ]
 }
@@ -74,8 +76,9 @@ Response includes per-number results:
 
 Key fields:
 - `portable` — whether the number can be ported to Telnyx
-- `fast_port_eligible` — whether FastPort (same-day activation) is available
-- `messaging_capable` — whether SMS/MMS will work after porting
+- `fast_portable` — whether FastPort (same-day activation) is available
+- `not_portable_reason` — reason the number cannot be ported (null when `portable` is true)
+- `record_type` — the record type identifier
 
 ## Step 2: Create a Porting Order
 
@@ -85,8 +88,8 @@ curl -X POST https://api.telnyx.com/v2/porting_orders \
   -H "Content-Type: application/json" \
   -d '{
     "phone_numbers": [
-      {"phone_number": "+15551234567"},
-      {"phone_number": "+15559876543"}
+      "+15551234567",
+      "+15559876543"
     ]
   }'
 ```
@@ -136,12 +139,16 @@ curl -X PATCH "https://api.telnyx.com/v2/porting_orders/$ORDER_ID" \
       },
       "location": {
         "street_address": "123 Main St",
-        "city": "Chicago",
-        "state": "IL",
-        "zip": "60601"
+        "locality": "Chicago",
+        "administrative_area": "IL",
+        "postal_code": "60601",
+        "country_code": "US"
       }
     },
-    "documents": ["doc_uuid_1", "doc_uuid_2"],
+    "documents": {
+      "loa": "doc_uuid_1",
+      "invoice": "doc_uuid_2"
+    },
     "activation_settings": {
       "activation_type": "on-demand"
     }
@@ -153,7 +160,71 @@ Set `activation_type` to `"on-demand"` for FastPort (choose when numbers go live
 ## Step 4: Submit the Order
 
 ```bash
-curl -X POST "https://api.telnyx.com/v2/porting_orders/$ORDER_ID/actions/submit" \
+[[ "${ORDER_ID:-}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || {
+  echo "ORDER_ID must be a nonempty UUID" >&2; exit 1;
+}
+ORDER_RESPONSE=$(curl -fsS -G \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  --data-urlencode "include_phone_numbers=true" \
+  "https://api.telnyx.com/v2/porting_orders/$ORDER_ID") || exit 1
+ORDER_SNAPSHOT=$(printf '%s' "$ORDER_RESPONSE" | jq -ceS --arg id "$ORDER_ID" '
+  .data as $order
+  | select(
+      $order.id == $id and
+      $order.status.value == "draft" and
+      $order.requirements_met == true and
+      (($order.additional_steps // []) | length) == 0 and
+      ($order.updated_at | type) == "string" and
+      ($order.activation_settings | type) == "object" and
+      ($order.phone_number_configuration | type) == "object" and
+      ($order.messaging | type) == "object"
+    )
+  | ($order.porting_phone_numbers_count // -1) as $count
+  | [
+      $order.phone_numbers[]?.phone_number
+      | select(type == "string" and test("^[+]?[1-9][0-9]{7,14}$"))
+    ] as $numbers
+  | select(
+      $count > 0 and $count <= 50 and
+      ($numbers | length) == $count and
+      ($numbers | unique | length) == $count
+    )
+  | ($order.phone_number_configuration.tags // []) as $tags
+  | select(
+      ($tags | type) == "array" and
+      all($tags[]; type == "string")
+    )
+  | {
+      id: $order.id,
+      updated_at: $order.updated_at,
+      status: $order.status,
+      requirements_met: $order.requirements_met,
+      additional_steps: ($order.additional_steps // []),
+      phone_number_type: $order.phone_number_type,
+      porting_phone_numbers_count: $count,
+      phone_numbers: ($numbers | sort),
+      activation_settings: $order.activation_settings,
+      misc: $order.misc,
+      phone_number_configuration: (
+        $order.phone_number_configuration + {tags: ($tags | sort)}
+      ),
+      messaging: $order.messaging
+    }
+') || {
+  echo "Order must be a ready draft with complete numbers and routing/messaging configuration" >&2
+  exit 1
+}
+ORDER_SNAPSHOT_B64=$(printf '%s' "$ORDER_SNAPSHOT" | jq -Rr '@base64') || exit 1
+APPROVAL_TOKEN="$ORDER_ID|confirm|$ORDER_SNAPSHOT_B64"
+printf 'Port submission snapshot:\n'
+printf '%s\n' "$ORDER_SNAPSHOT" | jq .
+printf 'Approval token: %s\n' "$APPROVAL_TOKEN"
+# After reviewing the complete displayed order, number, activation, routing, and
+# messaging snapshot, set this variable to the displayed approval token.
+test "${TELNYX_APPROVE_PORT_CONFIRM:-}" = "$APPROVAL_TOKEN" || {
+  echo "Port submission not approved" >&2; exit 1;
+}
+curl -fsS -X POST "https://api.telnyx.com/v2/porting_orders/$ORDER_ID/actions/confirm" \
   -H "Authorization: Bearer $TELNYX_API_KEY"
 ```
 
@@ -222,19 +293,163 @@ FastPort: once the FOC date is confirmed, you choose exactly when numbers go liv
 
 ### Trigger On-Demand Activation
 
-Once the order reaches `foc-date-confirmed`:
+Once the order reaches `foc-date-confirmed`, inspect the activation jobs to see the available window:
 
 ```bash
 # Check activation window
 curl "https://api.telnyx.com/v2/porting_orders/$ORDER_ID/activation_jobs" \
   -H "Authorization: Bearer $TELNYX_API_KEY"
+```
 
-# Activate now
-curl -X POST "https://api.telnyx.com/v2/porting_orders/$ORDER_ID/actions/activate" \
+**US FastPort only:** the `/actions/activate` endpoint is limited to US FastPort orders. For an eligible US order you can activate every number in the order on demand:
+
+```bash
+# Activate now (US FastPort orders only)
+[[ "${ORDER_ID:-}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || {
+  echo "ORDER_ID must be a nonempty UUID" >&2; exit 1;
+}
+ORDER_RESPONSE=$(curl -fsS -G \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  --data-urlencode "include_phone_numbers=true" \
+  "https://api.telnyx.com/v2/porting_orders/$ORDER_ID") || exit 1
+ORDER_SNAPSHOT=$(printf '%s' "$ORDER_RESPONSE" | jq -ceS --arg id "$ORDER_ID" '
+  .data as $order
+  | select(
+      $order.id == $id and
+      $order.status.value == "foc-date-confirmed" and
+      $order.activation_settings.fast_port_eligible == true and
+      ($order.updated_at | type) == "string" and
+      ($order.phone_number_configuration | type) == "object" and
+      ($order.messaging | type) == "object"
+    )
+  | ($order.porting_phone_numbers_count // -1) as $count
+  | [
+      $order.phone_numbers[]?.phone_number
+      | select(type == "string" and test("^[+]?[1-9][0-9]{7,14}$"))
+    ] as $numbers
+  | select(
+      $count > 0 and $count <= 50 and
+      ($numbers | length) == $count and
+      ($numbers | unique | length) == $count
+    )
+  | ($order.phone_number_configuration.tags // []) as $tags
+  | select(
+      ($tags | type) == "array" and
+      all($tags[]; type == "string")
+    )
+  | {
+      id: $order.id,
+      updated_at: $order.updated_at,
+      status: $order.status,
+      requirements_met: $order.requirements_met,
+      additional_steps: ($order.additional_steps // []),
+      phone_number_type: $order.phone_number_type,
+      porting_phone_numbers_count: $count,
+      phone_numbers: ($numbers | sort),
+      activation_settings: $order.activation_settings,
+      misc: $order.misc,
+      phone_number_configuration: (
+        $order.phone_number_configuration + {tags: ($tags | sort)}
+      ),
+      messaging: $order.messaging
+    }
+') || {
+  echo "Order must be an eligible US FastPort order with complete numbers and routing/messaging configuration" >&2
+  exit 1
+}
+ACTIVATION_RESPONSE=$(curl -fsS -G \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  --data-urlencode "page[size]=250" \
+  --data-urlencode "page[number]=1" \
+  "https://api.telnyx.com/v2/porting_orders/$ORDER_ID/activation_jobs") || exit 1
+ACTIVATION_SNAPSHOT=$(printf '%s' "$ACTIVATION_RESPONSE" | jq -ceS \
+  --argjson order "$ORDER_SNAPSHOT" '
+  def parse_utc_timestamp:
+    if type != "string" then
+      error("activation window timestamp must be a string")
+    else
+      sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601
+    end;
+
+  (.data // []) as $jobs
+  | (.meta // {}) as $meta
+  | select(
+      ($jobs | type) == "array" and ($jobs | length) > 0 and
+      $meta.page_number == 1 and
+      $meta.page_size == 250 and
+      $meta.total_pages == 1 and
+      $meta.total_results == ($jobs | length) and
+      all($jobs[];
+        (.id | type) == "string" and
+        (.id | test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")) and
+        (.status == "created" or .status == "in-process" or .status == "completed" or .status == "failed") and
+        (.activation_type == "scheduled" or .activation_type == "on-demand") and
+        ((.activate_at | type) == "string" or .activate_at == null) and
+        (.activation_windows | type) == "array" and
+        all(.activation_windows[];
+          (.start_at | type) == "string" and (.end_at | type) == "string"
+        )
+      ) and
+      any($jobs[]; (.activation_windows | length) > 0)
+    )
+  | [
+      $jobs[]
+      | {
+        id,
+        status,
+        activation_type,
+        activate_at,
+        activation_windows: (.activation_windows | sort_by([.start_at, .end_at]))
+      }
+    ] as $normalized_jobs
+  | now as $now
+  | [
+      $normalized_jobs[]
+      | select(.status == "created" and .activation_type == "on-demand")
+      | . as $job
+      | [
+          $job.activation_windows[]
+          | . as $window
+          | ($window.start_at | parse_utc_timestamp) as $start_at
+          | ($window.end_at | parse_utc_timestamp) as $end_at
+          | select($start_at <= $now and $now <= $end_at)
+          | $window
+        ] as $current_windows
+      | select(($current_windows | length) == 1)
+      | {
+          job_id: $job.id,
+          current_window: $current_windows[0]
+        }
+    ] as $actionable_jobs
+  | select(($actionable_jobs | length) == 1)
+  | {
+      order: $order,
+      activation_jobs: ($normalized_jobs | sort_by(.id)),
+      actionable_job: $actionable_jobs[0]
+    }
+') || {
+  echo "Expected exactly one created on-demand job inside one current activation window" >&2
+  exit 1
+}
+ACTIVATION_SNAPSHOT_B64=$(printf '%s' "$ACTIVATION_SNAPSHOT" | jq -Rr '@base64') || exit 1
+APPROVAL_TOKEN="$ORDER_ID|activate|$ACTIVATION_SNAPSHOT_B64"
+printf 'Port activation snapshot:\n'
+printf '%s\n' "$ACTIVATION_SNAPSHOT" | jq .
+printf 'Approval token: %s\n' "$APPROVAL_TOKEN"
+# After reviewing the complete order/routing snapshot, all activation jobs, and
+# the single current on-demand window, set this variable to the displayed token.
+test "${TELNYX_APPROVE_PORT_ACTIVATE:-}" = "$APPROVAL_TOKEN" || {
+  echo "Port activation not approved" >&2; exit 1;
+}
+curl -fsS -X POST "https://api.telnyx.com/v2/porting_orders/$ORDER_ID/actions/activate" \
   -H "Authorization: Bearer $TELNYX_API_KEY"
 ```
 
 If you do not manually activate within the window, numbers auto-activate at the end of the window (fail-safe).
+
+The inline review gates above deliberately reject orders with more than 50 numbers because the order endpoint includes only the first 50 number objects. For a larger order, enumerate and validate every page of `/v2/porting_phone_numbers?filter[porting_order_id]=...` before confirming or activating; never approve a truncated set.
+
+**Canada:** on-demand activation is not driven through the `/actions/activate` endpoint (that action is US-FastPort-only). Canadian numbers activate within their FOC/activation window rather than via an explicit activate API call. Poll the order status and the `activation_jobs` endpoint to track progress.
 
 ## Bulk Porting
 
@@ -251,7 +466,7 @@ Tips for bulk ports from Twilio:
 | Issue | Cause | Solution |
 |---|---|---|
 | Order stuck in `exception` | LOA info doesn't match carrier records | Check comments, update LOA with exact name/address from Twilio account |
-| `fast_port_eligible: false` | Losing carrier doesn't support real-time validation | Use standard porting (still works, just slower) |
+| `fast_portable: false` | Losing carrier doesn't support real-time validation | Use standard porting (still works, just slower) |
 | Split into many sub-orders | Numbers on different underlying carriers | Normal behavior — manage each sub-order independently |
 | Rejected by losing carrier | Account holder mismatch or missing PIN | Verify exact account name, check if Twilio has a porting PIN set |
 | Numbers not receiving calls after port | Not assigned to a connection | Assign numbers to a SIP Connection or TeXML Application in Mission Control |

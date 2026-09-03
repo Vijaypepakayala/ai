@@ -24,7 +24,7 @@ Twilio deprecated its Fax API in 2021 and fully shut it down in December 2022. I
 Telnyx Programmable Fax provides:
 - Send and receive faxes over the PSTN via API
 - Native T.38 fax protocol support
-- PDF and TIFF delivery formats
+- PDF-only outbound documents, with PDF webhook downloads and optional PDF/TIFF generated outputs
 - Webhook-driven status events
 - Fax Application resource for routing and configuration
 
@@ -33,9 +33,9 @@ Telnyx Programmable Fax provides:
 1. **Telnyx Fax is actively supported** — Twilio Fax was shut down in December 2022. Telnyx Programmable Fax is a current, maintained product.
 2. **Fax Application model** — Telnyx uses a dedicated Fax Application resource (similar to a TeXML Application) for inbound routing, webhooks, and AnchorSite settings.
 3. **T.38 native support** — Telnyx supports on-net T.38 fax protocol negotiation. Twilio used T.38 internally but did not expose configuration options.
-4. **Quality settings** — Telnyx offers `normal`, `high`, `ultra_light` (best for images), and `ultra_dark` (best for text) quality modes.
+4. **Quality settings** — Telnyx offers `normal`, `high`, `very_high`, `ultra_light`, and `ultra_dark` quality modes.
 5. **Authentication** — Twilio used Basic Auth (SID:Token). Telnyx uses Bearer Token. Webhook signatures use Ed25519.
-6. **Delivery format** — Telnyx delivers received faxes as PDF or TIFF (configurable per application).
+6. **Media formats differ by direction** — Outbound source documents must be PDF. A completed inbound `fax.received` webhook links to a generated PDF; optional fax previews and email-forwarded attachments can use PDF or TIFF.
 
 ## Concept Mapping
 
@@ -75,7 +75,7 @@ Configuration options on a Fax Application:
 | `webhook_event_failover_url` | Backup webhook URL |
 | `webhook_timeout_secs` | Custom webhook timeout |
 | `anchorsite_override` | Regional media PoP selection (Latency or specific site) |
-| Inbound delivery format | PDF or TIFF |
+| `fax_email_recipient` | Optional address that receives inbound faxes as PDF or TIFF attachments |
 | Inbound channel limit | Max concurrent inbound faxes |
 | Outbound Voice Profile | Controls outbound fax routing and billing |
 
@@ -125,7 +125,9 @@ fax = client.faxes.create(
     from_="+15551234567",
     media_url="https://example.com/document.pdf"
 )
-print(fax.id)
+if fax.data is None:
+    raise RuntimeError("Fax response did not include data")
+print(fax.data.id)
 ```
 
 ### JavaScript
@@ -160,17 +162,35 @@ console.log(fax.data.id);
 | `connection_id` | Yes | The Fax Application ID or connection ID |
 | `to` | Yes | Destination fax number (E.164) or SIP URI |
 | `from` | Yes | Your Telnyx fax-enabled number (E.164) |
-| `media_url` | Yes | URL to the PDF document to fax |
-| `quality` | No | Fax quality: `normal`, `high`, `ultra_light`, `ultra_dark` |
+| `media_url` | No | URL to a publicly accessible PDF (alternative to `contents` or `media_name`) |
+| `contents` | No | PDF bytes uploaded directly as multipart form-data (alternative to `media_url` or `media_name`) |
+| `media_name` | No | Reference to a previously uploaded PDF in Telnyx media storage (alternative to `media_url` or `contents`) |
+| `quality` | No | Fax quality: `normal`, `high`, `very_high`, `ultra_light`, `ultra_dark` |
 | `t38_enabled` | No | Enable T.38 protocol for this fax (boolean) |
 | `monochrome` | No | Force monochrome transmission (boolean) |
 | `webhook_url` | No | Override webhook URL for this specific fax |
+
+Along with `connection_id`, `from`, and `to`, supply exactly one PDF source: `media_url`, `contents`, or `media_name`. The source PDF must not exceed 50 MB or 350 pages.
+
+**Upload a file directly (multipart) instead of a URL:**
+
+```bash
+curl -X POST https://api.telnyx.com/v2/faxes \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -F "connection_id=YOUR_FAX_APP_ID" \
+  -F "to=+15559876543" \
+  -F "from=+15551234567" \
+  -F "quality=high" \
+  -F "contents=@/path/to/document.pdf"
+```
 
 A successful send returns **HTTP 202** with a fax object containing a unique `id` for tracking.
 
 ## Step 3: Receive Faxes (Webhooks)
 
 Inbound faxes are delivered to your Fax Application's webhook URL. When a fax arrives at one of your assigned numbers, Telnyx sends webhook events with the fax data.
+
+> **Note:** The completed inbound event is `fax.received`. Its downloadable document is `data.payload.media_url`; the signed URL is temporary, so download the file promptly. The payload also reports `direction: inbound`.
 
 ```python
 # Flask example for receiving fax webhooks
@@ -184,13 +204,13 @@ def fax_webhook():
     event_type = event['data']['event_type']
     payload = event['data']['payload']
 
-    if event_type == 'fax.received':
+    if event_type == 'fax.received' and payload.get('direction') == 'inbound':
         fax_id = payload['fax_id']
         from_number = payload['from']
         media_url = payload['media_url']
         page_count = payload['page_count']
         print(f"Received fax {fax_id} from {from_number}: {page_count} pages")
-        # Download the fax PDF from media_url
+        # Download the received fax from media_url before the signed URL expires
 
     return jsonify({"status": "ok"}), 200
 ```
@@ -206,10 +226,10 @@ app.post('/fax-webhooks', (req, res) => {
   const eventType = event.data.event_type;
   const payload = event.data.payload;
 
-  if (eventType === 'fax.received') {
+  if (eventType === 'fax.received' && payload.direction === 'inbound') {
     console.log(`Received fax ${payload.fax_id} from ${payload.from}`);
     console.log(`Pages: ${payload.page_count}, URL: ${payload.media_url}`);
-    // Download the fax PDF from payload.media_url
+    // Download the received fax from payload.media_url before it expires
   }
 
   res.status(200).json({ status: 'ok' });
@@ -221,7 +241,8 @@ app.post('/fax-webhooks', (req, res) => {
 ### List Faxes
 
 ```bash
-curl -X GET "https://api.telnyx.com/v2/faxes?page[size]=20" \
+curl -sS -G "https://api.telnyx.com/v2/faxes" \
+  --data-urlencode "page[size]=20" \
   -H "Authorization: Bearer $TELNYX_API_KEY"
 ```
 
@@ -258,37 +279,48 @@ Twilio used T.38 internally but did not expose T.38 configuration to customers. 
 
 ## Media Handling
 
-**Supported formats:**
-- **Send:** PDF files via URL. Maximum file size: 50MB. Maximum page count: 350 pages.
-- **Receive:** PDF or TIFF (configurable per Fax Application in inbound settings).
+**Formats and limits:**
+- **Outbound source:** PDF only, supplied by `media_url`, `contents`, or `media_name`. Maximum file size: 50 MB. Maximum page count: 350 pages.
+- **Inbound webhook:** `fax.received` exposes a signed URL to the generated PDF. The documented URL lifetime is 10 minutes.
+- **Generated outputs:** When `store_preview` is enabled for an outbound fax, `preview_format` may be `pdf` or `tiff` (default `tiff`). Fax Application email forwarding may also attach inbound faxes as PDF or TIFF. These output choices do not make TIFF a valid outbound source document.
 
 **Media URL behavior:**
 - When sending, `media_url` must point to a publicly accessible PDF.
-- When receiving, the webhook `media_url` field contains a temporary URL to download the received fax.
+- When receiving, `fax.received` includes the temporary signed PDF URL in `data.payload.media_url`.
 - Use the Refresh endpoint to regenerate expired media URLs.
 
 **Twilio vs Telnyx media comparison:**
 
 | Aspect | Twilio (was) | Telnyx |
 |---|---|---|
-| Send format | PDF via URL | PDF via URL |
-| Receive format | PDF (MediaResource) | PDF or TIFF (configurable) |
+| Send format | PDF via URL | PDF via URL, uploaded contents, or stored media |
+| Receive format | PDF (MediaResource) | Signed PDF URL in `fax.received`; optional email forwarding can attach PDF or TIFF |
 | Max file size | 20MB | 50MB |
 | Max pages | Not documented | 350 pages |
 | Media URL persistence | Persistent until deleted | Temporary (use Refresh endpoint) |
 
 ## Webhook Events
 
-Telnyx sends these webhook events during fax lifecycle:
+Telnyx uses different event lifecycles for outbound and inbound fax traffic.
+
+**Outbound send events:**
 
 | Event | Description |
 |---|---|
 | `fax.queued` | Fax has been queued for sending |
 | `fax.media.processed` | Media file has been processed and validated |
 | `fax.sending.started` | Fax transmission has begun |
-| `fax.delivered` | Fax was successfully delivered |
-| `fax.failed` | Fax transmission failed |
-| `fax.received` | An inbound fax was received |
+| `fax.delivered` | Outbound fax was successfully delivered |
+| `fax.failed` | Outbound fax transmission failed |
+
+**Inbound receive events:**
+
+| Event | Description |
+|---|---|
+| `fax.receiving.started` | Inbound fax transmission has begun |
+| `fax.media.processing.started` | Telnyx received the fax and is generating the downloadable file |
+| `fax.received` | Inbound media is ready at `data.payload.media_url` |
+| `fax.failed` | Inbound transmission failed; inspect `failure_reason` |
 
 **Twilio vs Telnyx status mapping:**
 
@@ -299,7 +331,7 @@ Telnyx sends these webhook events during fax lifecycle:
 | `sending` | `fax.sending.started` |
 | `delivered` | `fax.delivered` |
 | `failed` / `no-answer` / `busy` | `fax.failed` (with error details in payload) |
-| `received` | `fax.received` |
+| `received` | `fax.received` with `payload.direction` = `inbound` |
 | `canceled` | N/A (use Cancel endpoint before sending starts) |
 
 ## API Endpoint Mapping
@@ -320,9 +352,9 @@ Telnyx sends these webhook events during fax lifecycle:
 
 1. **No Fax Application assigned** — Inbound faxes will not be delivered unless the receiving number is assigned to a Fax Application with a configured webhook URL.
 
-2. **Media URL must be publicly accessible** — The `media_url` for sending must be reachable from Telnyx servers. Localhost, private IPs, and authenticated URLs will fail.
+2. **Media URL must be publicly accessible** — When sending with `media_url`, it must be reachable from Telnyx servers. Localhost, private IPs, and authenticated URLs will fail.
 
-3. **PDF format required** — Telnyx only accepts PDF files for sending. If your existing workflow sends TIFF or image files, convert to PDF first.
+3. **PDF is required for outbound fax media** — Convert TIFF, JPEG, PNG, DOC/DOCX, RTF, TXT, and other source formats to PDF before submitting them.
 
 4. **File size limits differ** — Telnyx allows up to 50MB and 350 pages. If your faxes approach these limits, you will receive `file_size_limit_exceeded` or `page_count_limit_exceeded` errors.
 
@@ -330,4 +362,4 @@ Telnyx sends these webhook events during fax lifecycle:
 
 6. **Webhook event structure differs** — Telnyx webhooks use a nested JSON structure (`event.data.event_type`, `event.data.payload`) vs Twilio's flat form-encoded parameters. Update your webhook handler accordingly.
 
-7. **Quality setting names differ** — Twilio used `fine`/`superfine`. Telnyx uses `normal`, `high`, `ultra_light` (images), `ultra_dark` (text).
+7. **Quality setting names differ** — Twilio used `fine`/`superfine`. Telnyx uses `normal`, `high`, `very_high`, `ultra_light`, `ultra_dark`.

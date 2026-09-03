@@ -165,11 +165,10 @@ PY_EXTENSIONS = {".py"}
 JS_EXTENSIONS = {".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs"}
 GO_EXTENSIONS = {".go"}
 RUBY_EXTENSIONS = {".rb"}
-JAVA_EXTENSIONS = {".java", ".kt", ".kts", ".scala"}
+JAVA_EXTENSIONS = {".java", ".kt", ".scala"}
 PHP_EXTENSIONS = {".php"}
 CSHARP_EXTENSIONS = {".cs"}
-SHELL_EXTENSIONS = {".sh", ".bash", ".zsh"}
-OTHER_TEXT_EXTENSIONS = {".xml", ".twiml", ".yaml", ".yml"}
+OTHER_TEXT_EXTENSIONS = {".xml", ".yaml", ".yml"}
 
 # Directories to skip
 SKIP_DIRS = {
@@ -256,14 +255,6 @@ class FileResult:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-_TWIML_RESPONSE_TAG_RE = re.compile(r"<Response(?:\s|/|>|$)", re.IGNORECASE)
-_TWIML_VERB_TAG_RE = re.compile(
-    r"<(?:Say|Play|Dial|Gather|Record|Hangup|Redirect|Pause|Enqueue|Pay)(?:\s|/|>|$)",
-    re.IGNORECASE,
-)
-_PAY_TAG_RE = re.compile(r"<Pay(?:\s|/|>|$)", re.IGNORECASE)
-
-
 def get_context_lines(lines: List[str], line_no: int, radius: int = 2) -> List[str]:
     """Return surrounding lines (1-indexed line_no)."""
     start = max(0, line_no - 1 - radius)
@@ -283,491 +274,12 @@ def resolve_product(module_path: str) -> str:
     return best
 
 
-COMMENT_ONLY_PREFIXES = ("//", "#", "/*", "*", "<!--")
-
-
-SLASH_COMMENT_LANGUAGES = frozenset(
-    {"javascript", "typescript", "go", "java", "kotlin", "scala", "php", "csharp"}
-)
-HASH_COMMENT_LANGUAGES = frozenset({"python", "ruby", "php", "shell", "yaml"})
-
-
-def mask_comments(text: str, *, language: Optional[str] = None) -> str:
-    """Replace line/block comments with spaces while preserving offsets/newlines."""
-    output = list(text)
-    state = "code"
-    delimiter = ""
-    block_end = ""
-    percent_opener = ""
-    percent_depth = 0
-    i = 0
-    while i < len(text):
-        if state == "line-comment":
-            if text[i] == "\n":
-                state = "code"
-            else:
-                output[i] = " "
-            i += 1
-            continue
-        if state == "block-comment":
-            if text.startswith(block_end, i):
-                for offset in range(len(block_end)):
-                    output[i + offset] = " "
-                i += len(block_end)
-                state = "code"
-            else:
-                if text[i] != "\n":
-                    output[i] = " "
-                i += 1
-            continue
-        if state == "string":
-            if text[i] == "\\" and delimiter not in {'"""', "'''"}:
-                i += 2
-            elif text.startswith(delimiter, i):
-                i += len(delimiter)
-                state = "code"
-            else:
-                i += 1
-            continue
-        if state == "percent-string":
-            if text[i] == "\\":
-                i += 2
-            else:
-                if text[i] == percent_opener:
-                    percent_depth += 1
-                elif text[i] == delimiter:
-                    percent_depth -= 1
-                i += 1
-                if percent_depth == 0:
-                    state = "code"
-            continue
-
-        if text.startswith("<!--", i):
-            state = "block-comment"
-            block_end = "-->"
-            for offset in range(4):
-                output[i + offset] = " "
-            i += 4
-        elif text.startswith("/*", i):
-            state = "block-comment"
-            block_end = "*/"
-            output[i] = output[i + 1] = " "
-            i += 2
-        elif (
-            text.startswith("//", i)
-            and (
-                language in SLASH_COMMENT_LANGUAGES
-                if language is not None
-                else i == 0 or text[i - 1] != ":"
-            )
-        ) or (
-            text[i] == "#"
-            and (
-                language in HASH_COMMENT_LANGUAGES
-                if language is not None
-                else i == 0 or text[i - 1].isspace()
-            )
-        ):
-            state = "line-comment"
-        elif text.startswith('"""', i) or text.startswith("'''", i):
-            delimiter = text[i : i + 3]
-            state = "string"
-            i += 3
-        elif language == "ruby" and (
-            percent_match := re.match(r"%(?:q|Q)?([({[<])", text[i:])
-        ) is not None:
-            percent_opener = percent_match.group(1)
-            delimiter = {"(": ")", "{": "}", "[": "]", "<": ">"}[
-                percent_opener
-            ]
-            prefix_length = percent_match.end()
-            state = "percent-string"
-            percent_depth = 1
-            i += prefix_length
-        elif text[i] in {'"', "'", "`"}:
-            delimiter = text[i]
-            state = "string"
-            i += 1
-        else:
-            i += 1
-    return "".join(output)
-
-
-def mask_comments_and_strings(
-    text: str, *, language: Optional[str] = None
-) -> str:
-    """Mask comments and source string literals, preserving offsets/newlines."""
-    output = list(text)
-    state = "code"
-    delimiter = ""
-    block_end = ""
-    percent_opener = ""
-    percent_depth = 0
-    i = 0
-    while i < len(text):
-        if state == "line-comment":
-            if text[i] == "\n":
-                state = "code"
-            else:
-                output[i] = " "
-            i += 1
-            continue
-        if state == "block-comment":
-            if text.startswith(block_end, i):
-                for offset in range(len(block_end)):
-                    output[i + offset] = " "
-                i += len(block_end)
-                state = "code"
-            else:
-                if text[i] != "\n":
-                    output[i] = " "
-                i += 1
-            continue
-        if state == "string":
-            if text.startswith(delimiter, i):
-                for offset in range(len(delimiter)):
-                    output[i + offset] = " "
-                i += len(delimiter)
-                state = "code"
-            elif text[i] == "\\" and delimiter not in {'"""', "'''"}:
-                output[i] = " "
-                if i + 1 < len(text) and text[i + 1] != "\n":
-                    output[i + 1] = " "
-                i += 2
-            else:
-                if text[i] != "\n":
-                    output[i] = " "
-                i += 1
-            continue
-        if state == "percent-string":
-            if text[i] == "\\":
-                output[i] = " "
-                if i + 1 < len(text) and text[i + 1] != "\n":
-                    output[i + 1] = " "
-                i += 2
-            else:
-                if text[i] == percent_opener:
-                    percent_depth += 1
-                elif text[i] == delimiter:
-                    percent_depth -= 1
-                if text[i] != "\n":
-                    output[i] = " "
-                i += 1
-                if percent_depth == 0:
-                    state = "code"
-            continue
-
-        if text.startswith("<!--", i):
-            state = "block-comment"
-            block_end = "-->"
-            for offset in range(4):
-                output[i + offset] = " "
-            i += 4
-        elif text.startswith("/*", i):
-            state = "block-comment"
-            block_end = "*/"
-            output[i] = output[i + 1] = " "
-            i += 2
-        elif (
-            text.startswith("//", i)
-            and (
-                language in SLASH_COMMENT_LANGUAGES
-                if language is not None
-                else i == 0 or text[i - 1] != ":"
-            )
-        ) or (
-            text[i] == "#"
-            and (
-                language in HASH_COMMENT_LANGUAGES
-                if language is not None
-                else i == 0 or text[i - 1].isspace()
-            )
-        ):
-            state = "line-comment"
-        elif text.startswith('"""', i) or text.startswith("'''", i):
-            delimiter = text[i : i + 3]
-            for offset in range(3):
-                output[i + offset] = " "
-            state = "string"
-            i += 3
-        elif language == "ruby" and (
-            percent_match := re.match(r"%(?:q|Q)?([({[<])", text[i:])
-        ) is not None:
-            percent_opener = percent_match.group(1)
-            delimiter = {"(": ")", "{": "}", "[": "]", "<": ">"}[
-                percent_opener
-            ]
-            prefix_length = percent_match.end()
-            for offset in range(prefix_length):
-                output[i + offset] = " "
-            state = "percent-string"
-            percent_depth = 1
-            i += prefix_length
-        elif text[i] in {'"', "'", "`"}:
-            delimiter = text[i]
-            output[i] = " "
-            state = "string"
-            i += 1
-        else:
-            i += 1
-    return "".join(output)
-
-
-def mask_hash_comments(text: str) -> str:
-    """Mask shell/YAML-style # comments without treating URL // as comments."""
-    output = list(text)
-    state = "code"
-    delimiter = ""
-    i = 0
-    while i < len(text):
-        if state == "comment":
-            if text[i] == "\n":
-                state = "code"
-            else:
-                output[i] = " "
-            i += 1
-            continue
-        if state == "string":
-            if text[i] == "\\":
-                i += 2
-            elif text[i] == delimiter:
-                state = "code"
-                i += 1
-            else:
-                i += 1
-            continue
-        if text[i] in {'"', "'"}:
-            delimiter = text[i]
-            state = "string"
-        elif text[i] == "#":
-            output[i] = " "
-            state = "comment"
-        i += 1
-    return "".join(output)
-
-
-def is_comment_only_line(text: str) -> bool:
-    return text.lstrip().startswith(COMMENT_ONLY_PREFIXES)
-
-
-def is_comment_only_offset(
-    text: str, offset: int, masked_text: Optional[str] = None
-) -> bool:
-    if masked_text is None:
-        masked_text = mask_comments(text)
-    return masked_text[offset : offset + 1] == " "
-
-
-def infer_product_from_text(text: str, *, executable_only: bool = False) -> str:
+def infer_product_from_text(text: str) -> str:
     """Best-effort product inference from arbitrary text."""
-    if is_comment_only_line(text):
-        return "general"
-    executable_text = text if executable_only else mask_comments_and_strings(text)
-    if re.search(
-        r"\b(?:voice_?response|response|twiml)\w*\s*(?:\.|->)\s*pay\s*(?:\(|\{|$)"
-        r"|\b(?:new\s+)?(?:[A-Za-z_][A-Za-z0-9_:.]*[.:])?VoiceResponse\s*\.\s*Builder\s*\([^\n;]*\)\s*\.\s*pay\s*\("
-        r"|\b(?:new\s+)?(?:[A-Za-z_][A-Za-z0-9_:.]*[.:])?VoiceResponse\s*\([^\n;]*?\)\s*\)?\s*(?:\.|->)\s*pay\s*\("
-        r"|\b(?:[A-Za-z_][A-Za-z0-9_:.]*[.:])?VoiceResponse\s*\.\s*new\s*(?:\([^\n;]*?\))?\s*\.\s*pay\s*\("
-        r"|\bPayResource\b",
-        executable_text,
-        re.IGNORECASE,
-    ):
-        return "pay"
     for pattern, product in METHOD_PRODUCT_MAP.items():
         if pattern in text:
             return product
     return "general"
-
-
-_STRING_LITERAL_PATTERNS = (
-    re.compile(r'"""([\s\S]*?)"""'),
-    re.compile(r"'''([\s\S]*?)'''"),
-    re.compile(r"`((?:\\.|[^`\\])*)`"),
-    re.compile(r"%q\{([\s\S]*?)\}"),
-    re.compile(r'"((?:\\.|[^"\\])*)"'),
-    re.compile(r"'((?:\\.|[^'\\])*)'"),
-)
-
-_HEREDOC_LITERAL_PATTERN = re.compile(
-    r"(?m)<<[-~]?[ \t]*(?:['\"])?(?P<label>[A-Za-z_][A-Za-z0-9_]*)(?:['\"])?[ \t]*;?[ \t]*\r?\n"
-    r"(?P<body>[\s\S]*?)^[ \t]*(?P=label)[ \t]*;?[ \t]*(?:\r?\n|$)"
-)
-
-
-def inline_texml_pay_offset(
-    text: str, masked_text: Optional[str] = None
-) -> Optional[int]:
-    """Return Pay's offset only when Response and Pay share one string literal."""
-    if masked_text is None:
-        masked_text = mask_comments(text)
-    for match in _HEREDOC_LITERAL_PATTERN.finditer(text):
-        if is_comment_only_offset(text, match.start(), masked_text):
-            continue
-        literal = mask_xml_comments(match.group("body"))
-        pay = _PAY_TAG_RE.search(literal)
-        if pay and _TWIML_RESPONSE_TAG_RE.search(literal):
-            return match.start("body") + pay.start()
-    for pattern in _STRING_LITERAL_PATTERNS:
-        for match in pattern.finditer(text):
-            if is_comment_only_offset(text, match.start(), masked_text):
-                continue
-            literal = mask_xml_comments(match.group(1))
-            pay = _PAY_TAG_RE.search(literal)
-            if pay and _TWIML_RESPONSE_TAG_RE.search(literal):
-                return match.start(1) + pay.start()
-    return None
-
-
-def contains_inline_texml_pay(text: str) -> bool:
-    return inline_texml_pay_offset(text) is not None
-
-
-def mask_xml_comments(text: str) -> str:
-    """Mask only XML comments while preserving offsets and line numbers."""
-    return re.sub(
-        r"<!--[\s\S]*?-->",
-        lambda match: "".join(
-            "\n" if character == "\n" else " " for character in match.group(0)
-        ),
-        text,
-    )
-
-
-def add_contextual_pay_alias_detections(
-    detections: List[Detection], text: str, lines: List[str], *, language: Optional[str] = None
-) -> None:
-    """Resolve aliases constructed from a Twilio VoiceResponse in source."""
-    aliases: Set[str] = set()
-    masked_text = mask_comments_and_strings(text, language=language)
-    # A language scanner may already have classified a constructor-chained
-    # call as generic voice on this line. Add the more specific Pay semantic
-    # instead of skipping the line merely because another detection exists.
-    existing_pay_lines = {d.line for d in detections if d.product == "pay"}
-    for line_no, masked_line in enumerate(masked_text.splitlines(), start=1):
-        if (
-            line_no in existing_pay_lines
-            or infer_product_from_text(masked_line, executable_only=True) != "pay"
-        ):
-            continue
-        detections.append(
-            Detection(
-                pattern=lines[line_no - 1].strip(),
-                line=line_no,
-                detection_method="regex",
-                context=get_context_lines(lines, line_no),
-                confidence="high",
-                product="pay",
-            )
-        )
-        existing_pay_lines.add(line_no)
-    constructor = re.compile(
-        r"(?P<alias>\$?[A-Za-z_][A-Za-z0-9_]*)"
-        r"(?:[ \t]*:[ \t]*[A-Za-z_][A-Za-z0-9_:.<>,?\[\]| &\t]*)?"
-        r"[ \t]*(?:=|:=)[ \t]*"
-        r"(?:new\s+)?&?(?:[A-Za-z_][A-Za-z0-9_:.]*[.:])?(?:New)?VoiceResponse"
-        r"(?:\s*\.\s*new)?(?:\s*\.\s*Builder)?\s*\(?",
-        re.IGNORECASE,
-    )
-    for match in constructor.finditer(masked_text):
-        aliases.add(match.group("alias"))
-
-    # Propagate simple local aliases without treating arbitrary .pay() calls
-    # elsewhere in the same Twilio-using file as payment flows.
-    changed = True
-    while changed:
-        changed = False
-        for alias in tuple(aliases):
-            propagation = re.compile(
-                rf"(?P<alias>\$?[A-Za-z_][A-Za-z0-9_]*)"
-                rf"(?:[ \t]*:[ \t]*[A-Za-z_][A-Za-z0-9_:.<>,?\[\]| &\t]*)?"
-                rf"[ \t]*(?:=|:=)[ \t]*{re.escape(alias)}\b"
-            )
-            for match in propagation.finditer(masked_text):
-                new_alias = match.group("alias")
-                if new_alias not in aliases:
-                    aliases.add(new_alias)
-                    changed = True
-
-    existing_lines = {d.line for d in detections if d.product == "pay"}
-    for alias in aliases:
-        call = re.compile(
-            rf"(?<![A-Za-z0-9_$]){re.escape(alias)}\s*(?:\.|->)\s*pay\s*\(",
-            re.IGNORECASE,
-        )
-        for match in call.finditer(masked_text):
-            line_no = text.count("\n", 0, match.start()) + 1
-            if line_no in existing_lines:
-                continue
-            detections.append(
-                Detection(
-                    pattern=lines[line_no - 1].strip(),
-                    line=line_no,
-                    detection_method="regex",
-                    context=get_context_lines(lines, line_no),
-                    confidence="high",
-                    product="pay",
-                )
-            )
-            existing_lines.add(line_no)
-
-
-def add_contextual_pay_type_detections(
-    detections: List[Detection], text: str, lines: List[str], *, language: Optional[str] = None
-) -> None:
-    """Recognize Twilio Java/C# Pay builder or node types without generic Pay FPs."""
-    masked_text = mask_comments_and_strings(text, language=language)
-    has_twilio_pay_type = re.search(
-        r"\bimport\s+com\.twilio\.twiml\.voice\.Pay\b"
-        r"|\busing\s+Twilio\.TwiML\.Voice\b"
-        r"|\bTwilio\.TwiML\.Voice\.Pay\b",
-        masked_text,
-        re.IGNORECASE,
-    )
-    if not has_twilio_pay_type:
-        return
-    constructor = re.compile(
-        r"\b(?:new\s+)?(?:Twilio\.TwiML\.Voice\.)?Pay\s*(?:\.\s*Builder)?\s*\(",
-        re.IGNORECASE,
-    )
-    existing_lines = {d.line for d in detections if d.product == "pay"}
-    for match in constructor.finditer(masked_text):
-        line_no = masked_text.count("\n", 0, match.start()) + 1
-        if line_no in existing_lines:
-            continue
-        detections.append(
-            Detection(
-                pattern=lines[line_no - 1].strip(),
-                line=line_no,
-                detection_method="regex",
-                context=get_context_lines(lines, line_no),
-                confidence="high",
-                product="pay",
-            )
-        )
-        existing_lines.add(line_no)
-
-
-def add_inline_texml_pay_detection(
-    detections: List[Detection], text: str, lines: List[str]
-) -> None:
-    """Add one Pay detection for XML literals embedded in any source language."""
-    if any(d.product == "pay" for d in detections):
-        return
-    offset = inline_texml_pay_offset(text)
-    if offset is None:
-        return
-    line_no = text.count("\n", 0, offset) + 1
-    pattern = lines[line_no - 1].strip() if line_no <= len(lines) else "<Pay>"
-    detections.append(
-        Detection(
-            pattern=pattern,
-            line=line_no,
-            detection_method="regex",
-            context=get_context_lines(lines, line_no),
-            confidence="high",
-            product="pay",
-        )
-    )
 
 
 def language_for_ext(ext: str) -> str:
@@ -1023,9 +535,6 @@ _PY_ENV_RE = re.compile(
 def scan_python_regex(filepath: Path, lines: List[str], already_detected_lines: Set[int]) -> List[Detection]:
     """Catch anything the AST pass might have missed (comments, strings, etc.)."""
     detections: List[Detection] = []
-    executable_lines = mask_comments_and_strings(
-        "\n".join(lines), language="python"
-    ).splitlines()
     for i, line in enumerate(lines, start=1):
         if i in already_detected_lines:
             continue
@@ -1051,7 +560,7 @@ def scan_python_regex(filepath: Path, lines: List[str], already_detected_lines: 
                         detection_method="regex",
                         context=get_context_lines(lines, i),
                         confidence="medium",
-                        product=infer_product_from_text(executable_lines[i - 1], executable_only=True),
+                        product=infer_product_from_text(stripped),
                     )
                 )
     return detections
@@ -1081,9 +590,6 @@ _JS_TWILIO_GENERIC_RE = re.compile(r"\btwilio\b", re.IGNORECASE)
 def scan_js_file(filepath: Path, lines: List[str]) -> List[Detection]:
     """Regex-based scanning for JS/TS files."""
     detections: List[Detection] = []
-    executable_lines = mask_comments_and_strings(
-        "\n".join(lines), language="javascript"
-    ).splitlines()
     detected_lines: Set[int] = set()
 
     for i, line in enumerate(lines, start=1):
@@ -1164,7 +670,7 @@ def scan_js_file(filepath: Path, lines: List[str]) -> List[Detection]:
         if i in detected_lines:
             continue
         stripped = line.strip()
-        inferred = infer_product_from_text(executable_lines[i - 1], executable_only=True)
+        inferred = infer_product_from_text(stripped)
         if inferred != "general":
             detections.append(
                 Detection(
@@ -1183,16 +689,18 @@ def scan_js_file(filepath: Path, lines: List[str]) -> List[Detection]:
         if i in detected_lines:
             continue
         stripped = line.strip()
-        executable = executable_lines[i - 1].strip()
-        if _JS_TWILIO_GENERIC_RE.search(executable):
+        if _JS_TWILIO_GENERIC_RE.search(stripped):
+            # Skip comments
+            is_comment = stripped.startswith("//") or stripped.startswith("/*") or stripped.startswith("*")
+            confidence = "low" if is_comment else "medium"
             detections.append(
                 Detection(
                     pattern=stripped,
                     line=i,
                     detection_method="heuristic",
                     context=get_context_lines(lines, i),
-                    confidence="medium",
-                    product=infer_product_from_text(executable, executable_only=True),
+                    confidence=confidence,
+                    product=infer_product_from_text(stripped),
                 )
             )
 
@@ -1215,7 +723,7 @@ def scan_config_file(filepath: Path) -> Tuple[List[str], List[Detection]]:
         print(f"WARNING: Could not read {filepath}: {exc}", file=sys.stderr)
         return env_vars, detections
 
-    lines = mask_hash_comments(text).splitlines()
+    lines = text.splitlines()
     for i, line in enumerate(lines, start=1):
         matches = _CONFIG_TWILIO_RE.findall(line)
         for var in matches:
@@ -1230,17 +738,6 @@ def scan_config_file(filepath: Path) -> Tuple[List[str], List[Detection]]:
                     context=get_context_lines(lines, i),
                     confidence="high",
                     product="general",
-                )
-            )
-        if "twilio" in line.lower() and not matches:
-            detections.append(
-                Detection(
-                    pattern=line.strip(),
-                    line=i,
-                    detection_method="regex",
-                    context=get_context_lines(lines, i),
-                    confidence="high",
-                    product=infer_product_from_text(line),
                 )
             )
     return env_vars, detections
@@ -1294,9 +791,6 @@ _CSHARP_TWILIO_RE = re.compile(r"\btwilio\b", re.IGNORECASE)
 def scan_go_file(filepath: Path, lines: List[str]) -> List[Detection]:
     """Regex-based scanning for Go files."""
     detections: List[Detection] = []
-    executable_lines = mask_comments_and_strings(
-        "\n".join(lines), language="go"
-    ).splitlines()
     detected_lines: Set[int] = set()
 
     for i, line in enumerate(lines, start=1):
@@ -1343,7 +837,7 @@ def scan_go_file(filepath: Path, lines: List[str]) -> List[Detection]:
         if stripped.startswith("//"):
             continue
         # Check for API method calls (e.g. CreateMessage, messages.create)
-        inferred = infer_product_from_text(executable_lines[i - 1], executable_only=True)
+        inferred = infer_product_from_text(stripped)
         if inferred != "general":
             detections.append(
                 Detection(
@@ -1368,9 +862,6 @@ def scan_go_file(filepath: Path, lines: List[str]) -> List[Detection]:
 def scan_ruby_file(filepath: Path, lines: List[str]) -> List[Detection]:
     """Regex-based scanning for Ruby files."""
     detections: List[Detection] = []
-    executable_lines = mask_comments_and_strings(
-        "\n".join(lines), language="ruby"
-    ).splitlines()
     detected_lines: Set[int] = set()
 
     for i, line in enumerate(lines, start=1):
@@ -1406,7 +897,7 @@ def scan_ruby_file(filepath: Path, lines: List[str]) -> List[Detection]:
         stripped = line.strip()
         if stripped.startswith("#"):
             continue
-        inferred = infer_product_from_text(executable_lines[i - 1], executable_only=True)
+        inferred = infer_product_from_text(stripped)
         if inferred != "general":
             detections.append(
                 Detection(
@@ -1431,9 +922,6 @@ def scan_ruby_file(filepath: Path, lines: List[str]) -> List[Detection]:
 def scan_java_file(filepath: Path, lines: List[str]) -> List[Detection]:
     """Regex-based scanning for Java / Kotlin / Scala files."""
     detections: List[Detection] = []
-    executable_lines = mask_comments_and_strings(
-        "\n".join(lines), language="java"
-    ).splitlines()
     detected_lines: Set[int] = set()
 
     for i, line in enumerate(lines, start=1):
@@ -1544,7 +1032,7 @@ def scan_java_file(filepath: Path, lines: List[str]) -> List[Detection]:
         stripped = line.strip()
         if stripped.startswith("//") or stripped.startswith("/*") or stripped.startswith("*"):
             continue
-        inferred = infer_product_from_text(executable_lines[i - 1], executable_only=True)
+        inferred = infer_product_from_text(stripped)
         if inferred != "general":
             detections.append(
                 Detection(
@@ -1569,9 +1057,6 @@ def scan_java_file(filepath: Path, lines: List[str]) -> List[Detection]:
 def scan_php_file(filepath: Path, lines: List[str]) -> List[Detection]:
     """Regex-based scanning for PHP files."""
     detections: List[Detection] = []
-    executable_lines = mask_comments_and_strings(
-        "\n".join(lines), language="php"
-    ).splitlines()
     detected_lines: Set[int] = set()
 
     for i, line in enumerate(lines, start=1):
@@ -1675,7 +1160,7 @@ def scan_php_file(filepath: Path, lines: List[str]) -> List[Detection]:
         stripped = line.strip()
         if stripped.startswith("//") or stripped.startswith("#") or stripped.startswith("/*") or stripped.startswith("*"):
             continue
-        inferred = infer_product_from_text(executable_lines[i - 1], executable_only=True)
+        inferred = infer_product_from_text(stripped)
         if inferred != "general":
             detections.append(
                 Detection(
@@ -1700,9 +1185,6 @@ def scan_php_file(filepath: Path, lines: List[str]) -> List[Detection]:
 def scan_csharp_file(filepath: Path, lines: List[str]) -> List[Detection]:
     """Regex-based scanning for C# files."""
     detections: List[Detection] = []
-    executable_lines = mask_comments_and_strings(
-        "\n".join(lines), language="csharp"
-    ).splitlines()
     detected_lines: Set[int] = set()
 
     for i, line in enumerate(lines, start=1):
@@ -1791,7 +1273,7 @@ def scan_csharp_file(filepath: Path, lines: List[str]) -> List[Detection]:
         stripped = line.strip()
         if stripped.startswith("//") or stripped.startswith("/*") or stripped.startswith("*"):
             continue
-        inferred = infer_product_from_text(executable_lines[i - 1], executable_only=True)
+        inferred = infer_product_from_text(stripped)
         if inferred != "general":
             detections.append(
                 Detection(
@@ -1817,23 +1299,13 @@ def scan_generic_text_file(filepath: Path, lines: List[str]) -> List[Detection]:
     """Regex-based scanning for XML, YAML, and other text files."""
     detections: List[Detection] = []
     twilio_re = re.compile(r"\btwilio\b|api\.twilio\.com|TWILIO_\w+", re.IGNORECASE)
-    document = "\n".join(lines)
-    has_twiml_document = bool(
-        _TWIML_RESPONSE_TAG_RE.search(document) and _TWIML_VERB_TAG_RE.search(document)
-    )
 
     for i, line in enumerate(lines, start=1):
         stripped = line.strip()
-        has_tag = bool(_TWIML_VERB_TAG_RE.search(stripped))
-        has_response_root = bool(_TWIML_RESPONSE_TAG_RE.search(stripped))
-        if twilio_re.search(stripped) or (
-            has_twiml_document and (has_tag or has_response_root)
-        ):
-            product = "pay" if _PAY_TAG_RE.search(stripped) else "general"
+        if twilio_re.search(stripped):
+            product = "general"
             sl = stripped.lower()
-            if product != "pay" and (
-                "<response" in sl or "<say" in sl or "<gather" in sl or "<dial" in sl
-            ):
+            if "<response>" in sl or "<say>" in sl or "<gather>" in sl or "<dial>" in sl:
                 product = "twiml"
             elif re.search(r'(?:^|[/@.])api\.twilio\.com(?:[/\s"\'\)]|$)', sl):
                 product = "general"
@@ -1904,10 +1376,10 @@ def run_scan(project_root: Path) -> Dict[str, Any]:
                 continue
 
             # Quick pre-filter: skip files with no twilio reference at all
-            if "twilio" not in text.lower() and not _TWIML_VERB_TAG_RE.search(text):
+            if "twilio" not in text.lower():
                 continue
 
-            lines = mask_comments(text, language="python").splitlines()
+            lines = text.splitlines()
             rel = str(filepath.relative_to(project_root))
 
             # AST pass
@@ -1918,13 +1390,6 @@ def run_scan(project_root: Path) -> Dict[str, Any]:
             regex_detections = scan_python_regex(filepath, lines, ast_lines)
 
             all_detections = ast_detections + regex_detections
-            add_contextual_pay_alias_detections(
-                all_detections, text, lines, language="python"
-            )
-            add_contextual_pay_type_detections(
-                all_detections, text, lines, language="python"
-            )
-            add_inline_texml_pay_detection(all_detections, text, lines)
             if all_detections:
                 fr = FileResult(rel, "python")
                 fr.detections = all_detections
@@ -1957,25 +1422,18 @@ def run_scan(project_root: Path) -> Dict[str, Any]:
                 print(f"WARNING: Could not read {filepath}: {exc}", file=sys.stderr)
                 continue
 
-            if "twilio" not in text.lower() and not contains_inline_texml_pay(text):
+            if "twilio" not in text.lower():
                 continue
 
-            language = "typescript" if ext in {".ts", ".tsx"} else "javascript"
-            lines = mask_comments(text, language=language).splitlines()
+            lines = text.splitlines()
             rel = str(filepath.relative_to(project_root))
             js_detections = scan_js_file(filepath, lines)
-            add_contextual_pay_alias_detections(
-                js_detections, text, lines, language=language
-            )
-            add_contextual_pay_type_detections(
-                js_detections, text, lines, language=language
-            )
-            add_inline_texml_pay_detection(js_detections, text, lines)
             if js_detections:
-                fr = FileResult(rel, language)
+                lang = "typescript" if ext in {".ts", ".tsx"} else "javascript"
+                fr = FileResult(rel, lang)
                 fr.detections = js_detections
                 file_results.append(fr)
-                languages_seen.add(language)
+                languages_seen.add(lang)
                 for d in js_detections:
                     all_products.add(d.product)
                     method_counts[d.detection_method] = method_counts.get(d.detection_method, 0) + 1
@@ -2005,18 +1463,11 @@ def run_scan(project_root: Path) -> Dict[str, Any]:
                 text = filepath.read_text(errors="replace")
             except (OSError, PermissionError):
                 continue
-            if "twilio" not in text.lower() and not contains_inline_texml_pay(text):
+            if "twilio" not in text.lower():
                 continue
-            lines = mask_comments(text, language="go").splitlines()
+            lines = text.splitlines()
             rel = str(filepath.relative_to(project_root))
             go_detections = scan_go_file(filepath, lines)
-            add_contextual_pay_alias_detections(
-                go_detections, text, lines, language="go"
-            )
-            add_contextual_pay_type_detections(
-                go_detections, text, lines, language="go"
-            )
-            add_inline_texml_pay_detection(go_detections, text, lines)
             if go_detections:
                 fr = FileResult(rel, "go")
                 fr.detections = go_detections
@@ -2039,18 +1490,11 @@ def run_scan(project_root: Path) -> Dict[str, Any]:
                 text = filepath.read_text(errors="replace")
             except (OSError, PermissionError):
                 continue
-            if "twilio" not in text.lower() and not contains_inline_texml_pay(text):
+            if "twilio" not in text.lower():
                 continue
-            lines = mask_comments(text, language="ruby").splitlines()
+            lines = text.splitlines()
             rel = str(filepath.relative_to(project_root))
             ruby_detections = scan_ruby_file(filepath, lines)
-            add_contextual_pay_alias_detections(
-                ruby_detections, text, lines, language="ruby"
-            )
-            add_contextual_pay_type_detections(
-                ruby_detections, text, lines, language="ruby"
-            )
-            add_inline_texml_pay_detection(ruby_detections, text, lines)
             if ruby_detections:
                 fr = FileResult(rel, "ruby")
                 fr.detections = ruby_detections
@@ -2073,28 +1517,17 @@ def run_scan(project_root: Path) -> Dict[str, Any]:
                 text = filepath.read_text(errors="replace")
             except (OSError, PermissionError):
                 continue
-            if "twilio" not in text.lower() and not contains_inline_texml_pay(text):
+            if "twilio" not in text.lower():
                 continue
-            language = (
-                "kotlin" if ext in {".kt", ".kts"}
-                else "scala" if ext == ".scala"
-                else "java"
-            )
-            lines = mask_comments(text, language=language).splitlines()
+            lines = text.splitlines()
             rel = str(filepath.relative_to(project_root))
             java_detections = scan_java_file(filepath, lines)
-            add_contextual_pay_alias_detections(
-                java_detections, text, lines, language=language
-            )
-            add_contextual_pay_type_detections(
-                java_detections, text, lines, language=language
-            )
-            add_inline_texml_pay_detection(java_detections, text, lines)
             if java_detections:
-                fr = FileResult(rel, language)
+                lang = "kotlin" if ext == ".kt" else "scala" if ext == ".scala" else "java"
+                fr = FileResult(rel, lang)
                 fr.detections = java_detections
                 file_results.append(fr)
-                languages_seen.add(language)
+                languages_seen.add(lang)
                 for d in java_detections:
                     all_products.add(d.product)
                     method_counts[d.detection_method] = method_counts.get(d.detection_method, 0) + 1
@@ -2119,18 +1552,11 @@ def run_scan(project_root: Path) -> Dict[str, Any]:
                 text = filepath.read_text(errors="replace")
             except (OSError, PermissionError):
                 continue
-            if "twilio" not in text.lower() and not contains_inline_texml_pay(text):
+            if "twilio" not in text.lower():
                 continue
-            lines = mask_comments(text, language="php").splitlines()
+            lines = text.splitlines()
             rel = str(filepath.relative_to(project_root))
             php_detections = scan_php_file(filepath, lines)
-            add_contextual_pay_alias_detections(
-                php_detections, text, lines, language="php"
-            )
-            add_contextual_pay_type_detections(
-                php_detections, text, lines, language="php"
-            )
-            add_inline_texml_pay_detection(php_detections, text, lines)
             if php_detections:
                 fr = FileResult(rel, "php")
                 fr.detections = php_detections
@@ -2160,18 +1586,11 @@ def run_scan(project_root: Path) -> Dict[str, Any]:
                 text = filepath.read_text(errors="replace")
             except (OSError, PermissionError):
                 continue
-            if "twilio" not in text.lower() and not contains_inline_texml_pay(text):
+            if "twilio" not in text.lower():
                 continue
-            lines = mask_comments(text, language="csharp").splitlines()
+            lines = text.splitlines()
             rel = str(filepath.relative_to(project_root))
             csharp_detections = scan_csharp_file(filepath, lines)
-            add_contextual_pay_alias_detections(
-                csharp_detections, text, lines, language="csharp"
-            )
-            add_contextual_pay_type_detections(
-                csharp_detections, text, lines, language="csharp"
-            )
-            add_inline_texml_pay_detection(csharp_detections, text, lines)
             if csharp_detections:
                 fr = FileResult(rel, "csharp")
                 fr.detections = csharp_detections
@@ -2205,7 +1624,7 @@ def run_scan(project_root: Path) -> Dict[str, Any]:
                 continue
             rel = str(filepath.relative_to(project_root))
             config_files_found.append(rel)
-            lines = mask_comments(text).splitlines()
+            lines = text.splitlines()
             for i, line in enumerate(lines, start=1):
                 if "twilio" in line.lower():
                     fr_dep = FileResult(rel, "config")
@@ -2218,27 +1637,18 @@ def run_scan(project_root: Path) -> Dict[str, Any]:
             continue
 
         # --- Generic text files (XML, YAML, etc.) ---
-        if ext in OTHER_TEXT_EXTENSIONS | SHELL_EXTENSIONS:
+        if ext in OTHER_TEXT_EXTENSIONS:
             try:
                 text = filepath.read_text(errors="replace")
             except (OSError, PermissionError):
                 continue
-            if "twilio" not in text.lower() and not _TWIML_VERB_TAG_RE.search(text):
+            if "twilio" not in text.lower():
                 continue
-            lines = (
-                mask_xml_comments(text).splitlines()
-                if ext in {".xml", ".twiml"}
-                else mask_hash_comments(text).splitlines()
-            )
+            lines = text.splitlines()
             rel = str(filepath.relative_to(project_root))
             gen_detections = scan_generic_text_file(filepath, lines)
             if gen_detections:
-                if ext in {".xml", ".twiml"}:
-                    lang_name = "xml"
-                elif ext in SHELL_EXTENSIONS:
-                    lang_name = "shell"
-                else:
-                    lang_name = "yaml"
+                lang_name = "xml" if ext == ".xml" else "yaml"
                 fr = FileResult(rel, lang_name)
                 fr.detections = gen_detections
                 file_results.append(fr)

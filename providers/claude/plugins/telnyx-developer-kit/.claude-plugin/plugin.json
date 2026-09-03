@@ -1,7 +1,7 @@
 {
   "name": "telnyx-developer-kit",
   "version": "0.2.0",
-  "description": "Telnyx Developer Kit \u2014 a curated front door for building with Telnyx: quickstart, product navigator, architecture patterns, security guardrails, error triage, and a Twilio-switch guide, plus the telnyx-builder agent and the hosted Telnyx MCP server for live API access. Covers messaging, email, voice/Call Control, TeXML, WebRTC, Verify, numbers, fax, IoT, video, and Twilio migration.",
+  "description": "Telnyx Developer Kit \u2014 a curated front door for building with Telnyx, plus an OAuth-authenticated hosted MCP connector with six focused discovery, Number Lookup, Call Control, and recording tools.",
   "author": {
     "name": "Telnyx",
     "url": "https://telnyx.com"
@@ -27,22 +27,10 @@
     "twilio-migration",
     "twilio-alternative"
   ],
-  "userConfig": {
-    "telnyx_api_key": {
-      "type": "string",
-      "title": "Telnyx API key",
-      "description": "API key used to authenticate Telnyx MCP requests. Create one at https://portal.telnyx.com/#/app/api-keys.",
-      "sensitive": true,
-      "required": true
-    }
-  },
   "mcpServers": {
     "telnyx": {
       "type": "http",
-      "url": "https://api.telnyx.com/v2/mcp",
-      "headers": {
-        "Authorization": "Bearer ${user_config.telnyx_api_key}"
-      }
+      "url": "https://api.telnyx.com/v2/ai/mcp"
     }
   }
 }

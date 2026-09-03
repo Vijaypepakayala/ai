@@ -20,7 +20,6 @@
 #   2 — Usage error
 
 set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- Colors (disabled if not a terminal) ---
 # shellcheck disable=SC2034  # BLUE reserved for info lines; kept for palette consistency
@@ -44,6 +43,7 @@ PROJECT_ROOT=""
 STATE_FILE=""
 SCAN_JSON=""
 KEPT_ON_TWILIO=""
+MIGRATED_FILES=""
 EXTRA_EXCLUDE_DIRS=""
 
 EXCLUDE_DIRS="node_modules .git vendor __pycache__ venv .venv dist build"
@@ -59,7 +59,7 @@ usage() {
   echo "Usage: $(basename "$0") <project-root> [--product <name>] [--json] [--state-file <path>]"
   echo "       [--exclude-dir <dir>] [--scan-json <path>]"
   echo ""
-  echo "Products: voice, messaging, verify, webrtc, sip, fax, video, iot, lookup, pay"
+  echo "Products: voice, messaging, verify, webrtc, sip, fax, video, iot, lookup"
   echo ""
   echo "Options:"
   echo "  --state-file <path>   Path to migration-state.json for hybrid deployment awareness"
@@ -126,14 +126,47 @@ check_warn() {
   fi
 }
 
-# Downgrade FAIL to WARN when hybrid deployment keeps some products on Twilio.
-# Use this instead of check_fail for checks that flag residual Twilio references
-# (imports, env vars, dependencies) which are expected in hybrid mode.
-check_fail_or_hybrid_warn() {
-  if [ -n "$KEPT_ON_TWILIO" ]; then
-    check_warn "$1" "$2 (hybrid deployment — $KEPT_ON_TWILIO kept on Twilio)" "${3:-}"
-  else
-    check_fail "$1" "$2" "${3:-}"
+# In a hybrid migration, residual Twilio code is allowed only outside files
+# recorded as migrated. `add-file` makes that boundary explicit: a Twilio URL
+# or validator in a migrated file is still a failure, while the same evidence
+# in an intentionally retained/unmigrated file remains visible as a warning.
+check_residual_matches_with_hybrid_scope() {
+  local name="$1" message="$2" matches="$3"
+  if [ -z "$KEPT_ON_TWILIO" ]; then
+    check_fail "$name" "$message" "$(matches_to_json "$matches")"
+    return
+  fi
+
+  local migrated_matches="" retained_matches="" line file relative
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    file=${line%%:*}
+    relative=${file#"$PROJECT_ROOT/"}
+    relative=${relative#./}
+    is_migrated=false
+    while IFS= read -r migrated; do
+      [ -n "$migrated" ] || continue
+      migrated=${migrated%/}
+      if [ "$relative" = "$migrated" ] || [[ "$relative" == "$migrated/"* ]]; then
+        is_migrated=true
+        break
+      fi
+    done <<< "$MIGRATED_FILES"
+    if [ "$is_migrated" = true ]; then
+      migrated_matches="${migrated_matches}${line}"$'\n'
+    else
+      retained_matches="${retained_matches}${line}"$'\n'
+    fi
+  done <<< "$matches"
+
+  if [ -n "$migrated_matches" ]; then
+    check_fail "$name" "$message (inside files recorded as migrated)" \
+      "$(matches_to_json "$migrated_matches")"
+  fi
+  if [ -n "$retained_matches" ]; then
+    check_warn "${name}_retained" \
+      "$message (retained hybrid files — $KEPT_ON_TWILIO kept on Twilio)" \
+      "$(matches_to_json "$retained_matches")"
   fi
 }
 
@@ -174,24 +207,6 @@ search_files() {
   grep -rn $GREP_EXCLUDES $include_args -E "$pattern" "$PROJECT_ROOT" 2>/dev/null || true
 }
 
-# Return one synthetic grep-style hit per XML/TwiML file that contains both a
-# Response root and a recognized verb. The tags may be on different lines.
-search_twiml_files() {
-  local verb_files
-  # shellcheck disable=SC2086
-  verb_files=$(grep -rl $GREP_EXCLUDES --include='*.xml' --include='*.twiml' -E \
-    '<(Say|Dial|Gather|Record|Message|Redirect|Reject|Pause|Enqueue|Play|Pay)([[:space:]/>]|$)' \
-    "$PROJECT_ROOT" 2>/dev/null || true)
-  while IFS= read -r filepath; do
-    [ -z "$filepath" ] && continue
-    if grep -Eq '<Response([[:space:]/>]|$)' "$filepath" 2>/dev/null; then
-      printf '%s:1:<Response + TwiML verb>\n' "$filepath"
-    fi
-  done <<EOF
-$verb_files
-EOF
-}
-
 # Search helper that excludes .md files and minified JS (for config/env var checks)
 # Avoids false positives from migration docs that reference old env var names
 search_source_files() {
@@ -205,40 +220,19 @@ search_source_files() {
   grep -rn $GREP_EXCLUDES --exclude='*.md' --exclude='*.min.js' $include_args -E "$pattern" "$PROJECT_ROOT" 2>/dev/null || true
 }
 
-find_active_invalid_pay_endpoints() {
-  python3 - "$PROJECT_ROOT" "$SCRIPT_DIR/scan-twilio-deep.py" <<'PY'
-import importlib.util
-import pathlib
-import re
-import sys
-
-root = pathlib.Path(sys.argv[1])
-scanner_path = pathlib.Path(sys.argv[2])
-spec = importlib.util.spec_from_file_location("telnyx_migration_scanner", scanner_path)
-if spec is None or spec.loader is None:
-    raise SystemExit("could not load migration comment masker")
-scanner = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = scanner
-spec.loader.exec_module(scanner)
-
-excluded = {"node_modules", ".git", "vendor", "__pycache__", "venv", ".venv", "dist", "build"}
-suffixes = {".py", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".rb", ".php", ".go", ".java", ".kt", ".kts", ".scala", ".cs", ".sh", ".bash", ".zsh"}
-pattern = re.compile(r'(?:/v2/calls/[^/\s"\'`]+/pay|api\.telnyx\.com/v2/calls/[^/\s"\'`]+/pay)', re.IGNORECASE)
-for path in root.rglob("*"):
-    relative_parts = path.relative_to(root).parts
-    if not path.is_file() or path.suffix.lower() not in suffixes or any(part in excluded for part in relative_parts):
-        continue
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        continue
-    masked = scanner.mask_comments(text)
-    lines = text.splitlines()
-    for match in pattern.finditer(masked):
-        line_number = masked.count("\n", 0, match.start()) + 1
-        line = lines[line_number - 1] if lines else ""
-        print(f"{path}:{line_number}:{line}")
-PY
+# Search helper that filters out comment-only lines to reduce false positives.
+# Strips lines where the match is in a comment (# // /* -- %) before counting.
+search_code_only() {
+  local pattern="$1"
+  shift
+  local raw
+  raw=$(search_files "$pattern" "$@")
+  if [ -z "$raw" ]; then
+    echo ""
+    return
+  fi
+  # Filter out lines that are comments (leading # // /* -- % after optional whitespace)
+  echo "$raw" | grep -v '^\([^:]*:[0-9]*:\)\s*\(#\|//\|/\*\|\*\|--\|%\|<!--\)' || true
 }
 
 # Convert grep output lines to JSON files array
@@ -265,12 +259,7 @@ product_applies() {
   if [ "$PRODUCT_FILTER" = "all" ] || [ "$check_products" = "all" ]; then
     return 0
   fi
-  local effective_filter="$PRODUCT_FILTER"
-  # Scanner spellings twiml/texml and Pay all use the Voice/TeXML contract.
-  case "$effective_filter" in
-    pay|twiml|texml) effective_filter="voice" ;;
-  esac
-  echo "$check_products" | tr ',' '\n' | grep -qx "$effective_filter"
+  echo "$check_products" | tr ',' '\n' | grep -qx "$PRODUCT_FILTER"
 }
 
 # --- Argument parsing ---
@@ -287,10 +276,10 @@ while [ $# -gt 0 ]; do
       fi
       PRODUCT_FILTER="$2"
       case "$PRODUCT_FILTER" in
-        voice|twiml|texml|messaging|verify|webrtc|sip|fax|video|iot|lookup|pay) ;;
+        voice|messaging|verify|webrtc|sip|fax|video|iot|lookup) ;;
         *)
           echo "Error: Unknown product '$PRODUCT_FILTER'" >&2
-          echo "Valid products: voice, twiml, texml, messaging, verify, webrtc, sip, fax, video, iot, lookup, pay" >&2
+          echo "Valid products: voice, messaging, verify, webrtc, sip, fax, video, iot, lookup" >&2
           exit 2
           ;;
       esac
@@ -362,10 +351,20 @@ fi
 # Resolve to absolute path
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 
+if [ -z "$STATE_FILE" ] && [ -f "$PROJECT_ROOT/migration-state.json" ]; then
+  STATE_FILE="$PROJECT_ROOT/migration-state.json"
+fi
+
 # Load hybrid deployment state if state file provided
 if [ -n "$STATE_FILE" ] && [ -f "$STATE_FILE" ]; then
   if command -v jq >/dev/null 2>&1; then
-    KEPT_ON_TWILIO=$(jq -r '.kept_on_twilio // {} | keys | join(",")' "$STATE_FILE" 2>/dev/null || true)
+    KEPT_ON_TWILIO=$(jq -r '.kept_on_twilio // {} | to_entries | map(select(.value != false and .value != null and .value != "")) | map(.key) | join(",")' "$STATE_FILE" 2>/dev/null || true)
+    MIGRATED_FILES=$(jq -r --arg root "$PROJECT_ROOT/" '
+      .migrated_files // {} | [.[]?[]?] | unique[] |
+      if startswith($root) then ltrimstr($root)
+      elif startswith("./") then ltrimstr("./")
+      else . end
+    ' "$STATE_FILE" 2>/dev/null || true)
   fi
 elif [ -n "$STATE_FILE" ] && [ ! -f "$STATE_FILE" ]; then
   echo "Warning: --state-file '$STATE_FILE' not found, ignoring" >&2
@@ -384,11 +383,9 @@ is_texml_only() {
   if [ -z "$SCAN_PRODUCTS" ]; then
     return 1  # no scan data, can't determine
   fi
-  # Pay migrations intentionally need no Telnyx SDK dependency: TeXML uses
-  # XML documents, while direct Pay uses the documented REST endpoint through
-  # the project's existing HTTP client.
+  # If products are only voice/texml (no messaging, verify, etc.), it's TeXML-only
   local non_voice
-  non_voice=$(echo "$SCAN_PRODUCTS" | tr ',' '\n' | grep -v -E '^(voice|texml|fax|pay)$' | head -1)
+  non_voice=$(echo "$SCAN_PRODUCTS" | tr ',' '\n' | grep -v -E '^(voice|texml|fax)$' | head -1)
   [ -z "$non_voice" ]
 }
 
@@ -410,38 +407,13 @@ fi
 # ============================================================
 section_header "Residual Twilio References"
 
-# Pay is a Call Control action. The direct /calls/{id}/pay spelling is a
-# high-confidence migration error and would fail at runtime.
-if product_applies "voice"; then
-  pay_endpoint_candidates=$(search_files '/v2/calls/[^/[:space:]"'\''`]+/pay|api\.telnyx\.com/v2/calls/[^/[:space:]"'\''`]+/pay' \
-    "*.py" "*.js" "*.ts" "*.jsx" "*.tsx" "*.mjs" "*.cjs" "*.rb" "*.php" \
-    "*.go" "*.java" "*.kt" "*.kts" "*.scala" "*.cs" "*.sh" "*.bash" "*.zsh")
-  if [ -n "$pay_endpoint_candidates" ]; then
-    if ! command -v python3 >/dev/null 2>&1; then
-      echo "Error: Pay endpoint validation requires python3 for comment-aware source validation" >&2
-      exit 2
-    fi
-    matches=$(find_active_invalid_pay_endpoints)
-  else
-    matches=""
-  fi
-  count=$(count_matches "$matches")
-  if [ "$count" -gt 0 ]; then
-    check_fail "invalid_telnyx_pay_endpoint" \
-      "Invalid Telnyx Pay endpoint /v2/calls/{call_control_id}/pay found; use POST /v2/calls/{call_control_id}/actions/pay" \
-      "$(matches_to_json "$matches")"
-  else
-    check_pass "invalid_telnyx_pay_endpoint" "No invalid direct /pay endpoint found"
-  fi
-fi
-
 # --- Check 1: Twilio SDK imports ---
 # Python
 if product_applies "all"; then
   matches=$(search_files "(from twilio|import twilio)" "*.py")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
-    check_fail_or_hybrid_warn "twilio_python_imports" "Twilio Python imports found in $count file(s):" "$(matches_to_json "$matches")"
+    check_residual_matches_with_hybrid_scope "twilio_python_imports" "Twilio Python imports found in $count file(s):" "$matches"
   else
     check_pass "twilio_python_imports" "No Twilio Python imports found"
   fi
@@ -452,7 +424,7 @@ if product_applies "all"; then
   matches=$(search_files "(require\(['\"]twilio['\"]|from ['\"]twilio['\"])" "*.js" "*.ts" "*.jsx" "*.tsx" "*.mjs" "*.cjs")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
-    check_fail_or_hybrid_warn "twilio_js_imports" "Twilio JS/TS imports found in $count file(s):" "$(matches_to_json "$matches")"
+    check_residual_matches_with_hybrid_scope "twilio_js_imports" "Twilio JS/TS imports found in $count file(s):" "$matches"
   else
     check_pass "twilio_js_imports" "No Twilio JS/TS imports found"
   fi
@@ -463,7 +435,7 @@ if product_applies "all"; then
   matches=$(search_files "github\.com/twilio/twilio-go" "*.go" "go.mod" "go.sum")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
-    check_fail_or_hybrid_warn "twilio_go_imports" "Twilio Go imports found in $count file(s):" "$(matches_to_json "$matches")"
+    check_residual_matches_with_hybrid_scope "twilio_go_imports" "Twilio Go imports found in $count file(s):" "$matches"
   else
     check_pass "twilio_go_imports" "No Twilio Go imports found"
   fi
@@ -474,7 +446,7 @@ if product_applies "all"; then
   matches=$(search_files "(require ['\"]twilio-ruby['\"]|require ['\"]twilio['\"])" "*.rb")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
-    check_fail_or_hybrid_warn "twilio_ruby_imports" "Twilio Ruby imports found in $count file(s):" "$(matches_to_json "$matches")"
+    check_residual_matches_with_hybrid_scope "twilio_ruby_imports" "Twilio Ruby imports found in $count file(s):" "$matches"
   else
     check_pass "twilio_ruby_imports" "No Twilio Ruby imports found"
   fi
@@ -482,10 +454,10 @@ fi
 
 # Java
 if product_applies "all"; then
-  matches=$(search_files "import com\.twilio\." "*.java" "*.kt" "*.kts" "*.scala")
+  matches=$(search_files "import com\.twilio\." "*.java" "*.kt" "*.scala")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
-    check_fail_or_hybrid_warn "twilio_java_imports" "Twilio Java imports found in $count file(s):" "$(matches_to_json "$matches")"
+    check_residual_matches_with_hybrid_scope "twilio_java_imports" "Twilio Java imports found in $count file(s):" "$matches"
   else
     check_pass "twilio_java_imports" "No Twilio Java imports found"
   fi
@@ -496,7 +468,7 @@ if product_applies "all"; then
   matches=$(search_files "(use Twilio|require.*twilio.php)" "*.php")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
-    check_fail_or_hybrid_warn "twilio_php_imports" "Twilio PHP imports found in $count file(s):" "$(matches_to_json "$matches")"
+    check_residual_matches_with_hybrid_scope "twilio_php_imports" "Twilio PHP imports found in $count file(s):" "$matches"
   else
     check_pass "twilio_php_imports" "No Twilio PHP imports found"
   fi
@@ -507,7 +479,7 @@ if product_applies "all"; then
   matches=$(search_files "using Twilio" "*.cs")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
-    check_fail_or_hybrid_warn "twilio_csharp_imports" "Twilio C# imports found in $count file(s):" "$(matches_to_json "$matches")"
+    check_residual_matches_with_hybrid_scope "twilio_csharp_imports" "Twilio C# imports found in $count file(s):" "$matches"
   else
     check_pass "twilio_csharp_imports" "No Twilio C# imports found"
   fi
@@ -518,7 +490,8 @@ if product_applies "all"; then
   matches=$(search_source_files "(api\.twilio\.com|verify\.twilio\.com|video\.twilio\.com|taskrouter\.twilio\.com|chat\.twilio\.com|conversations\.twilio\.com|sync\.twilio\.com|proxy\.twilio\.com|studio\.twilio\.com)")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
-    check_fail "twilio_api_urls" "Twilio API URLs found in $count file(s):" "$(matches_to_json "$matches")"
+    check_residual_matches_with_hybrid_scope \
+      "twilio_api_urls" "Twilio API URLs found in $count file(s):" "$matches"
   else
     check_pass "twilio_api_urls" "No Twilio API URLs found"
   fi
@@ -529,7 +502,7 @@ if product_applies "all"; then
   matches=$(search_source_files "(TWILIO_ACCOUNT_SID|TWILIO_AUTH_TOKEN|TWILIO_API_KEY|TWILIO_API_SECRET|TWILIO_SID|TWILIO_NUMBER|TWILIO_PHONE_NUMBER|TWILIO_MESSAGING_SERVICE_SID|TWILIO_VERIFY_SERVICE_SID|TWILIO_TWIML_APP_SID)")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
-    check_fail_or_hybrid_warn "twilio_env_vars" "Twilio environment variables found in $count file(s):" "$(matches_to_json "$matches")"
+    check_residual_matches_with_hybrid_scope "twilio_env_vars" "Twilio environment variables found in $count file(s):" "$matches"
   else
     check_pass "twilio_env_vars" "No Twilio environment variables found"
   fi
@@ -540,7 +513,9 @@ if product_applies "all"; then
   matches=$(search_files "(RequestValidator|X-Twilio-Signature|twilio\.validateRequest|validate_request)")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
-    check_fail "twilio_signature_validation" "Twilio signature validation patterns found in $count file(s):" "$(matches_to_json "$matches")"
+    check_residual_matches_with_hybrid_scope \
+      "twilio_signature_validation" \
+      "Twilio signature validation patterns found in $count file(s):" "$matches"
   else
     check_pass "twilio_signature_validation" "No Twilio signature validation patterns found"
   fi
@@ -548,7 +523,7 @@ fi
 
 # --- Check 5: TwiML files ---
 if product_applies "voice,messaging,fax"; then
-  matches=$(search_twiml_files)
+  matches=$(search_files "(<Response>.*<(Say|Dial|Gather|Record|Message|Redirect|Reject|Pause|Enqueue|Play)|TwiML|twiml)" "*.xml" "*.twiml")
   count=$(count_matches "$matches")
   if [ "$count" -gt 0 ]; then
     check_warn "twiml_files" "TwiML patterns found in $count file(s) (may be intentional TeXML):" "$(matches_to_json "$matches")"
@@ -719,17 +694,9 @@ if product_applies "voice,messaging,verify,sip,fax"; then
     telnyx_webhook_parse=$(search_files "(data\.payload|data\[.payload.\]|event_type|data\.event_type)" "*.py" "*.js" "*.ts" "*.rb" "*.go")
     telnyx_parse_count=$(count_matches "$telnyx_webhook_parse")
     if [ "$telnyx_parse_count" -gt 0 ]; then
-      if [ "$ORIGINAL_HAD_WEBHOOK_VALIDATION" = "false" ]; then
-        check_warn "ed25519_validation" "No Ed25519 webhook signature validation found — original code did not validate webhooks either (no RequestValidator/X-Twilio-Signature detected in scan). Consider adding Ed25519 for production security, but this is not a regression."
-      else
-        check_fail "ed25519_validation" "Webhook handlers parse Telnyx payloads but NO Ed25519 signature validation found — production webhooks are vulnerable to spoofing. Add verification using the pattern in references/webhook-migration.md"
-      fi
+      check_fail "ed25519_validation" "Webhook handlers parse Telnyx payloads but NO Ed25519 signature validation found — production webhooks are vulnerable to spoofing. Add verification using the pattern in references/webhook-migration.md"
     elif [ "$webhook_count" -gt 0 ]; then
-      if [ "$ORIGINAL_HAD_WEBHOOK_VALIDATION" = "false" ]; then
-        check_pass "ed25519_validation" "No Ed25519 webhook signature validation found — original code did not validate webhooks either (not a regression)"
-      else
-        check_warn "ed25519_validation" "No Ed25519 webhook signature validation found — add verification for production security (see references/webhook-migration.md)"
-      fi
+      check_warn "ed25519_validation" "A webhook-like handler was found without a recognized Telnyx payload parse or Ed25519 verifier; verify the handler's purpose and add production verification if it receives Telnyx webhooks"
     else
       check_pass "ed25519_validation" "No webhook handlers detected — Ed25519 validation not applicable"
     fi
