@@ -70,13 +70,16 @@ processing:
   code. Surface a clear readiness error instead of letting carriers filter
   silently.
 - Honor consent and opt-outs (STOP) for every SMS/MMS sender type. For
-  Messaging SMS/MMS delivery, Telnyx reports an opted-out recipient as error
-  40008. Never attempt to bypass one; treat that product-scoped code as a
-  compliance stop, not a bug. Error 40300 in the same delivery context is a
-  carrier rejection instead: diagnose carrier filtering, content, and routing
-  without treating it as proof that the recipient opted out. Do not apply
-  either interpretation to another product merely because its numeric code
-  matches; WhatsApp/Meta also uses 40008 as a catch-all error.
+  Messaging SMS/MMS API requests, Telnyx reports an opted-out recipient as
+  error 40300. Never attempt to bypass one; treat that code as a compliance
+  stop, not a transient failure. Do not infer that every asynchronous delivery
+  event with code 40300 is an opt-out: classify it from its title and detail,
+  and still treat a confirmed STOP as terminal. Error 40008 is a general asynchronous
+  undeliverable result, not an opt-out signal: inspect the delivery detail and
+  number validity, and retry only with bounded backoff and the existing send
+  and spend ceilings. Do not apply either interpretation to another product
+  merely because its numeric code matches; WhatsApp/Meta also uses 40008 as a
+  catch-all error.
 
 ## Spend controls
 
@@ -121,7 +124,7 @@ processing:
 - [ ] API v2 JSON dedupes on `data.id`; authenticated TeXML callbacks require
       POST, parse the verified form body, and dedupe on
       `(CallSid, SequenceNumber)`
-- [ ] US SMS paths check sender-appropriate registration and treat STOP/40008
+- [ ] US SMS paths check sender-appropriate registration and treat STOP/40300
       as terminal
 - [ ] Recording/transcription starts only after applicable notice and consent;
       retention, access, deletion, and failover preserve the same policy

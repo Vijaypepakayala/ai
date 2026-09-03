@@ -25,7 +25,7 @@ const contractPath = path.join(
 );
 
 const connectorUrl = "https://api.telnyx.com/v2/ai/mcp";
-const contractSha256 = "ddc7552661c281da0625686170f923504737a1ab7c56bac355c031adbab849aa";
+const contractSha256 = "29c307e0735c462d5cafa7a4d1223fd2e8b57664b013d6fd46289574fb482878";
 const expectedSkills = [
   "telnyx-kit-architecture-patterns",
   "telnyx-kit-debugging",
@@ -88,12 +88,67 @@ async function main() {
   assert.equal(createHash("sha256").update(contractBytes).digest("hex"), contractSha256);
   const contract = JSON.parse(contractBytes);
   assert.equal(contract.id, "telnyx-ai-connector");
-  assert.equal(contract.version, "1.0.0-preview.4");
+  assert.equal(contract.version, "1.0.0-preview.5");
   assert.deepEqual(contract.hosts, ["claude", "codex"]);
   assert.deepEqual(contract.tools.map(({ name }) => name).sort(), [...expectedTools].sort());
+  const inputSchemaOwners = new Map();
+  for (const tool of contract.tools) {
+    if (tool.inputSchema) inputSchemaOwners.set(tool.name, "tool");
+  }
+  for (const endpoint of contract.endpoints) {
+    assert.equal(
+      inputSchemaOwners.has(endpoint.executionTool),
+      false,
+      `duplicate input schema for ${endpoint.executionTool}`,
+    );
+    inputSchemaOwners.set(endpoint.executionTool, "endpoint");
+  }
+  assert.deepEqual(
+    [...inputSchemaOwners.keys()].sort(),
+    [...expectedTools].sort(),
+    "the frozen contract must pin exactly one input schema for every tool",
+  );
   const lookup = contract.endpoints.find(({ name }) => name === "number_lookup");
   assert.deepEqual(lookup.inputSchema.properties.confirm_billable_lookup, { const: true });
   assert.ok(lookup.inputSchema.required.includes("confirm_billable_lookup"));
+
+  const guidanceRoots = new Map([
+    ["canonical", path.join(repoRoot, "skills")],
+    ["claude", path.join(pluginRoot, "skills")],
+    ["cursor", path.join(repoRoot, "providers", "cursor", "plugin", "skills")],
+  ]);
+  for (const [label, root] of guidanceRoots) {
+    const debugging = await readFile(
+      path.join(root, "telnyx-kit-debugging", "SKILL.md"),
+      "utf8",
+    );
+    const guardrails = await readFile(
+      path.join(root, "telnyx-kit-guardrails", "SKILL.md"),
+      "utf8",
+    );
+    assert.match(
+      debugging,
+      /\| Messaging SMS\/MMS API request \| 40300 \| Recipient opted out \(STOP\) \|/,
+      `${label} debugging guidance lost synchronous STOP handling`,
+    );
+    assert.match(
+      debugging,
+      /\| Messaging SMS\/MMS delivery \| 40300 \| Context-dependent delivery error \|/,
+      `${label} debugging guidance lost asynchronous 40300 context handling`,
+    );
+    assert.match(
+      debugging,
+      /\| Messaging SMS\/MMS delivery \| 40008 \| Undeliverable \|/,
+      `${label} debugging guidance lost asynchronous 40008 handling`,
+    );
+    assert.match(guardrails, /STOP\/40300/);
+    assert.match(guardrails, /every asynchronous delivery\n  event with code 40300/);
+    assert.match(guardrails, /Error 40008 is a general asynchronous/);
+    const combinedGuidance = `${debugging}\n${guardrails}`;
+    assert.doesNotMatch(combinedGuidance, /STOP\/40008/);
+    assert.doesNotMatch(combinedGuidance, /40008 \| Number opted out/);
+    assert.doesNotMatch(combinedGuidance, /40300 \| Carrier rejected/);
+  }
 
   const pluginText = await readFile(manifestPath, "utf8");
   assert.doesNotMatch(pluginText, /telnyx_api_key|user_config|authorization/i);
