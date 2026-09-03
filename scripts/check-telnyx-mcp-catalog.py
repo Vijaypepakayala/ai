@@ -306,6 +306,8 @@ def canonical_validation_schema(value: Any) -> Any:
     }.get(type(normalized.get("const")))
     if const_type and normalized.get("type") == const_type:
         normalized.pop("type")
+    if normalized.get("required") == []:
+        normalized.pop("required")
     return normalized
 
 
@@ -335,10 +337,24 @@ def validate_tool_catalog(received: Any, contract: dict[str, Any]) -> None:
     expected = {tool["name"]: tool for tool in contract["tools"]}
     by_name = {tool["name"]: tool for tool in received}
     require(set(by_name) == set(expected), f"tool set drifted: {sorted(by_name)}")
+    input_schemas = {
+        tool["name"]: tool["inputSchema"]
+        for tool in contract["tools"]
+        if "inputSchema" in tool
+    }
     endpoint_schemas = {
         endpoint["executionTool"]: endpoint["inputSchema"]
         for endpoint in contract["endpoints"]
     }
+    require(
+        not (set(input_schemas) & set(endpoint_schemas)),
+        "contract defines more than one input schema for a tool",
+    )
+    input_schemas.update(endpoint_schemas)
+    require(
+        set(input_schemas) == set(expected),
+        "contract must pin exactly one input schema for every tool",
+    )
     for name, contract_tool in expected.items():
         require(by_name[name].get("title") == contract_tool["title"], f"title drifted for {name}")
         require(
@@ -348,12 +364,11 @@ def validate_tool_catalog(received: Any, contract: dict[str, Any]) -> None:
         schema = by_name[name].get("inputSchema")
         require(isinstance(schema, dict), f"{name} has no input schema")
         validate_schema_dialects(schema, name)
-        if name in endpoint_schemas:
-            require(
-                canonical_validation_schema(schema)
-                == canonical_validation_schema(endpoint_schemas[name]),
-                f"input schema drifted for {name}",
-            )
+        require(
+            canonical_validation_schema(schema)
+            == canonical_validation_schema(input_schemas[name]),
+            f"input schema drifted for {name}",
+        )
 
 
 def list_all_tools(
@@ -581,18 +596,21 @@ def self_test() -> None:
 
     contract = json.loads(CONTRACT_PATH.read_text())
     observed: list[tuple[str, str, str | None]] = []
-    endpoint_schemas = {
+    input_schemas = {
+        tool["name"]: tool["inputSchema"]
+        for tool in contract["tools"]
+        if "inputSchema" in tool
+    }
+    input_schemas.update({
         endpoint["executionTool"]: endpoint["inputSchema"]
         for endpoint in contract["endpoints"]
-    }
+    })
     served_tools = [
         {
             "name": item["name"],
             "title": item["title"],
             "annotations": item["annotations"],
-            "inputSchema": endpoint_schemas.get(
-                item["name"], {"type": "object", "properties": {}}
-            ),
+            "inputSchema": input_schemas[item["name"]],
         }
         for item in contract["tools"]
     ]
@@ -781,6 +799,46 @@ def self_test() -> None:
         thread.join(timeout=5)
 
     valid_tools = served_tools
+    serializer_variant = json.loads(json.dumps(valid_tools))
+    list_tool = next(
+        tool for tool in serializer_variant if tool["name"] == "list_api_endpoints"
+    )
+    list_tool["inputSchema"].pop("required")
+    validate_tool_catalog(serializer_variant, contract)
+
+    duplicate_schema_contract = json.loads(json.dumps(contract))
+    duplicate_tool = next(
+        tool
+        for tool in duplicate_schema_contract["tools"]
+        if tool["name"] == "lookup_phone_number"
+    )
+    duplicate_endpoint = next(
+        endpoint
+        for endpoint in duplicate_schema_contract["endpoints"]
+        if endpoint["executionTool"] == "lookup_phone_number"
+    )
+    duplicate_tool["inputSchema"] = duplicate_endpoint["inputSchema"]
+    try:
+        validate_tool_catalog(valid_tools, duplicate_schema_contract)
+    except AuditError as error:
+        assert str(error) == "contract defines more than one input schema for a tool"
+    else:
+        raise AssertionError("duplicate input-schema ownership must fail the release audit")
+
+    missing_schema_contract = json.loads(json.dumps(contract))
+    missing_schema_tool = next(
+        tool
+        for tool in missing_schema_contract["tools"]
+        if tool["name"] == "list_api_endpoints"
+    )
+    missing_schema_tool.pop("inputSchema")
+    try:
+        validate_tool_catalog(valid_tools, missing_schema_contract)
+    except AuditError as error:
+        assert str(error) == "contract must pin exactly one input schema for every tool"
+    else:
+        raise AssertionError("missing input-schema ownership must fail the release audit")
+
     drifted_tools = json.loads(json.dumps(valid_tools))
     lookup = next(tool for tool in drifted_tools if tool["name"] == "lookup_phone_number")
     lookup["inputSchema"]["required"].remove("lookup_type")
@@ -790,6 +848,18 @@ def self_test() -> None:
         assert str(error) == "input schema drifted for lookup_phone_number"
     else:
         raise AssertionError("execution-tool schema drift must fail the release audit")
+
+    discovery_drift = json.loads(json.dumps(valid_tools))
+    discovery = next(
+        tool for tool in discovery_drift if tool["name"] == "list_api_endpoints"
+    )
+    discovery["inputSchema"]["properties"]["limit"]["maximum"] = 500
+    try:
+        validate_tool_catalog(discovery_drift, contract)
+    except AuditError as error:
+        assert str(error) == "input schema drifted for list_api_endpoints"
+    else:
+        raise AssertionError("discovery-tool schema drift must fail the release audit")
 
     dialect_drift = json.loads(json.dumps(valid_tools))
     lookup = next(tool for tool in dialect_drift if tool["name"] == "lookup_phone_number")

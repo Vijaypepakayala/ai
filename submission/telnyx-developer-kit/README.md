@@ -10,9 +10,9 @@ Strong production candidate, not production-certified. The repository policy
 stays `NOT_AVAILABLE` until every external gate below has dated evidence.
 
 The embedded `connector-contract.json` is byte-identical to
-`team-telnyx/telnyx-ai-connector` contract `1.0.0-preview.4` at source candidate
-`c6ecbd1245557a4019eb24b79b6c3fe157993291`. Its SHA-256 is
-`ddc7552661c281da0625686170f923504737a1ab7c56bac355c031adbab849aa`.
+`team-telnyx/telnyx-ai-connector` contract `1.0.0-preview.5` at source candidate
+`5bff92e2f32f32705e1ea3a5e15d0676c64b4cb9`. Its SHA-256 is
+`29c307e0735c462d5cafa7a4d1223fd2e8b57664b013d6fd46289574fb482878`.
 After the source PR merges, update this pin to the merged commit if the contract
 bytes change.
 

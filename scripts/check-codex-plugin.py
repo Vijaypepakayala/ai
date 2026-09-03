@@ -21,7 +21,7 @@ CONTRACT = SUBMISSION / "connector-contract.json"
 WORKFLOW = ROOT / ".github" / "workflows" / "telnyx-developer-kit-review.yml"
 
 CONNECTOR_URL = "https://api.telnyx.com/v2/ai/mcp"
-CONTRACT_SHA256 = "ddc7552661c281da0625686170f923504737a1ab7c56bac355c031adbab849aa"
+CONTRACT_SHA256 = "29c307e0735c462d5cafa7a4d1223fd2e8b57664b013d6fd46289574fb482878"
 ICON_SHA256 = "de304ddafa033ec73d619b27123f6891262f726919046d37b1f989ad47160599"
 SKILLS = {
     "telnyx-kit-architecture-patterns",
@@ -125,7 +125,7 @@ def validate_contract() -> None:
             "embedded connector contract differs from the reviewed server contract")
     contract = load_json(CONTRACT)
     require(contract.get("id") == "telnyx-ai-connector", "unexpected connector id")
-    require(contract.get("version") == "1.0.0-preview.4", "unexpected connector version")
+    require(contract.get("version") == "1.0.0-preview.5", "unexpected connector version")
     require(contract.get("hosts") == ["claude", "codex"], "connector host contract drifted")
     require(contract.get("protocolVersions") == ["2026-07-28", "2025-11-25"],
             "protocol compatibility contract drifted")
@@ -142,6 +142,8 @@ def validate_contract() -> None:
             "billable confirmation must accept only true")
 
     annotations = load_json(SUBMISSION / "annotation-justifications.json")
+    require(annotations.get("contractVersion") == contract["version"],
+            "annotation justification contract version drifted")
     require({item.get("name") for item in annotations.get("tools", [])} == TOOLS,
             "annotation justifications must cover exactly the six tools")
     expected = {tool["name"]: tool["annotations"] for tool in contract["tools"]}
@@ -160,6 +162,38 @@ def validate_contract() -> None:
     billable = [case for case in cases["positive"] if "lookup_phone_number" in case.get("toolsUnderTest", [])]
     require(len(billable) == 1 and billable[0].get("requiresExplicitBillableApproval") is True,
             "billable review case must require separate explicit approval")
+
+
+def validate_messaging_error_guidance() -> None:
+    guidance_roots = {
+        "canonical": ROOT / "skills",
+        "codex": ROOT / "plugins" / "telnyx-developer-kit" / "skills",
+        "claude": ROOT / "providers" / "claude" / "plugins" / "telnyx-platform" / "skills",
+        "cursor": ROOT / "providers" / "cursor" / "plugin" / "skills",
+    }
+    stale_guidance = {
+        "STOP/40008": "guardrails must not map STOP to asynchronous delivery code 40008",
+        "40008 | Number opted out": "debugging skill must not map 40008 to an opt-out",
+        "40300 | Carrier rejected": "debugging skill must not map 40300 to a carrier rejection",
+    }
+    for label, root in guidance_roots.items():
+        debugging = (root / "telnyx-kit-debugging" / "SKILL.md").read_text()
+        guardrails = (root / "telnyx-kit-guardrails" / "SKILL.md").read_text()
+        require("| Messaging SMS/MMS API request | 40300 | Recipient opted out (STOP) |" in debugging,
+                f"{label} debugging skill must map synchronous SMS opt-outs to 40300")
+        require("| Messaging SMS/MMS delivery | 40300 | Context-dependent delivery error |" in debugging,
+                f"{label} debugging skill must preserve asynchronous 40300 context handling")
+        require("| Messaging SMS/MMS delivery | 40008 | Undeliverable |" in debugging,
+                f"{label} debugging skill must map asynchronous 40008 to undeliverable")
+        require("STOP/40300" in guardrails,
+                f"{label} guardrails must treat synchronous STOP/40300 as terminal")
+        require("every asynchronous delivery\n  event with code 40300" in guardrails,
+                f"{label} guardrails must classify asynchronous 40300 by title and detail")
+        require("Error 40008 is a general asynchronous" in guardrails,
+                f"{label} guardrails must not treat SMS delivery 40008 as an opt-out")
+        combined = f"{debugging}\n{guardrails}"
+        for stale_text, message in stale_guidance.items():
+            require(stale_text not in combined, f"{label} {message}")
 
 
 def validate_text_and_workflow() -> None:
@@ -196,6 +230,7 @@ def main() -> int:
         validate_plugin()
         validate_marketplace()
         validate_contract()
+        validate_messaging_error_guidance()
         validate_text_and_workflow()
     except (ValidationError, KeyError, StopIteration) as error:
         print(f"Developer Kit validation failed: {error}", file=sys.stderr)

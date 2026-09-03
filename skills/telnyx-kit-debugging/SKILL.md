@@ -22,9 +22,10 @@ metadata:
 | Messaging SMS/MMS | 40310 | Invalid `to` address | No — fix input |
 | Messaging SMS/MMS | 40305 | Invalid `from` address or sender/profile association | No — fix provisioning |
 | Messaging SMS/MMS | 40312 | Messaging profile disabled | No — enable the intended profile only after reviewing that change |
-| Messaging SMS/MMS delivery | 40008 | Number opted out (STOP) | Never — compliance stop |
+| Messaging SMS/MMS API request | 40300 | Recipient opted out (STOP) | Never — compliance stop |
+| Messaging SMS/MMS delivery | 40300 | Context-dependent delivery error | Inspect title/detail; a confirmed STOP is terminal, otherwise diagnose the reported carrier, content, or routing cause |
 | WhatsApp/Meta | 40008 | Meta catch-all error | No blind retry — inspect template parameters, number formatting, and the 24-hour window |
-| Messaging SMS/MMS delivery | 40300 | Carrier rejected | Only after diagnosing carrier filtering, content, and routing |
+| Messaging SMS/MMS delivery | 40008 | Undeliverable | Bounded retry only after inspecting number validity and delivery detail; preserve send and spend caps |
 | API v2 | 10004 | Missing required parameter | No — add the required field |
 | API v2 | 10005 | Resource or URL not found | No — fix the ID or path |
 | Any | — | Rate limited | Honor `Retry-After`; retry only a safe read or an idempotency-protected operation |

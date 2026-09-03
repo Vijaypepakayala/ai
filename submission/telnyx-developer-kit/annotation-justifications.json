@@ -1,6 +1,6 @@
 {
   "mcpServerURL": "https://api.telnyx.com/v2/ai/mcp",
-  "contractVersion": "1.0.0-preview.4",
+  "contractVersion": "1.0.0-preview.5",
   "tools": [
     {
       "name": "list_api_endpoints",
