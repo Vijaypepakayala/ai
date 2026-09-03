@@ -72,7 +72,10 @@ Telnyx offers three authentication methods. Choose based on your PBX/SBC capabil
 
 ### IP Authentication Connection
 
+IP connections are created in two steps: first create the `ip_connection`, then register each whitelisted IP as a separate `ip` resource (`POST /v2/ips`) tied to the connection via `connection_id`. The `POST /ip_connections` endpoint does **not** accept an inline IP list.
+
 ```bash
+# Step 1: Create the IP connection
 curl -X POST https://api.telnyx.com/v2/ip_connections \
   -H "Authorization: Bearer $TELNYX_API_KEY" \
   -H "Content-Type: application/json" \
@@ -81,14 +84,28 @@ curl -X POST https://api.telnyx.com/v2/ip_connections \
     "active": true,
     "transport_protocol": "UDP",
     "anchorsite_override": "Latency",
-    "ip_authentication": {
-      "ip_addresses": [
-        {"ip_address": "203.0.113.10", "port": 5060},
-        {"ip_address": "203.0.113.11", "port": 5060}
-      ]
-    },
     "webhook_event_url": "https://example.com/sip-events",
     "webhook_api_version": "2"
+  }'
+# Response includes the new connection "id" — use it as connection_id below.
+
+# Step 2: Add each whitelisted IP as a separate resource
+curl -X POST https://api.telnyx.com/v2/ips \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ip_address": "203.0.113.10",
+    "port": 5060,
+    "connection_id": "YOUR_CONNECTION_ID"
+  }'
+
+curl -X POST https://api.telnyx.com/v2/ips \
+  -H "Authorization: Bearer $TELNYX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "ip_address": "203.0.113.11",
+    "port": 5060,
+    "connection_id": "YOUR_CONNECTION_ID"
   }'
 ```
 
@@ -104,13 +121,13 @@ curl -X POST https://api.telnyx.com/v2/credential_connections \
     "user_name": "my-pbx-user",
     "password": "secure-password-here",
     "sip_uri_calling_preference": "disabled",
-    "sip_subdomain": "my-company",
-    "sip_subdomain_receive_settings": "only_my_connections",
     "anchorsite_override": "Latency",
     "webhook_event_url": "https://example.com/sip-events",
     "webhook_api_version": "2"
   }'
 ```
+
+> **Do not add `sip_subdomain` / `sip_subdomain_receive_settings` to this body.** Measured against the live API, `/v2/credential_connections` accepts them (201 on create, 200 on a follow-up PATCH, nested under `inbound` or at the top level) and then **silently discards** them — a subsequent `GET` never returns them, and they appear nowhere in the endpoint's request or response schema (see `sdk-reference/{language}/sip.md`, generated from the Telnyx OpenAPI spec). Configure subdomains in Mission Control Portal → **SIP** → **Connections** instead. See the Subdomains section of `{baseDir}/references/voice-migration.md`.
 
 ```python
 from telnyx import Telnyx
@@ -125,7 +142,7 @@ connection = client.credential_connections.create(
     anchorsite_override="Latency",
     webhook_event_url="https://example.com/sip-events"
 )
-print(connection.id)
+print(connection.data.id)
 ```
 
 ```javascript
@@ -164,7 +181,7 @@ curl -X POST https://api.telnyx.com/v2/outbound_voice_profiles \
   }'
 ```
 
-Then associate the profile with your connection in the Mission Control Portal under **SIP** > **Connections** > **Outbound**, or set `outbound_voice_profile_id` when creating the connection.
+Then associate the profile with your connection in the Mission Control Portal under **SIP** > **Connections** > **Outbound**, or set it on the connection's `outbound` object (e.g. `"outbound": {"outbound_voice_profile_id": "YOUR_PROFILE_ID"}`) when creating or updating the connection. It is not a top-level connection field.
 
 ## Step 4: Configure Inbound Settings
 
@@ -180,16 +197,7 @@ These replace Twilio's Origination URI configuration.
 
 ## Step 5: Assign Phone Numbers
 
-```bash
-# Purchase a number and assign to connection
-curl -X POST https://api.telnyx.com/v2/number_orders \
-  -H "Authorization: Bearer $TELNYX_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "phone_numbers": [{"phone_number": "+15551234567"}],
-    "connection_id": "YOUR_CONNECTION_ID"
-  }'
-```
+Use the quoted purchase workflow in `{baseDir}/references/numbers-migration.md`. It re-queries and displays the current upfront and monthly costs, requires the exact number and cost tuple at the local approval gate, serializes the same number, and fails closed if the inventory or quote changed. The Number Orders API has no quote-ID or maximum-charge field, so the cost tuple is not sent to or enforced by the server. After the order completes, assign the purchased number to the exact SIP Connection as a separate reviewed configuration change.
 
 Or port existing numbers from Twilio. See `{baseDir}/references/number-porting.md` for the full porting guide.
 
@@ -280,7 +288,7 @@ If your SIP trunking deployment serves physical locations, you must configure E9
 
 1. **Register E911 addresses** in the Mission Control Portal under **Numbers** > **Emergency Settings**
 2. **Assign E911 addresses to phone numbers** used at each location
-3. **Test with your local PSAP** (non-emergency line) to verify address delivery
+3. **Dial `933` from the configured trunk** to hear the emergency-calling test announcement and verify the caller ID/address routing without dispatching emergency services
 
 **Twilio vs Telnyx E911 comparison:**
 
@@ -288,7 +296,7 @@ If your SIP trunking deployment serves physical locations, you must configure E9
 |---|---|---|
 | E911 address registration | Per-number via API | Per-number via API or portal |
 | Dynamic E911 (HELD/PIDF-LO) | Supported | Supported |
-| E911 API endpoint | `POST /Addresses` | `POST /phone_numbers/{id}/e911` |
+| E911 API endpoint | `POST /Addresses` | `POST /phone_numbers/{id}/actions/enable_emergency` with `emergency_enabled` and `emergency_address_id` |
 | Surcharge | Per-number monthly | Per-number monthly |
 
 **Important:** E911 obligations apply to all VoIP providers. When migrating SIP trunks that serve fixed locations (offices, call centers), ensure E911 addresses are configured on Telnyx **before** porting numbers.
@@ -326,7 +334,7 @@ Use this checklist when migrating a PBX from Twilio Elastic SIP Trunking to Teln
 | List connections | `GET /Trunks` | `GET /v2/connections` (all types) |
 | Create outbound profile | N/A (trunk-level) | `POST /v2/outbound_voice_profiles` |
 | Assign number to trunk | `POST /Trunks/{SID}/PhoneNumbers` | Set `connection_id` on number order/update |
-| Set IP ACL | `POST /IpAccessControlLists` | Included in IP connection creation |
+| Set IP ACL | `POST /IpAccessControlLists` | Separate `POST /v2/ips` per IP (with `connection_id`) |
 | Set credentials | `POST /CredentialLists` | Included in credential connection creation |
 
 ## Common Pitfalls
@@ -345,4 +353,4 @@ Use this checklist when migrating a PBX from Twilio Elastic SIP Trunking to Teln
 
 7. **Codec negotiation differences** — Telnyx may offer a different codec priority than Twilio. If you experience audio quality issues, explicitly configure codec priority on both your PBX and the Telnyx connection.
 
-8. **Subdomain misconfiguration** — For credential connections, `sip_subdomain_receive_settings` defaults may not match your routing needs. Set to `only_my_connections` for security or `from_anyone` for open routing.
+8. **Subdomain misconfiguration** — For credential connections, `sip_subdomain_receive_settings` defaults may not match your routing needs: `only_my_connections` for security, `from_anyone` for open routing. Set this **in Mission Control Portal → SIP → Connections**. Sending it (or `sip_subdomain`) to `/v2/credential_connections` returns a success status and changes nothing — see Step 2. Verify a subdomain by registering against it, never by resolving it: `*.sip.telnyx.com` is a DNS wildcard, so an unprovisioned subdomain still returns an A record.

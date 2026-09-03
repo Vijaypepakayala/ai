@@ -14,11 +14,15 @@ These Twilio products have no direct Telnyx replacement. When the scanner detect
 | **Conversations** (Multi-channel) | No equivalent | Use Telnyx Messaging for SMS + your own chat backend |
 | **Sync** (Real-time State) | No equivalent | Use Redis, Firebase, or another real-time data store |
 | **SendGrid** (Email) | No equivalent | Use a dedicated email provider (SendGrid can remain alongside Telnyx) |
-| **Twilio Pay** | No equivalent | Use Stripe/Braintree for payment processing. No `<Pay>` verb in TeXML. |
 | **Autopilot** (NLU) | No equivalent | Use Telnyx AI Assistants for voice AI, or bring your own NLU |
 | **Notify** (Push/SMS Notifications) | No equivalent | Use Telnyx Messaging API directly for SMS notifications. For push, use FCM/APNs directly. |
 | **Proxy** (Phone Masking) | No equivalent | Build custom number masking with Telnyx Messaging API + number pool |
 | **Segment** (CDP) | No equivalent | Consider Segment independently, or alternatives (Rudderstack, mParticle) |
+
+> **Pay is supported:** TeXML implements the `<Pay>` verb and documents it in
+> the dedicated Pay reference. Migrate `<Pay>` flows as TeXML (see
+> `texml-verbs.md`) rather than treating Pay as an unsupported product. Do not
+> replace an in-call payment flow with an external processor.
 
 ## Multi-Service Architecture
 
@@ -43,7 +47,7 @@ If the scanner detects Twilio references in infrastructure files:
 
 ## How to Present This to the User
 
-In Phase 1 (Discovery), after scanning:
+In the single scoped Phase 1 decision point after scanning:
 
 ```
 The following detected products/platforms are OUT OF SCOPE for automated migration:

@@ -64,7 +64,7 @@ Mobile App → client.newCall(destinationNumber) → Call connects directly to P
 | Auth model | Access Token per session (~1hr TTL), requires backend | SIP credentials (static) or JWT (~24hr TTL) |
 | Backend requirement | Mandatory for every session | Only for dynamic credential management |
 | Outbound calls | Requires TwiML webhook round-trip | Direct PSTN dial from client |
-| Push config | Per-credential via API | Per-connection in Mission Control Portal |
+| Push config | Per-credential via API | Reusable Mobile Push Credential attached to a Credential Connection |
 | Hold/Transfer | Server-side only | Built into client SDK |
 
 ---
@@ -77,18 +77,62 @@ Mobile App → client.newCall(destinationNumber) → Call connects directly to P
 
 | Aspect | Twilio | Telnyx |
 |---|---|---|
-| **Where configured** | Per-credential via API (`credential.create()`) | Per-connection in Mission Control Portal |
-| **iOS (APNs)** | Upload certificate via API call | Upload certificate in Portal → SIP → Connections → Push Credentials |
-| **Android (FCM)** | Pass FCM server key via API call | Configure FCM server key in Portal → SIP → Connections → Push Credentials |
+| **Credential creation** | Per-credential via API (`credential.create()`) | Create a reusable Mobile Push Credential with `POST /v2/mobile_push_credentials` or Portal → **API Keys** → **Credentials** → **Add** |
+| **Connection attachment** | Per Twilio credential | Attach the credential with `PATCH /v2/credential_connections/{id}` or Portal → **SIP Connections** → connection → **WebRTC** |
+| **iOS (APNs)** | Upload certificate via API call | Apple VoIP Services Certificate exported as `.p12`, then converted to `cert.pem` and `key.pem`; `.p8` token keys are not accepted by this credential flow |
+| **Android (FCM)** | Pass FCM server key via API call | Full Firebase service-account JSON (`project_account_json_file`), not a legacy FCM server key |
 | **Scope** | Each credential has its own push config | One push config applies to ALL credentials on the connection |
 
 ### Migration Steps for Push
 
-1. **iOS**: Export your APNs certificate (.p12 or .p8). Upload it in Telnyx Mission Control Portal → **SIP** → **Connections** → select your WebRTC connection → **Push Credentials** → **Apple Push (VoIP)**. Enter your bundle ID and team ID.
+1. **iOS**: Create an Apple **VoIP Services Certificate** for the app's Bundle ID, install it in Keychain, and export the certificate plus private key as `.p12`. An APNs `.p8` token-auth key cannot be used: this Telnyx credential requires both a certificate and its matching private key. Convert the `.p12` using the commands from the Telnyx iOS push guide:
 
-2. **Android**: Copy your FCM server key (or service account JSON). Configure it in Telnyx Mission Control Portal → **SIP** → **Connections** → select your WebRTC connection → **Push Credentials** → **Firebase Cloud Messaging**.
+   ```bash
+   openssl pkcs12 -in PATH_TO_YOUR_P12 -nokeys -out cert.pem -nodes -legacy
+   openssl pkcs12 -in PATH_TO_YOUR_P12 -nocerts -out key.pem -nodes -legacy
+   openssl rsa -in key.pem -out key.pem
+   ```
 
-3. **Verify**: After configuring, make a test inbound call to the mobile device with the app in the background. If the device doesn't ring, push is misconfigured.
+   Create the credential either with `POST /v2/mobile_push_credentials` using `type: "ios"`, `alias`, the complete contents of `cert.pem` as `certificate`, and the complete contents of `key.pem` as `private_key`; or in Portal → **API Keys** → **Credentials** → **Add** → **iOS Credential**, where you paste the complete PEM certificate and key. Protect the unencrypted `key.pem` as secret material.
+
+2. **Android**: In Firebase Console, open **Project Settings** → **Service Accounts** → **Generate New Private Key** and download the full service-account JSON. Do not use a legacy FCM server key. Create the credential with `POST /v2/mobile_push_credentials` using `type: "android"`, `alias`, and the entire JSON object as `project_account_json_file`; or in Portal → **API Keys** → **Credentials** → **Add** → **Android Credential**, where you paste the complete service-account JSON.
+
+   ```bash
+   jq '{type:"android", alias:"my-app-fcm", project_account_json_file:.}' path/to/service-account.json |
+     curl -X POST https://api.telnyx.com/v2/mobile_push_credentials \
+       -H "Authorization: Bearer $TELNYX_API_KEY" \
+       -H "Content-Type: application/json" \
+       --data-binary @-
+   ```
+
+3. **Attach the credential to the Credential Connection**. Creating it through either API or Portal does not attach it automatically.
+
+   - **API**: `PATCH /v2/credential_connections/{id}` with only the field for the platform you are configuring: `ios_push_credential_id` for iOS or `android_push_credential_id` for Android. Include both only when you deploy both platforms and both IDs are non-null.
+   - **Portal**: **SIP Connections** → open the connection → **WebRTC** → select the credential under iOS and/or Android → **Save**.
+
+   For an iOS-only app:
+
+   ```bash
+   curl -X PATCH "https://api.telnyx.com/v2/credential_connections/$CONNECTION_ID" \
+     -H "Authorization: Bearer $TELNYX_API_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "ios_push_credential_id": "<uuid from the iOS credential create>"
+     }'
+   ```
+
+   For an Android-only app:
+
+   ```bash
+   curl -X PATCH "https://api.telnyx.com/v2/credential_connections/$CONNECTION_ID" \
+     -H "Authorization: Bearer $TELNYX_API_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "android_push_credential_id": "<uuid from the Android credential create>"
+     }'
+   ```
+
+4. **Verify**: After configuring, `GET /v2/credential_connections/{id}` and check that the credential field for the platform(s) you actually deploy is non-null (`ios_push_credential_id` for iOS, `android_push_credential_id` for Android). Then make a test inbound call to the mobile device with the app in the background. If the device doesn't ring, push is misconfigured (most commonly: the credential was created but never attached to the connection).
 
 ---
 
@@ -120,7 +164,7 @@ Mobile App → client.newCall(destinationNumber) → Call connects directly to P
 # pod 'TwilioVoice'
 
 # Add Telnyx
-pod 'TelnyxRTC', '~> 0.1.0'
+pod 'TelnyxRTC', '~> 4.1'
 ```
 
 ```bash
@@ -228,8 +272,22 @@ extension ViewController: TxClientDelegate {
         self.currentCall = call
     }
 
+    func onPushDisabled(success: Bool, message: String) {
+        // Push notification registration status changed
+    }
+
+    func onSessionUpdated(sessionId: String) {
+        // Store or observe the new session ID after reconnect
+    }
+
+    func onRemoteCallEnded(callId: UUID, reason: CallTerminationReason?) {
+        // Clean up UI/state for the remotely ended call
+    }
+
     func onCallStateUpdated(callState: CallState, callId: UUID) {
         switch callState {
+        case .NEW:
+            break
         case .CONNECTING:
             break
         case .RINGING:
@@ -401,7 +459,7 @@ class AppDelegate: CXProviderDelegate {
 | Issue | Solution |
 |-------|----------|
 | No audio | Ensure microphone permission granted in Info.plist |
-| Push not working | Verify APNs certificate uploaded in Telnyx Portal → SIP → Connections → Push Credentials |
+| Push not working | Verify the iOS credential exists under Portal → **API Keys** → **Credentials**, its PEM certificate/key match the app's Bundle ID, and it is selected under **SIP Connections** → connection → **WebRTC** → iOS |
 | CallKit crash on iOS 13+ | Must report incoming call to CallKit before processing — Apple requirement |
 | Audio routing issues | Use `enableAudioSession`/`disableAudioSession` in CXProviderDelegate callbacks |
 | Login fails | Verify SIP credentials in Telnyx Portal → SIP → Connections |
@@ -419,7 +477,7 @@ class AppDelegate: CXProviderDelegate {
 | `com.twilio.voice.Call` | `Call` | Active call object |
 | `com.twilio.voice.CallInvite` | `InviteResponse` via `SocketMethod.INVITE` | Incoming call |
 | `com.twilio.voice.Call.Listener` | `socketResponseFlow` (SharedFlow) | Event handling |
-| `Voice.connect()` | `telnyxClient.call.newInvite()` | Make outbound call |
+| `Voice.connect()` | `telnyxClient.newInvite()` | Make outbound call |
 | `callInvite.accept()` | `telnyxClient.acceptCall()` | Answer call |
 | `call.disconnect()` | `currentCall.endCall(callId)` | End call |
 | `call.mute(bool)` | `currentCall.onMuteUnmutePressed()` | Toggle mute |
@@ -449,7 +507,7 @@ dependencies {
     // implementation 'com.twilio:voice-android:latest'
 
     // Add Telnyx
-    implementation 'com.github.team-telnyx:telnyx-webrtc-android:latest-version'
+    implementation 'com.github.team-telnyx:telnyx-webrtc-android:3.7.1'
 }
 ```
 
@@ -474,7 +532,6 @@ Add to `AndroidManifest.xml`:
 
 ```kotlin
 val telnyxClient = TelnyxClient(context)
-telnyxClient.connect()
 
 val credentialConfig = CredentialConfig(
     sipUser = "your_sip_username",
@@ -482,11 +539,13 @@ val credentialConfig = CredentialConfig(
     sipCallerIDName = "Display Name",
     sipCallerIDNumber = "+15551234567",
     fcmToken = fcmToken,
+    ringtone = null,
+    ringBackTone = null,
     logLevel = LogLevel.DEBUG,
     autoReconnect = true
 )
 
-telnyxClient.credentialLogin(credentialConfig)
+telnyxClient.connect(credentialConfig = credentialConfig)
 ```
 
 **Token-based (JWT):**
@@ -497,17 +556,19 @@ val tokenConfig = TokenConfig(
     sipCallerIDName = "Display Name",
     sipCallerIDNumber = "+15551234567",
     fcmToken = fcmToken,
+    ringtone = null,
+    ringBackTone = null,
     logLevel = LogLevel.DEBUG,
     autoReconnect = true
 )
 
-telnyxClient.tokenLogin(tokenConfig)
+telnyxClient.connect(tokenConfig = tokenConfig)
 ```
 
 ### Making Calls
 
 ```kotlin
-telnyxClient.call.newInvite(
+telnyxClient.newInvite(
     callerName = "John Doe",
     callerNumber = "+15551234567",
     destinationNumber = "+15559876543",
@@ -567,7 +628,7 @@ lifecycleScope.launch {
 ### Call Controls
 
 ```kotlin
-val currentCall: Call? = telnyxClient.calls[callId]
+val currentCall: Call? = telnyxClient.getActiveCalls()[callId]
 
 // End call
 currentCall?.endCall(callId)
@@ -623,7 +684,7 @@ class MyFirebaseService : FirebaseMessagingService() {
 // The SDK handles decline automatically
 telnyxClient.connectWithDeclinePush(
     txPushMetaData = pushMetaData,
-    credentialConfig = credentialConfig
+    config = credentialConfig
 )
 // SDK connects, sends decline, and disconnects automatically
 ```
@@ -651,7 +712,7 @@ telnyxClient.connectWithDeclinePush(
 | Issue | Solution |
 |-------|----------|
 | No audio | Check RECORD_AUDIO permission is granted at runtime |
-| Push not received | Verify FCM server key in Telnyx Portal → SIP → Connections → Push Credentials |
+| Push not received | Verify the platform credential exists under Portal → **API Keys** → **Credentials** and is selected under **SIP Connections** → connection → **WebRTC**; via API, verify `ios_push_credential_id`/`android_push_credential_id` is non-null |
 | Login fails | Verify SIP credentials in Telnyx Portal |
 | Call drops | Check network stability, enable `autoReconnect = true` |
 | sender_id_mismatch (push) | FCM project mismatch — `google-services.json` must match server credentials in Portal |
@@ -671,7 +732,7 @@ telnyxClient.connectWithDeclinePush(
 | `callInvite.accept()` | `call.answer()` | Answer call |
 | `call.disconnect()` | `call.hangup()` | End call |
 | `call.mute(bool)` | `call.mute()` / `call.unmute()` | Separate methods |
-| `call.hold(bool)` | `call.hold()` / `call.unhold()` | Separate methods |
+| `call.hold(bool)` | `call.hold()` / `call.resume()` | Separate methods — resume (not `unhold()`) takes a call off hold |
 | `call.sendDigits()` | `call.dtmf()` | DTMF |
 | Event listeners | RxJS observables (`connectionState$`, `calls$`) | Reactive streams |
 | Manual CallKit/ConnectionService | Automatic via `TelnyxVoiceApp` wrapper | Built-in native call UI |
@@ -788,7 +849,7 @@ await call.answer();
 await call.mute();
 await call.unmute();
 await call.hold();
-await call.unhold();
+await call.resume();  // React Native uses resume() to take a call off hold — there is no unhold()
 await call.hangup();
 await call.dtmf('1');
 ```
@@ -810,17 +871,52 @@ class MainActivity : TelnyxMainActivity() {
 }
 ```
 
-#### 3. Background Message Handler
+#### 3. Native FCM Service and Notification Receiver
 
-```tsx
-// index.js or App.tsx
-import messaging from '@react-native-firebase/messaging';
-import { TelnyxVoiceApp } from '@telnyx/react-voice-commons-sdk';
+Android push is handled by the SDK's native layer. Create these two app classes:
 
-messaging().setBackgroundMessageHandler(async (remoteMessage) => {
-  await TelnyxVoiceApp.handleBackgroundPush(remoteMessage.data);
-});
+```kotlin
+// AppFirebaseMessagingService.kt
+package com.yourpackage
+
+import com.telnyx.react_voice_commons.TelnyxFirebaseMessagingService
+
+class AppFirebaseMessagingService : TelnyxFirebaseMessagingService()
 ```
+
+```kotlin
+// AppNotificationActionReceiver.kt
+package com.yourpackage
+
+import com.telnyx.react_voice_commons.TelnyxNotificationActionReceiver
+
+class AppNotificationActionReceiver : TelnyxNotificationActionReceiver()
+```
+
+Register both in `android/app/src/main/AndroidManifest.xml`:
+
+```xml
+<application>
+    <service
+        android:name=".AppFirebaseMessagingService"
+        android:exported="false">
+        <intent-filter>
+            <action android:name="com.google.firebase.MESSAGING_EVENT" />
+        </intent-filter>
+    </service>
+
+    <receiver
+        android:name=".AppNotificationActionReceiver"
+        android:exported="false">
+        <intent-filter>
+            <action android:name="${applicationId}.ANSWER_CALL" />
+            <action android:name="${applicationId}.REJECT_CALL" />
+        </intent-filter>
+    </receiver>
+</application>
+```
+
+Do **not** register `messaging().setBackgroundMessageHandler(...)` or call a JavaScript `TelnyxVoiceApp.handleBackgroundPush`. `TelnyxFirebaseMessagingService` owns Android background push processing; a second JS handler can double-process incoming calls.
 
 ### Push Notifications — iOS (PushKit)
 
@@ -898,7 +994,7 @@ dependencies:
   # twilio_voice: ^latest
 
   # Add Telnyx
-  telnyx_webrtc: ^latest_version
+  telnyx_webrtc: ^4.4.0
 ```
 
 ```bash
@@ -972,7 +1068,7 @@ telnyxClient.call.newInvite(
 ### Receiving Calls
 
 ```dart
-InviteParams? _incomingInvite;
+IncomingInviteParams? _incomingInvite;
 Call? _currentCall;
 
 telnyxClient.onSocketMessageReceived = (TelnyxMessage message) {
@@ -1081,7 +1177,7 @@ Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
 
 ```dart
 Future<void> _handlePushNotification() async {
-  final data = await TelnyxClient.getPushMetaData();
+  final data = await TelnyxClient.getPushData();
   if (data != null) {
     PushMetaData pushMetaData = PushMetaData.fromJson(data);
     telnyxClient.handlePushNotification(
@@ -1209,4 +1305,4 @@ void handlePushMessage(RemoteMessage message) {
 | Login fails | Verify SIP credentials in Telnyx Portal |
 | 10-second timeout | INVITE didn't arrive — check network connectivity and push setup |
 | sender_id_mismatch | FCM project mismatch between app's `google-services.json` and server credentials |
-| iOS push not ringing | Verify APNs certificate in Portal matches app's bundle ID and provisioning profile |
+| iOS push not ringing | Verify the iOS credential under Portal → **API Keys** → **Credentials** matches the app's Bundle ID and is selected under **SIP Connections** → connection → **WebRTC** → iOS |

@@ -1,6 +1,6 @@
 # Webhook Migration: Twilio to Telnyx
 
-Comprehensive guide for migrating webhook handlers from Twilio's flat form-encoded payloads to Telnyx's nested JSON event structure.
+Comprehensive guide for migrating webhook handlers from Twilio to Telnyx. Messaging and Call Control use Telnyx's nested JSON event structure; TeXML callbacks remain Twilio-style form data.
 
 ## Payload Structure
 
@@ -9,7 +9,7 @@ Comprehensive guide for migrating webhook handlers from Twilio's flat form-encod
 MessageSid=SM123&From=%2B15551234567&To=%2B15559876543&Body=Hello
 ```
 
-**Telnyx** sends nested JSON (`application/json`):
+**Telnyx Messaging and Call Control** send nested JSON (`application/json`):
 ```json
 {
   "data": {
@@ -26,7 +26,7 @@ MessageSid=SM123&From=%2B15551234567&To=%2B15559876543&Body=Hello
 }
 ```
 
-**Key change**: Your webhook handler must parse JSON body instead of form data, and access fields via `data.payload.*` instead of flat keys.
+**Key change for Messaging and Call Control**: parse the JSON body and access fields via `data.payload.*` instead of flat keys. Do not apply this rule to TeXML callbacks, which use `application/x-www-form-urlencoded` and flat Twilio-style fields.
 
 ## Messaging Webhook Field Mapping
 
@@ -44,25 +44,29 @@ MessageSid=SM123&From=%2B15551234567&To=%2B15559876543&Body=Hello
 | `AccountSid` | N/A | Not included |
 | `ApiVersion` | N/A | Not included |
 
-### Delivery Status (`message.sent`, `message.delivered`, `message.failed`)
+### Delivery Status (`message.sent`, `message.finalized`)
+
+Telnyx emits only two outbound delivery events: an intermediate `message.sent` and a terminal `message.finalized`. There is **no** `message.queued`, `message.delivered`, or `message.failed` event. The actual per-recipient outcome lives in `data.payload.to[0].status`, not in the event type.
 
 | Twilio Field | Telnyx Field | Access Path |
 |---|---|---|
-| `MessageStatus` | `event_type` suffix | `data.event_type` (e.g., `message.delivered`) |
+| `MessageStatus` | `event_type` + `to[].status` | `data.event_type` (`message.sent` / `message.finalized`) plus `data.payload.to[0].status` |
 | `MessageSid` | `id` | `data.payload.id` |
 | `ErrorCode` | `errors[0].code` | `data.payload.errors[0].code` |
 | `ErrorMessage` | `errors[0].title` | `data.payload.errors[0].title` |
 
 ### Messaging Status Value Mapping
 
-| Twilio Status | Telnyx Event Type | Notes |
-|---|---|---|
-| `queued` | `message.queued` | Message accepted |
-| `sent` | `message.sent` | Sent to carrier |
-| `delivered` | `message.delivered` | Carrier confirmed delivery |
-| `undelivered` | `message.failed` | Delivery failed (check `errors`) |
-| `failed` | `message.failed` | Send failed |
-| `received` | `message.received` | Inbound message |
+Telnyx event types do not carry the delivery outcome; read it from `data.payload.to[0].status` on a `message.finalized` event.
+
+| Twilio Status | Telnyx Event Type | Per-recipient `to[0].status` | Notes |
+|---|---|---|---|
+| `queued` | (none — accepted in the API response) | — | Send request accepted synchronously; no dedicated webhook |
+| `sent` | `message.sent` | — | Handed to carrier (intermediate event) |
+| `delivered` | `message.finalized` | `delivered` | Carrier confirmed delivery |
+| `undelivered` | `message.finalized` | `delivery_failed` | Reached carrier but not delivered (check `errors`) |
+| `failed` | `message.finalized` | `sending_failed` | Never handed to carrier (check `errors`) |
+| `received` | `message.received` | — | Inbound message |
 
 ## Voice Webhook Field Mapping
 
@@ -73,12 +77,19 @@ TeXML callbacks use form-encoded params similar to Twilio, so the migration is s
 | Twilio Field | Telnyx Field | Notes |
 |---|---|---|
 | `CallSid` | `CallSid` | Telnyx call control ID |
-| `AccountSid` | `AccountSid` | Telnyx connection ID |
+| `AccountSid` | `AccountSid` | Telnyx account `user_id` |
+| N/A | `ConnectionId` | Telnyx connection ID |
+| `SequenceNumber` | `SequenceNumber` | Present on TeXML call-progress callbacks; pair with `CallSid` to order callbacks and deduplicate redeliveries |
 | `From` | `From` | Caller number |
 | `To` | `To` | Called number |
-| `CallStatus` | `CallStatus` | Same values: `initiated`, `ringing`, `answered`, `completed` |
+| `CallStatus` | `CallStatus` | Same Twilio-style values: `queued`, `initiated`, `ringing`, `in-progress`, `completed`, `busy`, `no-answer`, `failed`, `canceled`. Note the answered state is `in-progress` — TeXML does **not** use `answered` (that is a Call Control JSON event name, `call.answered`) |
 | `Direction` | `Direction` | `inbound` or `outbound` |
 | `RecordingUrl` | `RecordingUrl` | **Expires after 10 minutes** — download promptly |
+
+`SequenceNumber` is a call-progress callback field (for example, initiated,
+ringing, answered, and completed), not a guarantee for every TeXML callback.
+Use the pair (`CallSid`, `SequenceNumber`) when ordering or deduplicating those
+call-progress events.
 
 ### Call Control Webhooks (JSON)
 
@@ -89,7 +100,7 @@ TeXML callbacks use form-encoded params similar to Twilio, so the migration is s
 | `To` | `to` | `data.payload.to` |
 | `CallStatus=initiated` | `call.initiated` | `data.event_type` |
 | `CallStatus=ringing` | `call.ringing` | `data.event_type` |
-| `CallStatus=answered` | `call.answered` | `data.event_type` |
+| `CallStatus=in-progress` | `call.answered` | `data.event_type` |
 | `CallStatus=completed` | `call.hangup` | `data.event_type` |
 
 ### Voice Status Value Mapping
@@ -98,12 +109,12 @@ TeXML callbacks use form-encoded params similar to Twilio, so the migration is s
 |---|---|---|
 | `initiated` | `call.initiated` | Call created |
 | `ringing` | `call.ringing` | Remote party ringing |
-| `in-progress` / `answered` | `call.answered` | Call connected |
+| `in-progress` | `call.answered` | Call connected (TeXML/Twilio use `in-progress`; Call Control JSON uses the `call.answered` event) |
 | `completed` | `call.hangup` | Call ended normally |
-| `busy` | `call.hangup` (cause: `BUSY`) | Remote busy |
-| `no-answer` | `call.hangup` (cause: `TIMEOUT`) | No answer |
-| `failed` | `call.hangup` (cause: varies) | Call failed |
-| `canceled` | `call.hangup` (cause: `ORIGINATOR_CANCEL`) | Caller hung up |
+| `busy` | `call.hangup` (cause: `user_busy`) | Remote busy |
+| `no-answer` | `call.hangup` (cause: `timeout`) | No answer |
+| `failed` | `call.hangup` (cause: varies, e.g. `call_rejected`) | Call failed |
+| `canceled` | `call.hangup` (cause: `originator_cancel`) | Caller hung up |
 
 ## Signature Verification
 
@@ -160,7 +171,11 @@ func verifyWebhook(payload, signature, timestamp, publicKeyBase64 string) bool {
 ```ruby
 require 'telnyx'
 client = Telnyx::Client.new(api_key: 'YOUR_API_KEY')
-Telnyx::Webhook.construct_event(payload, signature, timestamp, public_key: 'YOUR_PUBLIC_KEY')
+# Verification lives on the CLIENT: client.webhooks.unwrap(payload, headers:).
+# There is no Telnyx::Webhook module - referencing one raises NameError, and
+# because NameError is a StandardError the usual `rescue StandardError` around
+# it swallows the error and rejects EVERY webhook with 403.
+client.webhooks.unwrap(payload, headers: telnyx_headers, key: ENV['TELNYX_PUBLIC_KEY'])
 ```
 
 ## Framework-Specific Examples
@@ -193,12 +208,17 @@ def messaging_webhook():
         from_number = payload['from']['phone_number']
         text = payload['text']
         # Process inbound message...
-    elif event_type == 'message.delivered':
+    elif event_type == 'message.sent':
+        # Intermediate event — message handed to the carrier
         msg_id = payload['id']
-        # Handle delivery confirmation...
-    elif event_type == 'message.failed':
-        errors = payload.get('errors', [])
-        # Handle failure...
+    elif event_type == 'message.finalized':
+        # Terminal event — read the per-recipient outcome from to[0].status
+        status = payload['to'][0]['status']  # delivered | delivery_failed | sending_failed
+        if status == 'delivered':
+            pass  # Handle delivery confirmation...
+        else:
+            errors = payload.get('errors', [])
+            # Handle failure (delivery_failed / sending_failed)...
 
     return jsonify({"status": "ok"}), 200
 ```
@@ -235,11 +255,17 @@ app.post('/webhooks/messaging', async (req, res) => {
     const from = payload.from.phone_number;
     const text = payload.text;
     // Process inbound message...
-  } else if (event_type === 'message.delivered') {
-    // Handle delivery confirmation...
-  } else if (event_type === 'message.failed') {
-    const errors = payload.errors || [];
-    // Handle failure...
+  } else if (event_type === 'message.sent') {
+    // Intermediate event — message handed to the carrier
+  } else if (event_type === 'message.finalized') {
+    // Terminal event — read the per-recipient outcome from to[0].status
+    const status = payload.to[0].status; // delivered | delivery_failed | sending_failed
+    if (status === 'delivered') {
+      // Handle delivery confirmation...
+    } else {
+      const errors = payload.errors || [];
+      // Handle failure (delivery_failed / sending_failed)...
+    }
   }
 
   res.sendStatus(200);
@@ -254,17 +280,21 @@ require 'json'
 require 'telnyx'
 
 set :port, 5000
+client = Telnyx::Client.new(api_key: ENV.fetch('TELNYX_API_KEY'))
 
 post '/webhooks/messaging' do
   payload = request.body.read
+  telnyx_headers = {
+    'telnyx-signature-ed25519' => request.env['HTTP_TELNYX_SIGNATURE_ED25519'],
+    'telnyx-timestamp'         => request.env['HTTP_TELNYX_TIMESTAMP']
+  }
 
   # Verify signature
   begin
-    Telnyx::Webhook.construct_event(
+    client.webhooks.unwrap(
       payload,
-      request.env['HTTP_TELNYX_SIGNATURE_ED25519'],
-      request.env['HTTP_TELNYX_TIMESTAMP'],
-      public_key: ENV['TELNYX_PUBLIC_KEY']
+      headers: telnyx_headers,
+      key: ENV['TELNYX_PUBLIC_KEY']
     )
   rescue StandardError
     halt 403, 'Forbidden'
@@ -279,11 +309,17 @@ post '/webhooks/messaging' do
     from_number = data.dig('from', 'phone_number')
     text = data['text']
     # Process inbound message...
-  when 'message.delivered'
-    # Handle delivery confirmation...
-  when 'message.failed'
-    errors = data['errors'] || []
-    # Handle failure...
+  when 'message.sent'
+    # Intermediate event — message handed to the carrier
+  when 'message.finalized'
+    # Terminal event — read the per-recipient outcome from to[0].status
+    status = data['to'][0]['status'] # delivered | delivery_failed | sending_failed
+    if status == 'delivered'
+      # Handle delivery confirmation...
+    else
+      errors = data['errors'] || []
+      # Handle failure (delivery_failed / sending_failed)...
+    end
   end
 
   content_type :json
@@ -311,11 +347,17 @@ class WebhooksController < ApplicationController
       from_number = payload.dig('from', 'phone_number')
       text = payload['text']
       # Process inbound message...
-    when 'message.delivered'
-      # Handle delivery confirmation...
-    when 'message.failed'
-      errors = payload['errors'] || []
-      # Handle failure...
+    when 'message.sent'
+      # Intermediate event — message handed to the carrier
+    when 'message.finalized'
+      # Terminal event — read the per-recipient outcome from to[0].status
+      status = payload.dig('to', 0, 'status') # delivered | delivery_failed | sending_failed
+      if status == 'delivered'
+        # Handle delivery confirmation...
+      else
+        errors = payload['errors'] || []
+        # Handle failure (delivery_failed / sending_failed)...
+      end
     end
 
     render json: { status: 'ok' }
@@ -342,17 +384,24 @@ class WebhooksController < ApplicationController
 
   def verify_telnyx_signature
     payload = request.body.read
+    client = Telnyx::Client.new(api_key: ENV.fetch('TELNYX_API_KEY'))
     signature = request.headers['HTTP_TELNYX_SIGNATURE_ED25519'] ||
                 request.headers['telnyx-signature-ed25519']
     timestamp = request.headers['HTTP_TELNYX_TIMESTAMP'] ||
                 request.headers['telnyx-timestamp']
 
     begin
-      Telnyx::Webhook.construct_event(
+      # unwrap is (payload, headers:, key:) - the signature and timestamp go
+      # in the HEADERS hash under their WIRE names. Passing them positionally
+      # raises ArgumentError on every request, and `rescue StandardError`
+      # below would swallow it and 403 every genuine webhook.
+      client.webhooks.unwrap(
         payload,
-        signature,
-        timestamp,
-        public_key: ENV['TELNYX_PUBLIC_KEY']
+        headers: {
+          'telnyx-signature-ed25519' => signature,
+          'telnyx-timestamp'         => timestamp
+        },
+        key: ENV['TELNYX_PUBLIC_KEY']
       )
     rescue StandardError => e
       Rails.logger.warn "Webhook signature verification failed: #{e.message}"
@@ -394,6 +443,7 @@ type TelnyxEvent struct {
 			} `json:"from"`
 			To []struct {
 				PhoneNumber string `json:"phone_number"`
+				Status      string `json:"status"`
 			} `json:"to"`
 			Text   string `json:"text"`
 			Errors []struct {
@@ -420,10 +470,16 @@ func messagingWebhook(w http.ResponseWriter, r *http.Request) {
 		from := event.Data.Payload.From.PhoneNumber
 		text := event.Data.Payload.Text
 		fmt.Printf("SMS from %s: %s\n", from, text)
-	case "message.delivered":
-		// Handle delivery confirmation...
-	case "message.failed":
-		// Handle failure...
+	case "message.sent":
+		// Intermediate event — message handed to the carrier
+	case "message.finalized":
+		// Terminal event — read the per-recipient outcome from to[0].status
+		if len(event.Data.Payload.To) > 0 {
+			status := event.Data.Payload.To[0].Status // delivered | delivery_failed | sending_failed
+			if status != "delivered" {
+				// Handle failure (delivery_failed / sending_failed)...
+			}
+		}
 	}
 
 	w.WriteHeader(200)
@@ -438,7 +494,7 @@ func main() {
 
 ## Common Webhook Migration Mistakes
 
-1. **Still parsing form data** — Telnyx sends JSON, not form-encoded. Use `request.json` (Flask) or `req.body` with JSON middleware (Express), not `request.form`.
+1. **Using the wrong parser for the product** — Messaging and Call Control send JSON, while TeXML callbacks are form-encoded. Use a JSON parser for the former and `request.form` / URL-encoded middleware for TeXML.
 
 2. **Missing `data` wrapper** — Telnyx nests everything under `data`. The event type is at `data.event_type`, not at the top level.
 
@@ -492,6 +548,15 @@ def telnyx_webhook(request):
         from_number = payload['from']['phone_number']
         text = payload.get('text', '')
         # Handle inbound message
+    elif event_type == 'message.sent':
+        # Intermediate event — message handed to the carrier
+        pass
+    elif event_type == 'message.finalized':
+        # Terminal event — read the per-recipient outcome from to[0].status
+        status = payload['to'][0]['status']  # delivered | delivery_failed | sending_failed
+        if status != 'delivered':
+            errors = payload.get('errors', [])
+            # Handle failure (delivery_failed / sending_failed)...
     elif event_type == 'call.initiated':
         call_control_id = payload['call_control_id']
         # Handle call event
