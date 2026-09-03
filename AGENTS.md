@@ -51,6 +51,7 @@ Run the relevant package's test suite before declaring a task done. Don't run al
 | `skills/`               | Canonical agent skills (SKILL.md files). <!-- SKILL_COUNT -->242<!-- /SKILL_COUNT --> skills covering messaging, voice, numbers, AI, IoT, WebRTC, Twilio migration. |
 | `providers/claude/`     | Claude Code plugin packaging — synced from `skills/` via `scripts/sync-skills.sh`. Don't edit by hand. |
 | `providers/cursor/`     | Cursor plugin packaging — synced from `skills/` via `scripts/sync-skills.sh`. Don't edit by hand. |
+| `submission/`           | Reviewer-facing submission handoff material kept outside distributable plugin archives. |
 | `plugins/opencode/`     | OpenCode plugin (auth + TUI for Telnyx-hosted models).                    |
 | `tools/python/`         | Python agent toolkit (PyPI: `telnyx-agent-toolkit`).                      |
 | `tools/typescript/`     | TypeScript agent toolkit (npm).                                           |
