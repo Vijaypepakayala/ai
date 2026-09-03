@@ -32,8 +32,8 @@ Skills in `skills/` are the canonical source. They are synced to
 ```
 
 You can verify sync locally with `./scripts/check-skills-sync.sh`.
-For Codex package changes, install `PyYAML==6.0.3` and run
-`python scripts/check-codex-plugin.py`.
+For Codex package changes, run `python3 scripts/check-codex-plugin.py` and
+`python3 scripts/check-telnyx-mcp-catalog.py --self-test`.
 
 ### Auto-generated skills
 

@@ -28,8 +28,6 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.12'
-      - name: Install validation dependencies
-        run: python -m pip install PyYAML==6.0.3
       - name: Validate Codex developer-kit package
         run: python3 scripts/check-codex-plugin.py
       - name: Validate hosted MCP auditor fixtures
@@ -47,7 +45,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.12'
-      - name: Validate deployed review metadata and endpoint schemas
+      - name: Validate deployed six-tool OAuth contract
         run: python3 ./scripts/check-telnyx-mcp-catalog.py
         env:
-          TELNYX_API_KEY: ${{ secrets.TELNYX_API_KEY }}
+          TELNYX_MCP_OAUTH_TOKEN: ${{ secrets.TELNYX_MCP_OAUTH_TOKEN }}

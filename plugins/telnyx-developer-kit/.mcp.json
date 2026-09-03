@@ -1,8 +1,8 @@
 {
-  "mcp_servers": {
+  "mcpServers": {
     "telnyx": {
       "type": "http",
-      "url": "https://api.telnyx.com/v2/mcp"
+      "url": "https://api.telnyx.com/v2/ai/mcp"
     }
   }
 }

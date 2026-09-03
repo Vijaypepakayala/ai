@@ -55,6 +55,9 @@ processing:
   URLs, transcripts, and access credentials out of logs and model context.
 - A failover path must preserve the same consent state. Never let failover or
   retry logic begin recording before the consent gate has completed.
+- For Pay over Voice, use a configured Payment Connector and the Telnyx Pay
+  session. Never expose card or bank data to application logs, recordings,
+  transcripts, webhook dumps, or model context; begin in test mode.
 
 ## US A2P sender registration and consent
 
@@ -80,6 +83,9 @@ processing:
 - Number purchases and calls/messages are billable. In any automated flow:
   surface the cost (`cost_information.monthly_cost` for numbers) and get
   explicit human approval BEFORE the purchase call.
+- Number Lookup enrichment is also billable. Name the single requested lookup
+  type, disclose that the request can incur a charge, obtain explicit approval
+  for that call, and only then pass `confirm_billable_lookup: true`.
 - Cap loops that touch billable endpoints (max sends/calls per run); a bug
   or prompt injection must hit a ceiling, not a credit card.
 - Automatically retry only reads or writes protected by an idempotency

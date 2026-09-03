@@ -71,16 +71,9 @@ codex plugin add telnyx-developer-kit@telnyx
 codex mcp login telnyx
 ```
 
-OAuth is the recommended authentication path for interactive Codex CLI and
-Codex app use. For headless automation, use a separate, revocable development
-key, set `TELNYX_API_KEY` in the environment that launches Codex, and configure
-the bearer-token override:
-
-```bash
-codex mcp add telnyx \
-  --url https://api.telnyx.com/v2/mcp \
-  --bearer-token-env-var TELNYX_API_KEY
-```
+The plugin registers the isolated `https://api.telnyx.com/v2/ai/mcp` endpoint.
+Codex negotiates OAuth during installation; do not put a Telnyx API key in the
+plugin manifest or add a second MCP server with a bearer-token override.
 
 ### Gemini CLI extension
 
@@ -281,7 +274,7 @@ top-level trees support plugin discovery and review:
 | Path | Purpose |
 | --- | --- |
 | [`.agents/`](.agents/plugins/marketplace.json) | Agent-client marketplace metadata that maps `telnyx-developer-kit` to its local plugin source. |
-| [`submission/`](submission/telnyx-developer-kit/README.md) | Reviewer-facing Telnyx Developer Kit handoff material, including review cases, annotation justifications, the app-tool contract, release notes, and readiness gates; it is not part of the distributable plugin archive. |
+| [`submission/`](submission/telnyx-developer-kit/README.md) | Reviewer-facing Telnyx Developer Kit handoff material, including review cases, annotation justifications, the pinned six-tool connector contract, release notes, and readiness gates; it is not part of the distributable plugin archive. |
 
 ## Maintainers
 

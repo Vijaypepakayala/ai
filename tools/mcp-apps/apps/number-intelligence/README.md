@@ -123,7 +123,7 @@ npm run build --workspace @telnyx-mcp-apps/number-intelligence
 (
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"cli","version":"0"}}}'
   printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}'
-  printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"number_intelligence_analyze","arguments":{"phone_number":"+1XXXXXXXXXX","include_raw":true,"confirm_billable_lookup":true}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"number_intelligence_analyze","arguments":{"phone_number":"+1XXXXXXXXXX","include_raw":true}}}'
 ) | node apps/number-intelligence/dist/server.js
 ```
 

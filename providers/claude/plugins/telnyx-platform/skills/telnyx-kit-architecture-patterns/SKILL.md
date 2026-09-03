@@ -26,8 +26,9 @@ Caller → Telnyx number → TeXML app: <Connect><Stream url="wss://you"/></Conn
 
 - Answer + stream in one TeXML response; keep the webhook fast (<2s) —
   heavy work happens on the WebSocket, never in the webhook handler.
-- Interruption handling: send `{"event":"clear","stream_id":...}` to flush
-  queued audio when the caller barges in.
+- Interruption handling: send `{"event":"clear"}` to flush queued audio when
+  the caller barges in. `stream_id` appears on server-to-client events but is
+  not part of the client clear frame.
 - For a fully managed flow, `<Connect><AIAssistant>` connects the call to a
   configured Telnyx AI Assistant; your application does not run a media
   WebSocket server.
@@ -64,16 +65,21 @@ For either flow:
 
 ## High-volume messaging
 
-- One messaging profile per traffic class (marketing vs transactional vs
-  OTP) — profiles carry throughput and webhook config. For US A2P, a local
-  10-digit long-code sender uses a messaging profile linked to its 10DLC
-  campaign; a toll-free sender needs toll-free verification, while a short
-  code sender needs carrier approval/provisioning.
+- One messaging profile per raw Messaging traffic class (for example,
+  marketing vs transactional) — profiles carry throughput and webhook config.
+  Route OTP and 2FA through the Verify API with a Verify profile instead of
+  hand-rolling codes over raw Messaging. For US A2P, a local 10-digit
+  long-code sender uses a messaging profile linked to its 10DLC campaign; a
+  toll-free sender needs toll-free verification, while a short-code sender
+  needs carrier approval/provisioning.
 - Queue sends (worker + retry with backoff on 429 reading `Retry-After`);
   never loop sends inline in a request handler.
-- Delivery truth: `message.finalized` webhook, outcome in
-  `data.payload.to[0].status`. Key retries on the message `id`; make
-  handlers idempotent (webhooks redeliver).
+- Delivery truth: the `message.finalized` webhook. Iterate every entry in
+  `data.payload.to` and correlate each recipient by `phone_number`; group MMS
+  can contain different outcomes for different destinations. Use
+  `data.payload.to[0].status` only when the originating request is guaranteed
+  to have exactly one recipient. Dedupe deliveries on the event `data.id` and
+  correlate business state on `data.payload.id`.
 - Store conversation state server-side keyed on BOTH numbers (user × your
   number), with a TTL.
 

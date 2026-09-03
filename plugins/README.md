@@ -31,9 +31,10 @@ See the repo root [`README.md`](/README.md#plugins-and-extensions) for Codex CLI
 
 ## Directory contents
 
-- **`telnyx-developer-kit/`** — Codex CLI plugin containing the four canonical
-  cross-product kit skills and the hosted Telnyx MCP connection. Its `skills/`
-  directory is generated from the repository-root `skills/` sources.
+- **`telnyx-developer-kit/`** — Codex CLI plugin containing four canonical
+  cross-product kit skills and the isolated OAuth MCP connection at
+  `/v2/ai/mcp`. Its `skills/` directory is generated from the repository-root
+  `skills/` sources.
 - **`opencode/`** — OpenCode plugin, published as [`@telnyx/opencode`](https://www.npmjs.com/package/@telnyx/opencode). Adds Telnyx as a model provider with auth handling and a TUI for managing hosted models. Absorbed from the now-archived `team-telnyx/opencode-telnyx-auth` repo.
 
 ## Other provider payloads

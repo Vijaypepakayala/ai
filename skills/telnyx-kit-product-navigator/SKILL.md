@@ -3,7 +3,7 @@ name: telnyx-kit-product-navigator
 description: >-
   Pick the right Telnyx product and API for a job before writing code. Use at
   the START of any Telnyx build: maps use cases (notifications, 2FA, voice
-  agents, contact centers, IoT, video, fax, Twilio migration) to the correct
+  agents, contact centers, email, IoT, video, fax, Twilio migration) to the correct
   product, API surface, and companion skill. Do not use for a fixed-design
   compliance review, a runtime incident diagnosis, or a task where the Telnyx
   product has already been selected.
@@ -19,25 +19,20 @@ Answer three questions, then jump to the row that matches.
 
 ## Continue in your client
 
-- **ChatGPT or Codex with the Telnyx connector/Developer Kit installed**: Use
-  the installed `telnyx` hosted MCP: call
+- **Codex or Claude with the Telnyx Developer Kit installed**: Use the
+  installed OAuth-authenticated `telnyx` MCP connector. Call
   `list_api_endpoints` to discover the relevant operation, then call
   `get_api_endpoint_schema` for the selected endpoint before writing a request.
-  The public catalog is documentation-only and cannot execute account API
-  operations. Use its exact schema to generate implementation guidance or SDK
-  code; use only a separately reviewed focused MCP App when account inspection
-  is required. Do not ask for or accept a Telnyx API key in chat. Do not install
-  another product plugin unless the user explicitly asks to add that separate
-  package after reviewing its capabilities.
-- **Claude**: Use matching `telnyx-<product>-*` skills that are present in the
-  current Claude plugin installation. The generated `telnyx-platform` plugin
-  does not bundle or configure the hosted MCP, so use packaged skills rather
-  than assuming MCP tools are available unless the user has separately
-  configured that MCP. If a needed product skill is absent, name the companion
-  Telnyx plugin and ask before installing it; never issue a `/plugin install`
-  command automatically. Read the selected skill before writing code, and keep
-  API credentials in its environment/wrapper rather than asking the user to
-  paste them into chat.
+  Those two catalog tools cannot execute the represented endpoints. Account
+  access is limited to `get_call_status`, `list_call_events`,
+  `search_recordings`, and the explicitly confirmed billable
+  `lookup_phone_number`; there is no catch-all executor or MCP App. Do not ask
+  for or accept a Telnyx API key in chat.
+- **Claude with only a product plugin installed**: Use matching
+  `telnyx-<product>-*` skills from that installation. Product plugins do not
+  imply that the separate Developer Kit MCP is installed. If a needed skill is
+  absent, name the companion plugin and ask before installing it; never issue
+  a `/plugin install` command automatically.
 - **Cursor**: Matching canonical product skills are already bundled in the
   flat Telnyx Cursor plugin. Load the relevant `telnyx-<product>-*` skill or
   skills from the current installation; do not run Claude `/plugin install`
@@ -50,14 +45,15 @@ Answer three questions, then jump to the row that matches.
 | Send SMS/MMS notifications or alerts | Messaging | `POST /v2/messages` | telnyx-messaging plugin |
 | Verify users by OTP (SMS, call, flash call) | Verify | `POST /v2/verifications/{sms\|call\|flashcall}` | telnyx-verify plugin |
 | Send WhatsApp messages | WhatsApp Business | WhatsApp API | telnyx-whatsapp plugin |
+| Send or receive email | Email | `/v2/email_messages` + inbox/domain APIs | telnyx-email plugin |
 | Serve voice menus / IVR from XML | TeXML | TeXML Application + XML docs | telnyx-platform plugin |
 | Drive calls imperatively from code (AI agents, dynamic flows) | Call Control | `POST /v2/calls` + per-call actions | telnyx-voice plugin |
 | Build a browser/mobile softphone | WebRTC SDKs | Credential connections + SDKs | telnyx-webrtc plugin |
 | Real-time media into your AI model | Media Streaming | `<Connect><Stream>` or Call Control streaming | telnyx-voice plugin |
 | Speech-to-text / text-to-speech | STT / TTS | OpenAI-compatible + TTS API | telnyx-stt / telnyx-tts plugins |
 | Buy, configure, port numbers | Numbers | `/v2/available_phone_numbers`, `/v2/number_orders`, porting | telnyx-numbers plugin |
-| Look up carrier/caller data for a number | Number Lookup | `GET /v2/number_lookup/{number}` | hosted catalog; Number Intelligence app |
-| Send/receive fax | Programmable Fax | `POST /v2/faxes` (requires `connection_id`) | telnyx-platform plugin |
+| Look up carrier/caller data for a number | Number Lookup | `GET /v2/number_lookup/{number}` | `lookup_phone_number` in the hosted Developer Kit connector |
+| Send/receive fax | Programmable Fax | Send: `POST /v2/faxes` with `connection_id`; receive: create with `POST /v2/fax_applications`, then assign the number using `PATCH /v2/phone_numbers/{id}` with the Fax Application ID as `connection_id` | telnyx-platform plugin |
 | Connect a PBX/SIP system | SIP Trunking | credential or IP connections | telnyx-platform plugin |
 | Cellular connectivity for devices | IoT SIM | `/v2/sim_cards` (eSIM buys use `amount`) | telnyx-platform plugin |
 | Video rooms | Video | `/v2/rooms` + top-level room resources | telnyx-webrtc plugin |

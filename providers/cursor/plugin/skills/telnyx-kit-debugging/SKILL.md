@@ -54,19 +54,23 @@ metadata:
   includes newer instructions such as `<AIGather>`, `<AIAssistant>`,
   `<ConversationRelay>`, and `<HttpRequest>`.
 - **Messages "sent" but never delivered**: delivery outcome only exists in
-  the `message.finalized` webhook (`data.payload.to[0].status`) — there is
-  no `message.delivered` event. If you keyed on one, your retries never
-  fire.
+  `message.finalized`; there is no `message.delivered` event. Iterate every
+  `data.payload.to` entry and correlate by `phone_number` for group or
+  multi-recipient messages. Index zero is sufficient only when the request was
+  guaranteed to contain exactly one recipient.
 - **US SMS delivered=false with no API error**: check sender-specific carrier
   readiness before blaming code. US local long-code SMS needs 10DLC campaign
   linkage; toll-free traffic needs toll-free verification, while short-code
   traffic needs carrier approval.
-- **Webhooks not arriving**: webhook URL is configured on the application/
-  profile (not per-request); inspect Webhook Deliveries for the primary and
-  configured failover URL, then check endpoint TLS and response time (slow
-  200 = retry storm). For API v2 JSON events, trace `data.id`; for flat TeXML
-  callbacks, trace `(CallSid, SequenceNumber)` and confirm the route requires
-  POST, verifies the raw form body, rejects GET, and never expects `data.*`.
+- **Webhooks not arriving**: first inspect the application/profile default and
+  any endpoint-supported per-request override. Messaging sends can set
+  `webhook_url` and `webhook_failover_url`, which take priority over the
+  profile; those values must still come from trusted static configuration, not
+  dynamic user/model input. Inspect Webhook Deliveries, endpoint TLS, and
+  response time (slow 200 = retry storm). For API v2 JSON events, trace
+  `data.id`; for flat TeXML callbacks, trace `(CallSid, SequenceNumber)` and
+  confirm the route requires POST, verifies the raw form body, rejects GET,
+  and never expects `data.*`.
 - **Push notifications never arrive (WebRTC mobile)**: a push credential
   that exists but is not ATTACHED to the credential connection delivers
   nothing — set `ios_push_credential_id`/`android_push_credential_id` on
