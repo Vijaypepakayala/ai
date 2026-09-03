@@ -15,6 +15,13 @@ on:
         options:
           - 'false'
           - 'true'
+      connector_url:
+        description: 'Exact staging MCP resource URL to validate'
+        required: true
+        default: 'https://apidev.telnyx.com/v2/ai/mcp'
+        type: choice
+        options:
+          - 'https://apidev.telnyx.com/v2/ai/mcp'
 
 permissions:
   contents: read
@@ -46,6 +53,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Validate deployed six-tool OAuth contract
-        run: python3 ./scripts/check-telnyx-mcp-catalog.py
+        run: python3 ./scripts/check-telnyx-mcp-catalog.py --url "$TELNYX_MCP_URL"
         env:
+          TELNYX_MCP_URL: ${{ inputs.connector_url }}
           TELNYX_MCP_OAUTH_TOKEN: ${{ secrets.TELNYX_MCP_OAUTH_TOKEN }}

@@ -21,16 +21,26 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parent.parent
 CONTRACT_PATH = ROOT / "submission" / "telnyx-developer-kit" / "connector-contract.json"
 DEFAULT_URL = "https://api.telnyx.com/v2/ai/mcp"
-PROTOCOL_VERSION = "2026-07-28"
 MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_TOOL_LIST_PAGES = 100
 JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
-PROTOCOL_META = {
-    "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
-    "io.modelcontextprotocol/clientInfo": {
-        "name": "telnyx-codex-release-audit",
-        "version": "1",
-    },
-    "io.modelcontextprotocol/clientCapabilities": {},
+CLIENT_INFO = {
+    "name": "telnyx-codex-release-audit",
+    "version": "1",
+}
+
+
+def protocol_meta(protocol_version: str) -> dict[str, Any]:
+    return {
+        "io.modelcontextprotocol/protocolVersion": protocol_version,
+        "io.modelcontextprotocol/clientInfo": CLIENT_INFO,
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
+
+
+LEGACY_INITIALIZE_PARAMS = {
+    "capabilities": {},
+    "clientInfo": CLIENT_INFO,
 }
 
 
@@ -193,16 +203,25 @@ def fetch_json(url: str) -> tuple[int, dict[str, str], dict[str, Any]]:
         )
 
 
-def rpc(url: str, payload: dict[str, Any], token: str, session: str | None = None) -> tuple[dict[str, Any], str | None]:
+def rpc(
+    url: str,
+    payload: dict[str, Any],
+    token: str,
+    protocol_version: str,
+    session: str | None = None,
+) -> tuple[dict[str, Any], str | None]:
     method = payload.get("method")
     require(isinstance(method, str), "JSON-RPC audit requests require a method")
     headers = {
         "Accept": "application/json, text/event-stream",
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
-        "MCP-Protocol-Version": PROTOCOL_VERSION,
-        "MCP-Method": method,
     }
+    modern = protocol_version.startswith("2026-")
+    if modern or method != "initialize":
+        headers["MCP-Protocol-Version"] = protocol_version
+    if modern:
+        headers["MCP-Method"] = method
     if session:
         headers["Mcp-Session-Id"] = session
     request = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers, method="POST")
@@ -215,7 +234,52 @@ def rpc(url: str, payload: dict[str, Any], token: str, session: str | None = Non
         request_id = payload.get("id")
         require(isinstance(request_id, int), "JSON-RPC audit requests require an integer id")
         body = read_rpc_response(response, request_id)
-        return body, response.headers.get("Mcp-Session-Id") or session
+        response_session = response.headers.get("Mcp-Session-Id")
+        require(
+            not (session and response_session and response_session != session),
+            "server changed the MCP session during the audit",
+        )
+        return body, response_session or session
+
+
+def notify_initialized(
+    url: str,
+    token: str,
+    protocol_version: str,
+    session: str | None,
+) -> None:
+    headers = {
+        "Accept": "application/json, text/event-stream",
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "MCP-Protocol-Version": protocol_version,
+    }
+    if session:
+        headers["Mcp-Session-Id"] = session
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized",
+                "params": {},
+            }
+        ).encode(),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        response = open_authenticated(request, timeout=30)
+    except urllib.error.HTTPError as error:
+        detail = error_detail(error)
+        raise AuditError(
+            f"initialized notification returned HTTP {error.code}: {detail}"
+        ) from error
+    with response:
+        require(
+            response.status in {202, 204},
+            f"initialized notification returned HTTP {response.status}",
+        )
 
 
 def require(condition: bool, message: str) -> None:
@@ -292,8 +356,146 @@ def validate_tool_catalog(received: Any, contract: dict[str, Any]) -> None:
             )
 
 
+def list_all_tools(
+    url: str,
+    token: str,
+    protocol_version: str,
+    session: str | None,
+    first_request_id: int,
+) -> list[dict[str, Any]]:
+    received: list[dict[str, Any]] = []
+    cursor: str | None = None
+    seen_cursors: set[str] = set()
+    modern = protocol_version.startswith("2026-")
+
+    for page_index in range(MAX_TOOL_LIST_PAGES):
+        params: dict[str, Any] = (
+            {"_meta": protocol_meta(protocol_version)} if modern else {}
+        )
+        if cursor is not None:
+            params["cursor"] = cursor
+        request_id = first_request_id + page_index
+        response, session = rpc(
+            url,
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "tools/list",
+                "params": params,
+            },
+            token,
+            protocol_version,
+            session,
+        )
+        require(
+            response.get("id") == request_id and isinstance(response.get("result"), dict),
+            "tools/list failed",
+        )
+        result = response["result"]
+        page = result.get("tools")
+        require(isinstance(page, list), "tools/list result must contain a tool array")
+        received.extend(page)
+
+        next_cursor = result.get("nextCursor")
+        if next_cursor is None:
+            return received
+        require(
+            isinstance(next_cursor, str) and bool(next_cursor),
+            "tools/list nextCursor must be a non-empty string",
+        )
+        require(
+            next_cursor not in seen_cursors,
+            f"tools/list repeated cursor {next_cursor!r}",
+        )
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+
+    raise AuditError(f"tools/list exceeded {MAX_TOOL_LIST_PAGES} pages")
+
+
+def audit_protocol_version(
+    url: str,
+    token: str,
+    contract: dict[str, Any],
+    protocol_version: str,
+    request_id_base: int,
+) -> None:
+    session: str | None = None
+    modern = protocol_version.startswith("2026-")
+    if modern:
+        handshake_method = "server/discover"
+        handshake_params: dict[str, Any] = {"_meta": protocol_meta(protocol_version)}
+    else:
+        handshake_method = "initialize"
+        handshake_params = {
+            **LEGACY_INITIALIZE_PARAMS,
+            "protocolVersion": protocol_version,
+        }
+
+    handshake, session = rpc(
+        url,
+        {
+            "jsonrpc": "2.0",
+            "id": request_id_base,
+            "method": handshake_method,
+            "params": handshake_params,
+        },
+        token,
+        protocol_version,
+    )
+    require(
+        handshake.get("id") == request_id_base
+        and isinstance(handshake.get("result"), dict),
+        f"{handshake_method} failed for {protocol_version}",
+    )
+    result = handshake["result"]
+    if modern:
+        expected_modern = [
+            version
+            for version in contract["protocolVersions"]
+            if version.startswith("2026-")
+        ]
+        require(
+            result.get("supportedVersions") == expected_modern,
+            f"modern protocol versions drifted for {protocol_version}",
+        )
+        server_version = (
+            result.get("_meta", {})
+            .get("io.modelcontextprotocol/serverInfo", {})
+            .get("version")
+        )
+    else:
+        require(
+            result.get("protocolVersion") == protocol_version,
+            f"legacy protocol negotiation drifted for {protocol_version}",
+        )
+        server_version = result.get("serverInfo", {}).get("version")
+    require(
+        server_version == contract["version"],
+        f"deployed connector version drifted for {protocol_version}",
+    )
+    if not modern:
+        notify_initialized(url, token, protocol_version, session)
+
+    received = list_all_tools(
+        url,
+        token,
+        protocol_version,
+        session,
+        request_id_base + 1,
+    )
+    validate_tool_catalog(received, contract)
+
+
 def run_audit(url: str, token: str) -> None:
     contract = json.loads(CONTRACT_PATH.read_text())
+    protocol_versions = contract.get("protocolVersions")
+    require(
+        isinstance(protocol_versions, list)
+        and bool(protocol_versions)
+        and all(isinstance(version, str) and version for version in protocol_versions),
+        "contract protocolVersions must be a non-empty string array",
+    )
 
     status, _, metadata = fetch_json(metadata_url(url))
     require(status == 200, f"protected-resource metadata returned HTTP {status}")
@@ -302,44 +504,18 @@ def run_audit(url: str, token: str) -> None:
     servers = metadata.get("authorization_servers")
     require(isinstance(servers, list) and len(servers) == 1, "expected one authorization server")
 
-    discovery, session = rpc(
-        url,
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "server/discover",
-            "params": {"_meta": PROTOCOL_META},
-        },
-        token,
+    for index, protocol_version in enumerate(protocol_versions):
+        audit_protocol_version(
+            url,
+            token,
+            contract,
+            protocol_version,
+            (index + 1) * 1_000,
+        )
+    print(
+        "Hosted six-tool OAuth metadata audit: OK "
+        f"({len(protocol_versions)} protocol versions; no tools were called)"
     )
-    require(discovery.get("id") == 1 and "result" in discovery, "server/discover failed")
-    require(
-        discovery["result"].get("supportedVersions") == [PROTOCOL_VERSION],
-        "protocol version drifted",
-    )
-    require(
-        discovery["result"].get("_meta", {}).get(
-            "io.modelcontextprotocol/serverInfo", {}
-        ).get("version")
-        == contract["version"],
-        "deployed connector version drifted",
-    )
-
-    tools, _ = rpc(
-        url,
-        {
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/list",
-            "params": {"_meta": PROTOCOL_META},
-        },
-        token,
-        session,
-    )
-    require(tools.get("id") == 2 and "result" in tools, "tools/list failed")
-    received = tools["result"].get("tools", [])
-    validate_tool_catalog(received, contract)
-    print("Hosted six-tool OAuth metadata audit: OK (no tools were called)")
 
 
 def self_test() -> None:
@@ -404,27 +580,53 @@ def self_test() -> None:
     assert incomplete.timeouts == [10.0]
 
     contract = json.loads(CONTRACT_PATH.read_text())
-    observed: list[str] = []
+    observed: list[tuple[str, str, str | None]] = []
+    endpoint_schemas = {
+        endpoint["executionTool"]: endpoint["inputSchema"]
+        for endpoint in contract["endpoints"]
+    }
+    served_tools = [
+        {
+            "name": item["name"],
+            "title": item["title"],
+            "annotations": item["annotations"],
+            "inputSchema": endpoint_schemas.get(
+                item["name"], {"type": "object", "properties": {}}
+            ),
+        }
+        for item in contract["tools"]
+    ]
 
     class Handler(http.server.BaseHTTPRequestHandler):
+        pagination_mode = "normal"
+        initialized_sessions: set[str] = set()
+
         def log_message(self, *_: Any) -> None:
             return
 
-        def send_json(self, status: int, body: dict[str, Any]) -> None:
+        def send_json(
+            self,
+            status: int,
+            body: dict[str, Any],
+            session: str | None = None,
+        ) -> None:
             payload = json.dumps(body).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(payload)))
+            if session:
+                self.send_header("Mcp-Session-Id", session)
             self.end_headers()
             self.wfile.write(payload)
 
-        def send_sse(self, *events: dict[str, Any]) -> None:
+        def send_sse(self, events: list[dict[str, Any]], session: str) -> None:
             payload = "".join(
                 f"event: message\ndata: {json.dumps(event)}\n\n" for event in events
             ).encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Mcp-Session-Id", session)
             self.end_headers()
             self.wfile.write(payload)
 
@@ -446,48 +648,107 @@ def self_test() -> None:
             length = int(self.headers.get("Content-Length", "0"))
             request = json.loads(self.rfile.read(length))
             method = request.get("method", "")
-            if (
-                self.headers.get("MCP-Method") != method
-                or request.get("params", {}).get("_meta") != PROTOCOL_META
+            params = request.get("params", {})
+            protocol_header = self.headers.get("MCP-Protocol-Version")
+            protocol_version = (
+                params.get("protocolVersion")
+                if method == "initialize" and protocol_header is None
+                else protocol_header
+            )
+            modern = isinstance(protocol_version, str) and protocol_version.startswith("2026-")
+            if protocol_version not in contract["protocolVersions"]:
+                self.send_json(400, {"error": "unsupported protocol version"})
+                return
+            method_header = self.headers.get("MCP-Method")
+            if (modern and method_header != method) or (not modern and method_header):
+                self.send_json(400, {"error": "invalid MCP method header"})
+                return
+            if not modern and (
+                (method == "initialize" and protocol_header is not None)
+                or (method != "initialize" and protocol_header is None)
             ):
+                self.send_json(400, {"error": "invalid legacy protocol header"})
+                return
+            if modern and params.get("_meta") != protocol_meta(protocol_version):
                 self.send_json(400, {"error": "invalid modern MCP envelope"})
                 return
-            observed.append(method)
+            session = f"audit-{contract['protocolVersions'].index(protocol_version)}"
+            cursor = params.get("cursor")
+            observed.append((protocol_version, method, cursor))
             if method == "server/discover":
-                self.send_json(200, {
-                    "jsonrpc": "2.0",
-                    "id": request["id"],
-                    "result": {
-                        "supportedVersions": [PROTOCOL_VERSION],
-                        "capabilities": {"tools": {"listChanged": True}},
-                        "_meta": {
-                            "io.modelcontextprotocol/serverInfo": {
-                                "name": "test",
-                                "version": contract["version"],
-                            }
+                self.send_json(
+                    200,
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "result": {
+                            "supportedVersions": [
+                                version
+                                for version in contract["protocolVersions"]
+                                if version.startswith("2026-")
+                            ],
+                            "capabilities": {"tools": {"listChanged": True}},
+                            "_meta": {
+                                "io.modelcontextprotocol/serverInfo": {
+                                    "name": "test",
+                                    "version": contract["version"],
+                                }
+                            },
                         },
                     },
-                })
-            elif method == "tools/list":
-                tools = []
-                endpoint_schemas = {
-                    endpoint["executionTool"]: endpoint["inputSchema"]
-                    for endpoint in contract["endpoints"]
-                }
-                for item in contract["tools"]:
-                    schema = endpoint_schemas.get(
-                        item["name"], {"type": "object", "properties": {}}
-                    )
-                    tools.append({
-                        "name": item["name"],
-                        "title": item["title"],
-                        "annotations": item["annotations"],
-                        "inputSchema": schema,
-                    })
-                self.send_sse(
-                    {"jsonrpc": "2.0", "method": "notifications/progress"},
-                    {"jsonrpc": "2.0", "id": request["id"], "result": {"tools": tools}},
+                    session,
                 )
+            elif method == "initialize":
+                expected = {
+                    **LEGACY_INITIALIZE_PARAMS,
+                    "protocolVersion": protocol_version,
+                }
+                if modern or params != expected:
+                    self.send_json(400, {"error": "invalid legacy MCP initialize"})
+                    return
+                self.send_json(
+                    200,
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request["id"],
+                        "result": {
+                            "protocolVersion": protocol_version,
+                            "capabilities": {"tools": {"listChanged": True}},
+                            "serverInfo": {
+                                "name": "test",
+                                "version": contract["version"],
+                            },
+                        },
+                    },
+                    session,
+                )
+            elif method == "notifications/initialized":
+                if modern or self.headers.get("Mcp-Session-Id") != session:
+                    self.send_json(400, {"error": "invalid initialized notification"})
+                    return
+                type(self).initialized_sessions.add(session)
+                self.send_response(202)
+                self.end_headers()
+            elif method == "tools/list":
+                if self.headers.get("Mcp-Session-Id") != session:
+                    self.send_json(400, {"error": "wrong MCP session"})
+                    return
+                if not modern and session not in type(self).initialized_sessions:
+                    self.send_json(409, {"error": "client is not initialized"})
+                    return
+                if cursor is None:
+                    result = {"tools": served_tools[:3], "nextCursor": "page-2"}
+                elif cursor == "page-2":
+                    result = {"tools": served_tools[3:]}
+                    if type(self).pagination_mode == "repeat":
+                        result["nextCursor"] = "page-2"
+                else:
+                    self.send_json(400, {"error": "unexpected cursor"})
+                    return
+                self.send_sse([
+                    {"jsonrpc": "2.0", "method": "notifications/progress"},
+                    {"jsonrpc": "2.0", "id": request["id"], "result": result},
+                ], session)
             else:
                 self.send_json(400, {"error": "unexpected method"})
 
@@ -497,27 +758,29 @@ def self_test() -> None:
     thread.start()
     try:
         run_audit(test_url, "test-token")
+        assert observed == [
+            ("2026-07-28", "server/discover", None),
+            ("2026-07-28", "tools/list", None),
+            ("2026-07-28", "tools/list", "page-2"),
+            ("2025-11-25", "initialize", None),
+            ("2025-11-25", "notifications/initialized", None),
+            ("2025-11-25", "tools/list", None),
+            ("2025-11-25", "tools/list", "page-2"),
+        ]
+        Handler.pagination_mode = "repeat"
+        Handler.initialized_sessions.clear()
+        try:
+            run_audit(test_url, "test-token")
+        except AuditError as error:
+            assert str(error) == "tools/list repeated cursor 'page-2'"
+        else:
+            raise AssertionError("a repeated tools/list cursor must fail closed")
     finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
-    assert observed == ["server/discover", "tools/list"]
 
-    endpoint_schemas = {
-        endpoint["executionTool"]: endpoint["inputSchema"]
-        for endpoint in contract["endpoints"]
-    }
-    valid_tools = [
-        {
-            "name": item["name"],
-            "title": item["title"],
-            "annotations": item["annotations"],
-            "inputSchema": endpoint_schemas.get(
-                item["name"], {"type": "object", "properties": {}}
-            ),
-        }
-        for item in contract["tools"]
-    ]
+    valid_tools = served_tools
     drifted_tools = json.loads(json.dumps(valid_tools))
     lookup = next(tool for tool in drifted_tools if tool["name"] == "lookup_phone_number")
     lookup["inputSchema"]["required"].remove("lookup_type")
@@ -577,6 +840,7 @@ def self_test() -> None:
                 f"http://127.0.0.1:{source.server_port}/redirect",
                 {"jsonrpc": "2.0", "id": 7, "method": "tools/list", "params": {}},
                 "redirect-secret",
+                "2026-07-28",
             )
         except AuditError as error:
             assert "refused HTTP redirect 302" in str(error)
@@ -596,11 +860,14 @@ def self_test() -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--self-test", action="store_true")
-    parser.add_argument("--url", default=DEFAULT_URL)
+    parser.add_argument("--url")
     args = parser.parse_args()
     if args.self_test:
         self_test()
         return 0
+    if not args.url:
+        print("--url is required for a hosted audit", file=sys.stderr)
+        return 2
     token = os.environ.get("TELNYX_MCP_OAUTH_TOKEN", "")
     if not token:
         print("TELNYX_MCP_OAUTH_TOKEN is required", file=sys.stderr)
